@@ -112,7 +112,7 @@ def resolve_session(name: str | None, *, required: bool = True) -> SessionState 
         if name:
             known = ", ".join(s.name for s in st.all()) or "none"
             ui.die(f"no session named {name!r} (known sessions: {known})")
-        ui.die("no fwd session for this directory; run 'fwd up' to create one")
+        ui.die("no fwd sessions for this directory; run 'fwd up' to create one")
     return session
 
 
