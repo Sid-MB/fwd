@@ -12,26 +12,21 @@ If `fwd` is not on `PATH`, install the GitHub version with `uv tool install git+
 
 ## Invocation
 
-- Codex CLI/IDE: `$fwd continue this project on my RunPod CPU target`
-- Claude Code: `/fwd continue this project on my RunPod CPU target`
+- Codex CLI/IDE: `$fwd implement TODO.md`
+- Codex CLI/IDE: `$fwd build, test, and iterate on runpod`
+- Claude Code: `/fwd implement TODO.md`
 - Any supporting agent may invoke the skill implicitly for matching natural-language requests.
 
-Treat the text following the skill name as the user's intent. Do not require rigid syntax.
+Treat the text following the skill name as work to perform remotely, not as literal shell argv. Extract a named target such as `runpod`; preserve the rest as the task.
 
 ## Core workflow
 
-1. Turn the request into one launch command: `fwd up TARGET AGENT` or `fwd up TARGET -- COMMAND...`. CPU is the default; exact `claude` and `codex` agent names enable their agent-specific synchronization.
-2. Run it. Let fwd provision or connect, synchronize the project, bootstrap tools, detect the project toolchains, install missing requirements, and start the persistent session.
-3. Configure only when fwd says the selected backend needs it. Follow the error's exact `fwd setup` flags; use `fwd config --schema` or `fwd config --example BACKEND` only to discover fields, never to guess them.
-4. Confirm the result with `fwd ls --json`, then tell the user the exact `fwd attach NAME`, `fwd send --name NAME -- COMMAND`, or retrieval command they need. Do not take over the agent's terminal.
+1. Choose the caller's agent—`codex` from Codex or `claude` from Claude—unless the user names another. Launch it with `fwd up --agent AGENT` plus `--target TARGET` only when requested; fwd handles provisioning, sync, tools, and persistence.
+2. Read the exact session name from `fwd ls --json`, then send the preserved task with `fwd send --name SESSION agent "TASK"`. Let it stream and iterate; use `--detach` only when the user asks to background the work.
+3. If setup is required, follow fwd's exact error flags. Do not preconfigure a target or guess fields.
+4. When work changes project files, inspect `fwd diff SESSION`, then retrieve the accepted result with `fwd pull --name SESSION`. Report the result and the exact attach/send/stop commands the user may need.
 
-Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
-use `--detach` for background work, `fwd send --ls --json` to discover task IDs, `fwd send TASK_ID` to follow,
-and `fwd send TASK_ID --stop` to cancel only that task.
-
-Use `fwd send agent MESSAGE` to continue the Claude/Codex conversation already running in the selected session.
-Normal messages queue behind an active turn. `--immediate MESSAGE` cancels that turn and sends a
-replacement; `--stop` cancels without ending the agent session.
+For an explicitly requested shell command instead of coding-agent work, use `fwd send --name SESSION -- COMMAND...`. List or resume background tasks with `fwd send --ls --json` and `fwd send TASK_ID`; cancel only that task with `fwd send TASK_ID --stop`.
 
 ## Agent safety rules
 
