@@ -43,9 +43,8 @@ installed by `fwd` on first launch.
 npx skills add Sid-MB/fwd
 ```
 
-The skill teaches
-Claude the safe subset of the CLI — it uses `fwd up --no-attach` since attaching is an interactive terminal takeover,
-and hands `fwd`/`fwd attach` back to you.
+The skill teaches Claude the safe subset of the CLI — it uses the non-attaching `fwd up claude` workflow and hands
+`fwd`/`fwd attach` back to you only when an interactive terminal is needed.
 
 ## Quickstart
 
@@ -81,8 +80,9 @@ fwd setup --backend slurm --login-host login.example.edu --user myusername --rem
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |
-| `fwd up` (alias `launch`) | Provision/reuse a target, sync, bootstrap, start Claude, attach |
-| `fwd attach [name] [--restart]` | Attach to a running session, reconciling live status first |
+| `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching |
+| `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first |
+| `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status |
 | `fwd ls` | List sessions with live status queried from each backend |
 | `fwd push` | Re-sync local changes up |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) |
@@ -93,26 +93,64 @@ fwd setup --backend slurm --login-host login.example.edu --user myusername --rem
 | `fwd config` | Print the effective merged config, annotated with where each value came from |
 | `fwd config --example [backend]` | Print a commented reference config generated from the schema |
 | `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling |
+| `fwd -V` | Print the installed version |
+| `fwd info` | Print version plus config and state paths |
+
+### One-shot remote commands
+
+`fwd send` (alias `fwd s`) executes from the running session's remote project directory without taking over the
+terminal:
+
+```sh
+fwd send -- pwd
+fwd s -- python train.py --epochs 10
+fwd send --name my-session --timeout 30 -- cat results.json
+```
+
+Remote stdout and stderr remain separate and stream normally; `fwd send` exits with the remote command's exit code.
+It never provisions or restarts compute, so stopped, pending, ended, missing, and unknown targets fail with an
+actionable message. Arguments are executed literally. To use shell syntax such as pipes, redirects, or globs, request
+a shell explicitly:
+
+```sh
+fwd send -- bash -lc 'cat outputs/*.json | jq .'
+```
+
+For Slurm targets, one-shot commands run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
+when a command must run inside an allocation.
 
 ### `fwd up` flags
 
 | Flag | Effect |
 | --- | --- |
+| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude` for the synced Claude Code workflow |
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) |
 | `--name/-n NAME` | Session name (default: derived from the directory) |
 | `--session` / `--handoff` | How to carry conversation context — see below |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) |
 | `--creds` | Copy Claude credentials to the remote machine |
-| `--no-attach` | Set everything up but stay local |
+| `--attach/-a` | Attach after startup; omitted by default so terminals, agents, and scripts stay local |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
 it again and it picks up where it left off rather than starting over or duplicating anything.
 
+The startup forms are:
+
+```sh
+fwd up                              # provision, sync, bootstrap, start a persistent remote shell; stay local
+fwd up claude                       # also transfer this conversation and start Claude Code; stay local
+fwd up --attach claude              # same Claude workflow, then take over the terminal (--attach is also -a)
+fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
+```
+
+Bare `fwd` retains the original ergonomic workflow: on first launch it is equivalent to `fwd up --attach claude`;
+later it attaches to the existing session.
+
 ## Carrying your Claude session across
 
-By default `fwd` moves the **actual transcript**, so the remote session resumes with real context — it remembers what
-you asked an hour ago, not a summary of it. This was verified empirically against claude 2.1.220
+`fwd up claude` and bare `fwd` move the **actual transcript** by default, so the remote session resumes with real
+context — it remembers what you asked an hour ago, not a summary of it. This was verified empirically against claude 2.1.220
 (`docs/session-transfer-notes.md`): a relocated transcript resumes in place, keeps its session id, and does not fork.
 
 The transfer degrades gracefully rather than failing a launch. The chain is:

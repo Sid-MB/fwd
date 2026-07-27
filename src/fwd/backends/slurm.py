@@ -273,8 +273,8 @@ class SlurmBackend:
         """``squeue -j <job_id>``: running → ``RUNNING``, queued → ``PENDING``, absent → ``JOB_ENDED``.
 
         Two levels of liveness: the login node first (unreachable → ``GONE``, the state entry is useless), then the
-        allocation. A session whose job id was never recorded — launch raced ahead of ``squeue``, or the user launched
-        with ``--no-attach`` before the job appeared — reports ``RUNNING`` after one best-effort rescan, because the
+        allocation. A session whose job id was never recorded — launch raced ahead of ``squeue``, or the user returned
+        from the default non-attaching ``fwd up`` before the job appeared — reports ``RUNNING`` after one best-effort rescan, because the
         login node *is* up and there is nothing to relaunch yet.
         """
         # An unreachable login node is never ``GONE``: a dropped VPN or a cluster in maintenance is far more likely

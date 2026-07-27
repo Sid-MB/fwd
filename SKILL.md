@@ -35,9 +35,9 @@ Config: `~/.fwd/config.toml` is global; a project-local `.fwd/config.toml` **dee
 **You often need no config at all.** A `--target` absent from config is inferred when unambiguous, so these work on a clean machine:
 
 ```sh
-fwd up --no-attach --target runpod                  # GPU pod from built-in RunPod defaults
-fwd up --no-attach --target sid@gpu.example.com     # a host the user already has
-fwd up --no-attach --target my-box                  # any Host alias in ~/.ssh/config
+fwd up --target runpod                  # GPU pod from built-in RunPod defaults
+fwd up --target sid@gpu.example.com     # a host the user already has
+fwd up --target my-box                  # any Host alias in ~/.ssh/config
 ```
 
 Configured targets always win over inferred ones. Slurm is deliberately not inferable (site-specific login host, scratch path and allocation) — for a cluster, tell the user to run `fwd setup`, or write a config using `fwd config --example slurm`.
@@ -78,13 +78,27 @@ env_setup = ["module purge", "module load cuda/12.4"]
 ### Launching
 
 ```sh
-fwd up --no-attach                      # provision, sync, transfer the transcript, start remote claude, stay local
-fwd up --no-attach -t pod --gpu "NVIDIA A100 80GB PCIe"   # pick a target and override its GPU for this launch
+fwd up                                  # provision, sync, bootstrap, start a persistent remote shell, stay local
+fwd up claude                           # additionally transfer this conversation and start remote Claude Code
+fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" claude   # choose a target/GPU and start the synced Claude workflow
+fwd up -- python train.py --epochs 10   # start an arbitrary persistent command; '--' protects remote flags
 ```
 
-Always pass `--no-attach` when *you* run it: attaching is an interactive terminal takeover and will hang a tool call. `fwd up` is idempotent and doubles as the **repair** command — if a launch dies halfway, run the same command again rather than cleaning up first.
+`fwd up` stays local by default and is safe for an agent to run. Never add `--attach` yourself: attaching is an interactive terminal takeover and will hang a tool call. Exact `fwd up claude` is a magic command that enables transcript transfer and other Claude-specific flags; a commandless `fwd up` starts a normal remote shell. `fwd up` is idempotent and doubles as the **repair** command — if a launch dies halfway, run the same command again rather than cleaning up first.
 
-Context transfer:
+### Sending one remote command
+
+Use `fwd send` (alias `fwd s`) when an agent needs to execute a non-interactive command and read its response:
+
+```sh
+fwd send -- pwd
+fwd s -- python train.py --epochs 10
+fwd send --name my-session --timeout 30 -- cat results.json
+```
+
+It runs from the remote project directory, streams stdout/stderr, and returns the remote exit code. It never starts or restarts compute. Arguments are literal; for pipes, redirects, globs, or other shell syntax, invoke a shell explicitly: `fwd send -- bash -lc 'cat outputs/*.json | jq .'`. On Slurm the command runs on the login node; use `srun` explicitly when work belongs inside an allocation.
+
+Context transfer for `fwd up claude`:
 - **Default (`--session`)** moves the real transcript, so the remote session resumes with genuine context. This is already on; only pass `--session` explicitly if the user's config set `session = false`.
 - **`--handoff`** instead has the local `claude -p` write `HANDOFF.md` and points the remote session at it. Passing it *replaces* the transcript transfer. Use it only when the user asks for a summary handoff or the conversation is long and only conclusions matter. It costs ~65s; an existing `HANDOFF.md` under 15 minutes old is reused.
 - Transfer degrades gracefully to plain `claude` with a warning; it never aborts a launch.
@@ -109,7 +123,7 @@ fwd rm --force                # destroy the target and forget the session; irrev
 
 ### What you must hand back to the user
 
-`fwd` (bare) and `fwd attach` `exec` into `ssh -t` and take over the terminal, so they cannot be run as tool calls. When the session is ready, tell the user to run it themselves — from within Claude Code the fastest route is the bash-passthrough:
+`fwd` (bare), `fwd attach`, and its tmux-style alias `fwd a` `exec` into `ssh -t` and take over the terminal, so they cannot be run as tool calls. When the session is ready, tell the user to run one themselves — from within Claude Code the fastest route is the bash-passthrough:
 
 ```
 !fwd

@@ -52,6 +52,13 @@ SESSION_HASH_LEN = 6
 # The prompt handed to claude when context arrives as a document rather than a transcript.
 HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
 
+# Exact startup tokens with fwd-specific semantics. Keeping this as a lookup boundary makes future magic commands
+# explicit instead of teaching the general arbitrary-command path to guess based on executable names.
+MAGIC_CLAUDE_COMMAND: tuple[str, ...] = ("claude",)
+
+# A commandless `fwd up` still creates a useful persistent tmux session, so a later `fwd attach` opens a normal shell.
+REMOTE_SHELL_COMMAND = 'exec "${SHELL:-bash}" -l'
+
 # How long a generated HANDOFF.md stays reusable. Regenerating costs a full ``claude -p`` round trip (~65 s measured
 # in the live e2e), which a repair rerun of ``fwd up`` should not have to pay again.
 HANDOFF_MAX_AGE_SECONDS = 15 * 60
@@ -147,7 +154,7 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str) -> NoReturn:
     instead. See docs/live-e2e-report.md, R2-2.
     """
     if not sys.stdin.isatty():
-        ui.die("attach needs an interactive terminal; in scripts use 'fwd up --no-attach' to launch without attaching")
+        ui.die("attach needs an interactive terminal; in scripts use 'fwd up' without --attach")
     try:
         argv = remote.tmux_attach_argv(endpoint, tmux_session)
     except NotImplementedError:
@@ -240,6 +247,24 @@ def claude_command_for(session: SessionState) -> str:
         resume_id=session.flags.get("resume_id"),
         use_handoff=bool(session.flags.get("handoff")) and not session.flags.get("resume_id"),
     )
+
+
+def initial_command_for(session: SessionState) -> tuple[str, ...]:
+    """Return the startup argv recorded for a session, treating older state files as Claude sessions."""
+    recorded = session.flags.get("initial_command")
+    if recorded is None:
+        return MAGIC_CLAUDE_COMMAND
+    return tuple(str(part) for part in recorded)
+
+
+def startup_command_for(session: SessionState) -> str:
+    """Rebuild the persistent tmux command for restart and allocation-recovery paths."""
+    initial = initial_command_for(session)
+    if initial == MAGIC_CLAUDE_COMMAND:
+        return claude_command_for(session)
+    if not initial:
+        return REMOTE_SHELL_COMMAND
+    return shlex.join(initial)
 
 
 def _resolve_claude_flags(
@@ -389,19 +414,23 @@ def launch(
     gpu: str | None = None,
     name: str | None = None,
     *,
+    initial_command: tuple[str, ...] = MAGIC_CLAUDE_COMMAND,
     session: bool = False,
     handoff: bool = False,
     user_config: bool = False,
     creds: bool = False,
-    attach: bool = True,
+    attach: bool = False,
     push_only: bool = False,
 ) -> SessionState:
-    """Provision, sync, bootstrap and start a remote Claude session.
+    """Provision, sync and bootstrap a target, then start a persistent shell, command, or Claude session.
 
     Args:
         target: Target name from config; ``None`` resolves via the existing session, then ``default_target``.
         gpu: GPU override passed to the backend.
         name: Session name; defaults to :func:`derive_session_name` of the cwd.
+        initial_command: Remote argv to start inside tmux. Empty starts a login shell; exactly ``("claude",)`` enables
+            fwd's transcript-aware Claude workflow. The internal default preserves compatibility for existing callers;
+            the public ``fwd up`` command explicitly passes an empty tuple.
         session: Transfer the live transcript for ``claude --resume`` (best-effort).
         handoff: Generate and use ``HANDOFF.md`` instead of a transcript.
         user_config: Upload the user's Claude config bundle.
@@ -429,7 +458,16 @@ def launch(
 
     target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
-    flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds)
+    is_claude = initial_command == MAGIC_CLAUDE_COMMAND
+    if not is_claude and any((session, handoff, user_config, creds)):
+        ui.die("--session, --handoff, --user-config, and --creds are only valid with 'fwd up claude'")
+    flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds) if is_claude else {
+        "session": False,
+        "handoff": False,
+        "user_config": False,
+        "creds": False,
+    }
+    flags["initial_command"] = list(initial_command)
 
     if existing is not None:
         ui.info(f"reusing session {session_name!r} on target {target_cfg.name!r}")
@@ -456,8 +494,8 @@ def launch(
         # Multiplexing is an optimization; a launch without it is merely slower.
         ui.warn(f"ssh multiplexing unavailable, continuing without it ({exc})")
 
-    # 3. Local Claude prep, before the sync. HANDOFF.md must be inside the tree that gets mirrored, and the transcript
-    # bundle is cheapest to export while we are already touching local disk.
+    # 3. Magic-Claude local prep, before the sync. General commands skip this entire concern. HANDOFF.md must be inside
+    # the tree that gets mirrored, and the transcript bundle is cheapest to export while touching local disk.
     bundle: Path | None = None
     if flags["session"]:
         with ui.step("Exporting Claude session transcript"):
@@ -498,9 +536,9 @@ def launch(
     else:
         ui.info("no lockfiles detected; skipping dependency install")
 
-    # 7. Claude state, then the session itself.
-    resume_id = _transfer_claude_state(endpoint, remote_dir, flags, bundle)
-    if flags["session"] and not resume_id:
+    # 7. Optional Claude state, then the persistent shell/command itself.
+    resume_id = _transfer_claude_state(endpoint, remote_dir, flags, bundle) if is_claude else None
+    if is_claude and flags["session"] and not resume_id:
         # Second rung: the import failed remotely and already warned why. HANDOFF.md is only available if it was
         # generated pre-sync, so if handoff was off this degrades to a clean session rather than silently pretending.
         if flags["handoff"]:
@@ -508,7 +546,11 @@ def launch(
         else:
             ui.warn("could not install the transcript remotely; starting a fresh session (try 'fwd up --handoff')")
 
-    claude_cmd = build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
+    startup_cmd = (
+        build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
+        if is_claude
+        else (REMOTE_SHELL_COMMAND if not initial_command else shlex.join(initial_command))
+    )
     # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
     flags["resume_id"] = resume_id
     flags["gpu"] = gpu
@@ -517,7 +559,7 @@ def launch(
     if remote.tmux_exists(endpoint, tmux_name):
         ui.info(f"remote tmux session {tmux_name!r} is already running; leaving it as is")
     else:
-        tmux_cmd = build_tmux_command(backend, endpoint, session_name, remote_dir, tool_prefix, claude_cmd, gpu=gpu)
+        tmux_cmd = build_tmux_command(backend, endpoint, session_name, remote_dir, tool_prefix, startup_cmd, gpu=gpu)
         with ui.step(f"Starting remote session {tmux_name!r}"):
             remote.tmux_new(endpoint, tmux_name, remote_dir, tmux_cmd)
 

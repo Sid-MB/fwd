@@ -48,6 +48,7 @@ def _relaunch(session: SessionState) -> NoReturn:
     launch_ops.launch(
         target=flags.get("target"),
         name=session.name,
+        initial_command=launch_ops.initial_command_for(session),
         session=bool(flags.get("session")),
         handoff=bool(flags.get("handoff")),
         user_config=bool(flags.get("user_config")),
@@ -65,7 +66,7 @@ def _restart_allocation(backend, endpoint: SSHEndpoint, session: SessionState) -
     holds everything from the original launch.
     """
     tool_prefix = session.flags.get("tool_prefix")
-    claude_cmd = launch_ops.claude_command_for(session)
+    startup_cmd = launch_ops.startup_command_for(session)
     with ui.step("Killing the stale tmux session"):
         remote.tmux_kill(endpoint, session.tmux_session)
     with ui.step("Requesting a new allocation"):
@@ -75,7 +76,7 @@ def _restart_allocation(backend, endpoint: SSHEndpoint, session: SessionState) -
             session.name,
             session.remote_dir,
             tool_prefix,
-            claude_cmd,
+            startup_cmd,
             gpu=session.flags.get("gpu"),
         )
         remote.tmux_new(endpoint, session.tmux_session, session.remote_dir, tmux_cmd)
@@ -193,7 +194,7 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
         ui.warn(f"remote tmux session {session.tmux_session!r} is not running")
         # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline,
         # so it goes through the same gate rather than inventing a second policy.
-        _confirm_restart("restart the Claude session on this target?", restart=restart, action="rerun the launch")
+        _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
         _relaunch(session)
 
     session.touch_attached()
@@ -213,5 +214,5 @@ def smart_default(*, restart: bool = False) -> NoReturn:
         # would launch a second machine for a directory that already has one.
         return attach(session.name, restart=restart)
     ui.info(f"no fwd session for {Path.cwd().name}; looking for a saved target")
-    launch_ops.launch()
+    launch_ops.launch(initial_command=launch_ops.MAGIC_CLAUDE_COMMAND, attach=True)
     raise typer.Exit(0)

@@ -45,10 +45,18 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    """Print the version before command dispatch, making ``fwd -V`` safe even though bare ``fwd`` performs work."""
+    if value:
+        ui.console.print(__version__)
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
+    version: Annotated[bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Print the installed fwd version and exit.")] = False,
 ) -> None:
     """Attach to this directory's session, launching its saved default or starting setup on first use.
 
@@ -62,18 +70,20 @@ def main(
 
 
 def _up(
+    command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude' for the synced Claude Code workflow.")] = None,
     target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", rich_help_panel=PANEL_TARGET)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override the GPU for this launch only (RunPod GPU id, or a Slurm --gres spec).", rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", rich_help_panel=PANEL_TARGET)] = None,
-    no_attach: Annotated[bool, typer.Option("--no-attach", help="Provision, sync and start Claude remotely but stay local instead of attaching.", rich_help_panel=PANEL_TARGET)] = False,
+    attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; by default fwd stays local.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
     creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
 ) -> None:
-    """Provision (or reuse) a remote target, sync this directory, and start a Claude session there.
+    """Provision/reuse a target, sync and bootstrap it, then start a shell or the requested command.
 
-    Also the repair command: every stage is idempotent, so re-running after a failed launch resumes where it stopped rather than duplicating a pod, a job or a sync.
+    The magic command 'claude' transfers this conversation and starts Claude Code. Startup is persistent in tmux and
+    does not attach unless --attach is passed. Put local fwd options before the command and use '--' before remote flags.
     """
     from fwd.ops import launch as launch_ops
 
@@ -81,21 +91,21 @@ def _up(
         target=target,
         gpu=gpu,
         name=name,
+        initial_command=tuple(command or ()),
         session=session,
         handoff=handoff,
         user_config=user_config,
         creds=creds,
-        attach=not no_attach,
+        attach=attach,
     )
 
 
 # Registered twice so `up` and its `launch` alias can never diverge.
-app.command("up")(_up)
-app.command("launch", hidden=True)(_up)
+app.command("up", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_up)
+app.command("launch", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_up)
 
 
-@app.command("attach")
-def attach_cmd(
+def _attach(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
@@ -106,6 +116,31 @@ def attach_cmd(
     from fwd.ops import attach as attach_ops
 
     attach_ops.attach(name, restart=restart)
+
+
+# Registered from one callback so the tmux-style `a` alias and `attach` always accept identical arguments.
+app.command("attach")(_attach)
+app.command("a", help="Alias for 'attach'.")(_attach)
+
+
+def _send(
+    command: Annotated[list[str] | None, typer.Argument(help="Command and arguments to execute after '--'.")] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout", help="Abort locally if the remote command exceeds this many seconds.")] = None,
+) -> None:
+    """Execute one command in the running session's remote project directory.
+
+    Streams remote stdout/stderr and returns its exit code. Never starts or restarts compute. Use '--' before the
+    command so remote flags are not parsed by fwd, for example: fwd send -- python train.py --epochs 10
+    """
+    from fwd.ops import send as send_ops
+
+    send_ops.send(tuple(command or ()), name=name, timeout=timeout)
+
+
+# Registered from one callback so the short alias cannot diverge from the primary command.
+app.command("send", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
+app.command("s", help="Alias for 'send'.", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
 
 
 @app.command("ls")
@@ -263,9 +298,21 @@ def doctor_cmd(
     raise typer.Exit(doctor.run_doctor(target))
 
 
-@app.command("version")
+@app.command("info")
+def info_cmd() -> None:
+    """Print installed version and the local paths fwd uses for configuration and session state."""
+    from fwd.config import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_RELPATH
+    from fwd.state import STATE_PATH
+
+    ui.console.print(f"fwd {__version__}")
+    ui.console.print(f"global config: {GLOBAL_CONFIG_PATH}")
+    ui.console.print(f"project config: <project>/{PROJECT_CONFIG_RELPATH}")
+    ui.console.print(f"session state: {STATE_PATH}")
+
+
+@app.command("version", hidden=True)
 def version_cmd() -> None:
-    """Print the installed fwd version and exit."""
+    """Compatibility alias for ``fwd -V``."""
     ui.console.print(__version__)
 
 

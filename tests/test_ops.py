@@ -252,7 +252,7 @@ def test_build_tmux_command_uses_backend_hook_when_present(calls: list[str]) -> 
 
 def test_launch_runs_stages_in_order(project, state_store, config, fake_backend, stub_world, calls) -> None:
     """The canonical ordering: provision, wait, local prep, sync, bootstrap, deps, claude state, tmux, attach."""
-    launch_ops.launch()
+    launch_ops.launch(attach=True)
 
     ordered = [c for c in calls if c not in {"detect_deps", "tmux_exists", "status", "endpoint"}]
     assert ordered == [
@@ -672,7 +672,7 @@ def test_smart_default_launches_when_no_session(project, state_store, config, fa
     monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: launched.append(kwargs))
     with pytest.raises(typer.Exit):
         attach_ops.smart_default()
-    assert launched == [{}]
+    assert launched == [{"initial_command": ("claude",), "attach": True}]
 
 
 # --- lifecycle ---------------------------------------------------------------------------------------------------
