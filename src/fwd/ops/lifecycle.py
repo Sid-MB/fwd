@@ -89,6 +89,36 @@ def _example_command(action: str, session_name: str | None) -> str:
     return shlex.join([ui.COMMAND_NAME, action, session_name]) if session_name else ui.command(f"{action} <name>")
 
 
+def _send_example(session_name: str) -> str:
+    """Build a durable-command example for a session known to be reachable enough to accept work."""
+    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "COMMAND"])
+
+
+def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | str]]) -> tuple[tuple[str, str], ...]:
+    """Return only commands applicable to at least one displayed session, choosing a suitable session per action."""
+    if not session_statuses:
+        return (
+            ("Reattach", _example_command("attach", None)),
+            ("Send", ui.command("send --name <name> -- COMMAND")),
+            ("Stop", _example_command("stop", None)),
+            ("Remove", _example_command("rm", None)),
+        )
+    examples: list[tuple[str, str]] = []
+    attachable = next((session for session, status in session_statuses if status == TargetStatus.RUNNING), None)
+    attachable = attachable or next((session for session, status in session_statuses if status == TargetStatus.PENDING), None)
+    attachable = attachable or next((session for session, status in session_statuses if status != TargetStatus.GONE), None)
+    sendable = next((session for session, status in session_statuses if status in (TargetStatus.RUNNING, TargetStatus.PENDING)), None)
+    stoppable = next((session for session, status in session_statuses if status in (TargetStatus.RUNNING, TargetStatus.PENDING, TargetStatus.UNKNOWN, UNKNOWN_STATUS)), None)
+    if attachable is not None:
+        examples.append(("Reattach", _example_command("attach", attachable.name)))
+    if sendable is not None:
+        examples.append(("Send", _send_example(sendable.name)))
+    if stoppable is not None:
+        examples.append(("Stop", _example_command("stop", stoppable.name)))
+    examples.append(("Remove", _example_command("rm", session_statuses[0][0].name)))
+    return tuple(examples)
+
+
 def _live_status(session: SessionState) -> TargetStatus | str:
     """Return a session's live status, isolating every failure mode to this one cell.
 
@@ -119,8 +149,10 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
     sessions = tracked_sessions if all_projects else current_sessions
     now = datetime.now(UTC)
     rows = []
+    session_statuses: list[tuple[SessionState, TargetStatus | str]] = []
     for session in sessions:
         status = _live_status(session)
+        session_statuses.append((session, status))
         rows.append(
             [
                 session.name,
@@ -139,13 +171,8 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
         rows,
         output_format=output_format,
     )
-    example_name = sessions[0].name if sessions else None
     ui.show_code_examples(
-        (
-            ("Reattach", _example_command("attach", example_name)),
-            ("Stop", _example_command("stop", example_name)),
-            ("Remove", _example_command("rm", example_name)),
-        ),
+        _manage_examples(session_statuses),
         heading="Manage a session:",
     )
     if not all_projects and other_sessions and ui.interactive_terminal():
