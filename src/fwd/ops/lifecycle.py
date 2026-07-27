@@ -89,9 +89,9 @@ def _example_command(action: str, session_name: str | None) -> str:
     return shlex.join([ui.COMMAND_NAME, action, session_name]) if session_name else ui.command(f"{action} <name>")
 
 
-def _send_example(session_name: str) -> str:
-    """Build a durable-command example for a session known to be reachable enough to accept work."""
-    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "COMMAND"])
+def _send_example(session_name: str | None) -> str:
+    """Build a durable-command example, retaining an unfenced ``<name>`` placeholder for an empty table."""
+    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "COMMAND"]) if session_name else ui.command("send --name <name> -- COMMAND")
 
 
 def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | str]]) -> tuple[tuple[str, str], ...]:
@@ -99,7 +99,7 @@ def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | s
     if not session_statuses:
         return (
             ("Reattach", _example_command("attach", None)),
-            ("Send", ui.command("send --name <name> -- COMMAND")),
+            ("Send command", _send_example(None)),
             ("Stop", _example_command("stop", None)),
             ("Remove", _example_command("rm", None)),
         )
@@ -112,7 +112,7 @@ def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | s
     if attachable is not None:
         examples.append(("Reattach", _example_command("attach", attachable.name)))
     if sendable is not None:
-        examples.append(("Send", _send_example(sendable.name)))
+        examples.append(("Send command", _send_example(sendable.name)))
     if stoppable is not None:
         examples.append(("Stop", _example_command("stop", stoppable.name)))
     examples.append(("Remove", _example_command("rm", session_statuses[0][0].name)))
