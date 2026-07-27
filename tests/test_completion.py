@@ -71,6 +71,7 @@ def test_static_rich_completions_filter_values_and_include_help() -> None:
     assert cli_completion.complete_agent(None, [], "co") == [("codex", "Codex · sync settings, config, and skills; auto-attach in a terminal")]  # type: ignore[arg-type] - callback ignores context
     assert cli_completion.complete_compute_type(None, [], "") == [("cpu", "CPU-only compute · default"), ("gpu", "GPU compute")]  # type: ignore[arg-type] - callback ignores context
     assert cli_completion.complete_output_format(None, [], "j") == [("json", "structured JSON")]  # type: ignore[arg-type] - callback ignores context
+    assert cli_completion.complete_config_key(None, [], "default_") == [("default_command", "argv launched by bare fwd"), ("default_target", "target used when --target is omitted")]  # type: ignore[arg-type] - callback ignores context
 
 
 @pytest.mark.parametrize(
@@ -105,8 +106,9 @@ def test_every_session_selecting_command_uses_completion(command_name: str, para
         ("launch", "command"),
         ("launch", "target"),
         ("launch", "gpu"),
+        ("default", "command"),
+        ("default", "target"),
         ("ls", "output_format"),
-        ("config", "backend"),
         ("setup", "backend"),
         ("setup", "target_name"),
         ("setup", "host"),
@@ -128,3 +130,16 @@ def test_every_discoverable_cli_value_uses_rich_completion(command_name: str, pa
     assert command is not None
     parameter = next(parameter for parameter in command.params if parameter.name == parameter_name)
     assert parameter._custom_shell_complete is not None
+
+
+def test_config_set_key_and_target_use_rich_completion() -> None:
+    root = get_command(app)
+    root_context = _click.Context(root)
+    config_command = root.get_command(root_context, "config")
+    assert config_command is not None
+    config_context = _click.Context(config_command, parent=root_context)
+    set_command = config_command.get_command(config_context, "set")
+    assert set_command is not None
+    for parameter_name in ("key", "value", "target"):
+        parameter = next(parameter for parameter in set_command.params if parameter.name == parameter_name)
+        assert parameter._custom_shell_complete is not None

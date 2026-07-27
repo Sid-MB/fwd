@@ -11,6 +11,7 @@ Two properties carry most of the weight here:
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -121,6 +122,7 @@ def test_no_config_prints_pointers_not_an_error(tmp_path: Path, monkeypatch: pyt
     assert "--target runpod" in captured.err
     # stdout must stay machine-readable even in the empty case.
     assert tomllib.loads(captured.out) == {
+        "default_command": ["claude"],
         "claude": {"user_config": False, "creds": False, "session": True, "handoff": False},
         "sync": {"exclude": list(config_mod.DEFAULT_EXCLUDES), "use_gitignore": True, "delete": True},
     }
@@ -253,3 +255,67 @@ def test_explain_target_describes_provenance(tmp_path: Path, monkeypatch: pytest
     assert "declared in config" in configcmd.explain_target("box", tmp_path)
     assert ORIGIN_BUILTIN in configcmd.explain_target("runpod", tmp_path)
     assert "not inferable" in configcmd.explain_target("nonsense-name", tmp_path)
+
+
+# --- command defaults and mutation ------------------------------------------------------------------------------
+
+
+def test_default_command_precedence_is_target_then_project_then_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "global.toml"
+    _write(global_path, 'default_command = ["claude"]\n[target_defaults.runpod]\ndefault_command = ["python", "-m", "agent"]\n')
+    project = tmp_path / "project"
+    _write(project / ".fwd" / "config.toml", 'default_command = ["codex"]\n')
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+
+    config = load_config(project)
+    assert config.default_command == ["codex"]
+    assert config.command_for("runpod") == ("python", "-m", "agent")
+    assert config.command_for("somewhere-else") == ("codex",)
+
+
+def test_default_command_falls_back_to_claude_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
+    assert load_config(tmp_path).command_for("runpod") == ("claude",)
+
+
+def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "home" / "config.toml"
+    _write(global_path, '# keep me\ndefault_target = "runpod"\n')
+    project = tmp_path / "project"
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+
+    configcmd.set_value("default_command", ("codex",), project_dir=project)
+    configcmd.set_value("default_command", ("python", "-m", "agent"), project=True, project_dir=project)
+    configcmd.set_value("default_command", ("claude",), target="runpod", project_dir=project)
+
+    assert "# keep me" in global_path.read_text(encoding="utf-8")
+    global_config = tomllib.loads(global_path.read_text(encoding="utf-8"))
+    project_config = tomllib.loads((project / ".fwd" / "config.toml").read_text(encoding="utf-8"))
+    assert global_config["default_target"] == "runpod"
+    assert global_config["default_command"] == ["codex"]
+    assert global_config["target_defaults"]["runpod"]["default_command"] == ["claude"]
+    assert project_config["default_command"] == ["python", "-m", "agent"]
+
+
+def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "config.toml"
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    configcmd.set_value("sync.delete", ("false",))
+    configcmd.set_value("default_target", ("runpod",))
+    parsed = tomllib.loads(global_path.read_text(encoding="utf-8"))
+    assert parsed["sync"]["delete"] is False
+    assert parsed["default_target"] == "runpod"
+
+
+def test_config_set_rejects_conflicting_scopes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "config.toml")
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        configcmd.set_value("default_command", ("codex",), user=True, project=True)
+
+
+def test_schema_and_example_discover_command_defaults() -> None:
+    schema = json.loads(configcmd.render_schema())
+    assert schema["properties"]["default_command"]["default"] == ["claude"]
+    assert "target_defaults" in schema["properties"]
+    example = tomllib.loads(configcmd.render_example("runpod"))
+    assert example["default_command"] == ["claude"]

@@ -133,7 +133,9 @@ tooltip/menu description; other shells still complete the session name. Install 
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) |
 | `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag |
 | `fwd doctor` | Check local prerequisites and target reachability |
+| `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides |
 | `fwd config` | Print the effective merged config, annotated with where each value came from |
+| `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` |
 | `fwd config --example [backend]` | Print a commented reference config generated from the schema |
 | `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling |
 | `fwd -V` | Print the installed version |
@@ -243,6 +245,39 @@ Provider authors should read [Adding a target backend](docs/adding-target-backen
 `~/.fwd/config.toml` is the global config; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can
 override a single field of a globally-declared target without restating the rest.
 
+### Default command
+
+Bare `fwd` attaches to the current directory's existing session. When there is no session yet, it launches the
+configured default command; Claude is the built-in default. Set it without editing TOML:
+
+```sh
+fwd default codex                              # user-wide default
+fwd default --project claude                   # only this project
+fwd default --target runpod -- python -m agent # whenever the selected target is runpod
+```
+
+The equivalent general command is `fwd config set default_command ...`:
+
+```sh
+fwd config set default_command codex
+fwd config set --project default_command -- python -m agent
+fwd config set sync.delete false
+```
+
+Precedence is **target > project > user > built-in `claude`**. Commands are stored as argv arrays rather than shell
+strings, preserving argument boundaries:
+
+```toml
+default_command = ["codex"]
+
+[target_defaults.runpod]
+default_command = ["python", "-m", "agent"]
+```
+
+`fwd up` remains explicit: plain `fwd up` starts a background shell, while `fwd up claude`, `fwd up codex`, and
+`fwd up -- <command>` select a command for that launch. Use `--user`, `--project`, or `--target NAME` with
+`fwd default`/`fwd config set`; omitting all three means `--user`.
+
 ### Zero-config quickstart
 
 You may not need a config file at all. A `--target` that is not in your config is inferred when it is unambiguous:
@@ -262,6 +297,7 @@ into a launch.
 
 ```toml
 default_target = "box"
+default_command = ["claude"]
 
 [targets.box]
 backend = "ssh"

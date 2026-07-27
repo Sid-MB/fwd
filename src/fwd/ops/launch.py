@@ -415,7 +415,7 @@ def launch(
     gpu: str | None = None,
     name: str | None = None,
     *,
-    initial_command: tuple[str, ...] = MAGIC_CLAUDE_COMMAND,
+    initial_command: tuple[str, ...] | None = MAGIC_CLAUDE_COMMAND,
     session: bool = False,
     handoff: bool = False,
     user_config: bool = False,
@@ -429,9 +429,9 @@ def launch(
         target: Target name from config; ``None`` resolves via the existing session, then ``default_target``.
         gpu: GPU override passed to the backend.
         name: Session name; defaults to :func:`derive_session_name` of the cwd.
-        initial_command: Remote argv to start inside tmux. Empty starts a login shell; exactly ``("claude",)`` enables
-            fwd's transcript-aware Claude workflow. The internal default preserves compatibility for existing callers;
-            the public ``fwd up`` command explicitly passes an empty tuple.
+        initial_command: Remote argv to start inside tmux. ``None`` resolves the configured default for the selected
+            target, empty starts a login shell, and exactly ``("claude",)`` enables fwd's transcript-aware Claude
+            workflow. The public ``fwd up`` command explicitly passes an empty tuple when no command is given.
         session: Transfer the live transcript for ``claude --resume`` (best-effort).
         handoff: Generate and use ``HANDOFF.md`` instead of a transcript.
         user_config: Upload the user's Claude config bundle.
@@ -459,6 +459,8 @@ def launch(
 
     target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
+    if initial_command is None:
+        initial_command = cfg.command_for(target_cfg.name)
     agent = agents.resolve(initial_command)
     is_claude = agent is not None and agent.name == "claude"
     if not is_claude and any((session, handoff, user_config, creds)):

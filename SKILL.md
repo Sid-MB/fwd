@@ -42,6 +42,16 @@ fwd up --target my-box                  # any Host alias in ~/.ssh/config
 
 Configured targets always win over inferred ones. Slurm is deliberately not inferable (site-specific login host, scratch path and allocation) — for a cluster, tell the user to run `fwd setup`, or write a config using `fwd config --example slurm`.
 
+Bare `fwd` launches Claude when no session exists unless the user changes its command. Prefer the mutation commands over hand-editing:
+
+```sh
+fwd default codex                              # user-wide
+fwd default --project claude                   # current project overrides user
+fwd default --target runpod -- python -m agent # target overrides project and user
+```
+
+This is shorthand for `fwd config set default_command ...`. Precedence is target > project > user > built-in Claude. Plain `fwd up` is unaffected and still starts a background shell when no command is supplied.
+
 Minimal target per backend:
 
 ```toml

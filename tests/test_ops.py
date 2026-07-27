@@ -270,6 +270,15 @@ def test_launch_runs_stages_in_order(project, state_store, config, fake_backend,
     ]
 
 
+def test_launch_resolves_none_initial_command_from_target_default(project, state_store, config, fake_backend, stub_world, calls) -> None:
+    config.default_command = ["claude"]
+    config.target_default_commands["dev"] = ["codex"]
+    state = launch_ops.launch(initial_command=None, attach=False)
+    assert state.flags["initial_command"] == ["codex"]
+    tmux_command = stub_world["tmux_new"][0][3]
+    assert "exec codex" in tmux_command
+
+
 def test_launch_exports_transcript_before_sync_imports_after_bootstrap(project, state_store, config, fake_backend, stub_world, calls) -> None:
     """Export is local and cheap; the import needs a remote home that bootstrap may have just created."""
     launch_ops.launch(attach=False)
@@ -688,7 +697,7 @@ def test_smart_default_launches_when_no_session(project, state_store, config, fa
     monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: launched.append(kwargs))
     with pytest.raises(typer.Exit):
         attach_ops.smart_default()
-    assert launched == [{"initial_command": ("claude",), "attach": True}]
+    assert launched == [{"initial_command": None, "attach": True}]
 
 
 # --- lifecycle ---------------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,7 @@ MODULES = [
     "fwd.ops.transfer",
 ]
 
-EXPECTED_COMMANDS = {"up", "launch", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor", "version", "config"}
+EXPECTED_COMMANDS = {"up", "launch", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor", "version", "config", "default"}
 
 
 @pytest.mark.parametrize("module", MODULES)
@@ -63,7 +64,7 @@ def test_typer_app_registers_all_commands() -> None:
     """The Typer app instantiates and exposes the full command surface from the plan."""
     from fwd.cli import app
 
-    names = {cmd.name or cmd.callback.__name__ for cmd in app.registered_commands}
+    names = {cmd.name or cmd.callback.__name__ for cmd in app.registered_commands} | {group.name for group in app.registered_groups}
     assert EXPECTED_COMMANDS <= names, f"missing commands: {sorted(EXPECTED_COMMANDS - names)}"
 
 
@@ -98,6 +99,33 @@ def test_up_help_explains_how_to_add_a_target() -> None:
     result = CliRunner().invoke(app, ["up", "--help"])
     assert result.exit_code == 0
     assert "To add a new target, run 'fwd setup'." in result.output
+
+
+def test_default_and_config_set_write_the_same_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The convenience command and general mutation surface must share semantics rather than merely similar help."""
+    from fwd import config as config_mod
+    from fwd.cli import app
+
+    global_path = tmp_path / "config.toml"
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    default_result = CliRunner().invoke(app, ["default", "codex"])
+    assert default_result.exit_code == 0, default_result.output
+    assert tomllib.loads(global_path.read_text(encoding="utf-8"))["default_command"] == ["codex"]
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    set_result = CliRunner().invoke(app, ["config", "set", "--project", "default_command", "python", "-m", "agent"])
+    assert set_result.exit_code == 0, set_result.output
+    assert tomllib.loads((project / ".fwd" / "config.toml").read_text(encoding="utf-8"))["default_command"] == ["python", "-m", "agent"]
+
+
+def test_config_example_backend_compatibility_syntax_still_works() -> None:
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["config", "--example", "runpod"])
+    assert result.exit_code == 0, result.output
+    assert tomllib.loads(result.output)["targets"]["pod"]["backend"] == "runpod"
 
 
 def test_version_command() -> None:

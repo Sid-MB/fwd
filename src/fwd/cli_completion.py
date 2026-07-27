@@ -141,3 +141,16 @@ complete_example_backend = static_completer(
         ("slurm", "Slurm target example"),
     )
 )
+complete_config_key = static_completer(
+    (
+        ("default_command", "argv launched by bare fwd"),
+        ("default_target", "target used when --target is omitted"),
+        ("claude.user_config", "sync ~/.claude settings and extensions"),
+        ("claude.creds", "copy Claude OAuth credentials to the remote"),
+        ("claude.session", "transfer and resume the Claude transcript"),
+        ("claude.handoff", "use HANDOFF.md instead of the transcript"),
+        ("sync.exclude", "replacement list of sync exclusion patterns"),
+        ("sync.use_gitignore", "honor per-directory .gitignore rules"),
+        ("sync.delete", "delete remote-only files while pushing"),
+    )
+)

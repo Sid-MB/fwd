@@ -23,6 +23,7 @@ needs. A leaf present in the project file is attributed to it, else the global f
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import MISSING, fields
 from pathlib import Path
 from types import UnionType
@@ -94,6 +95,9 @@ SECTION_DOCS: dict[str, str] = {
     "use_gitignore": "also honour the repo's own .gitignore, per directory",
     "delete": "push mirrors local, removing remote-only files",
 }
+
+DEFAULT_COMMAND_DOC = "argv launched by bare 'fwd'; target_defaults.<name>.default_command takes precedence"
+_KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 # Fields with no usable default that the user must fill in for the target to work at all. Emitted uncommented with a
 # placeholder so the example is a working skeleton; everything else optional is emitted commented out.
@@ -191,11 +195,16 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
         lines.append("# default_target is unset  # default")
     else:
         lines.append(_annotated("default_target", default_target, ("default_target",), origins))
+    lines.append(_annotated("default_command", cfg.default_command, ("default_command",), origins))
 
     for section, obj in (("claude", cfg.claude), ("sync", cfg.sync)):
         lines += ["", f"[{section}]"]
         for key, value in _dataclass_items(obj):
             lines.append(_annotated(key, value, (section, key), origins))
+
+    for name, command in sorted(cfg.target_default_commands.items()):
+        lines += ["", f"[target_defaults.{name}]"]
+        lines.append(_annotated("default_command", command, ("target_defaults", name, "default_command"), origins))
 
     if not cfg.targets:
         lines += [
@@ -275,9 +284,15 @@ def render_example(which: str = "all") -> str:
         "# 'fwd up --target user@host' (or any Host alias in ~/.ssh/config) works with no config file at all.",
         "",
         f'default_target = "{EXAMPLE_TARGET_NAMES[backends[0]]}"  # used when --target is omitted',
+        'default_command = ["claude"]  # argv launched by bare fwd; set with: fwd default <command>',
     ]
     for backend in backends:
         lines += ["", *_render_example_target(backend)]
+    lines += [
+        "",
+        f"[target_defaults.{EXAMPLE_TARGET_NAMES[backends[0]]}]",
+        'default_command = ["codex"]  # overrides project/user default_command whenever this target is selected',
+    ]
     lines += ["", *_render_example_section("claude", ClaudeConfig())]
     lines += ["", *_render_example_section("sync", SyncConfig())]
     lines += [
@@ -340,9 +355,20 @@ def render_schema() -> str:
         "type": "object",
         "properties": {
             "default_target": {"type": "string", "description": "Target used when --target is omitted."},
+            "default_command": {"type": "array", "items": {"type": "string"}, "minItems": 1, "default": ["claude"], "description": DEFAULT_COMMAND_DOC},
             "claude": _section_schema(ClaudeConfig, SECTION_DOCS),
             "sync": _section_schema(SyncConfig, SECTION_DOCS),
             "targets": {"type": "object", "description": "Named remote targets.", "additionalProperties": {"oneOf": target_refs}},
+            "target_defaults": {
+                "type": "object",
+                "description": "Target-specific settings that override both project and user defaults.",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {"default_command": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": DEFAULT_COMMAND_DOC}},
+                    "required": ["default_command"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "additionalProperties": False,
         "$defs": {f"{backend}Target": _section_schema(cls, FIELD_DOCS, backend=backend) for backend, cls in TARGET_TYPES.items()},
@@ -374,6 +400,88 @@ def show(which_example: str | None = None, project_dir: Path | None = None, *, s
         ui.info("run 'fwd setup' for the wizard, or 'fwd config --example' for a commented reference to start from")
         ui.info("or skip config entirely: 'fwd up --target runpod', or 'fwd up --target user@host'")
     ui.raw(render_effective(cfg, root))
+
+
+def _config_value(key: str, values: tuple[str, ...]) -> Any:
+    """Convert CLI words into a TOML value while keeping command argv lossless.
+
+    ``default_command`` is intentionally always an array, including a one-word command. Other keys accept a convenient
+    scalar form (booleans and integers are inferred through TOML) and become string arrays when multiple words are
+    supplied. Users can still edit the file directly for richer TOML structures.
+    """
+    if not values:
+        raise ConfigError("a value is required")
+    if key == "default_command":
+        return list(values)
+    if len(values) > 1:
+        return list(values)
+    try:
+        return config_mod.tomlkit.parse(f"value = {values[0]}\n").unwrap()["value"]
+    except Exception:
+        return values[0]
+
+
+def _assign_path(document: Any, path: tuple[str, ...], value: Any) -> None:
+    """Round-trip assign a dotted path, creating only the missing TOML tables."""
+    current = document
+    for segment in path[:-1]:
+        existing = current.get(segment)
+        if existing is None:
+            existing = config_mod.tomlkit.table()
+            current[segment] = existing
+        if not hasattr(existing, "__setitem__"):
+            raise ConfigError(f"cannot set {'.'.join(path)!r}: {segment!r} is already a scalar value")
+        current = existing
+    current[path[-1]] = value
+
+
+def set_value(
+    key: str,
+    values: tuple[str, ...],
+    *,
+    user: bool = False,
+    project: bool = False,
+    target: str | None = None,
+    project_dir: Path | None = None,
+) -> Path:
+    """Set one config value at user, project, or target scope while preserving comments and unrelated settings.
+
+    User scope writes ``~/.fwd/config.toml`` and is the default. Project scope writes ``<cwd>/.fwd/config.toml``.
+    Target scope writes ``[target_defaults.<name>]`` in the user file; it is intentionally independent of
+    ``[targets.<name>]`` so implicit targets can receive defaults without becoming incomplete backend declarations.
+    """
+    selected = int(user) + int(project) + int(target is not None)
+    if selected > 1:
+        raise ConfigError("--user, --project, and --target are mutually exclusive")
+    segments = tuple(key.split("."))
+    if not segments or any(not _KEY_SEGMENT.fullmatch(segment) for segment in segments):
+        raise ConfigError(f"invalid config key {key!r}; use dotted names containing letters, numbers, '_' or '-'")
+    if target is not None:
+        if key != "default_command":
+            raise ConfigError("target scope currently supports only default_command")
+        if not target.strip():
+            raise ConfigError("--target requires a non-empty target name")
+        path_segments = ("target_defaults", target, key)
+        destination = config_mod.GLOBAL_CONFIG_PATH
+        scope = f"target {target!r}"
+    elif project:
+        destination = (project_dir or Path.cwd()).resolve() / PROJECT_CONFIG_RELPATH
+        path_segments = segments
+        scope = "project"
+    else:
+        destination = config_mod.GLOBAL_CONFIG_PATH
+        path_segments = segments
+        scope = "user"
+
+    try:
+        document = config_mod.tomlkit.parse(destination.read_text(encoding="utf-8")) if destination.is_file() else config_mod.tomlkit.document()
+    except Exception as exc:
+        raise ConfigError(f"failed to parse {destination}: {exc}") from exc
+    _assign_path(document, path_segments, _config_value(key, values))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(config_mod.tomlkit.dumps(document), encoding="utf-8")
+    ui.ok(f"set {key!r} for {scope} in {destination}")
+    return destination
 
 
 def explain_target(name: str, project_dir: Path | None = None) -> str:

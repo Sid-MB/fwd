@@ -71,6 +71,7 @@ DEFAULT_RUNPOD_GPU_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu2
 # (`--compute-type GPU|CPU`, `--cloud-type SECURE|COMMUNITY`). Stored lower-case; the backend upper-cases for the CLI.
 RUNPOD_COMPUTE_TYPES: frozenset[str] = frozenset({"gpu", "cpu"})
 RUNPOD_CLOUD_TYPES: frozenset[str] = frozenset({"secure", "community"})
+BUILTIN_DEFAULT_COMMAND: tuple[str, ...] = ("claude",)
 
 
 class ConfigError(RuntimeError):
@@ -295,15 +296,23 @@ class Config:
     """Fully merged configuration for one invocation.
 
     Attributes:
+        default_command: User/project-merged argv launched by bare ``fwd`` when no session exists.
+        target_default_commands: Per-target argv overrides, intentionally separate from backend target definitions.
         sources: Config files that actually contributed, in precedence order. Surfaced by ``fwd doctor`` so users can
             tell which file set a surprising value.
     """
 
     default_target: str | None = None
+    default_command: list[str] = field(default_factory=lambda: list(BUILTIN_DEFAULT_COMMAND))
+    target_default_commands: dict[str, list[str]] = field(default_factory=dict)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     sources: list[Path] = field(default_factory=list)
+
+    def command_for(self, target_name: str) -> tuple[str, ...]:
+        """Resolve the startup command with target-specific settings taking precedence over merged file settings."""
+        return tuple(self.target_default_commands.get(target_name, self.default_command))
 
     def target(self, name: str | None = None) -> TargetConfig:
         """Resolve which target to use.
@@ -446,6 +455,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
     claude_raw = merged.get("claude", {}) or {}
     sync_raw = merged.get("sync", {}) or {}
     targets_raw = merged.get("targets", {}) or {}
+    target_defaults_raw = merged.get("target_defaults", {}) or {}
 
     claude = ClaudeConfig(
         user_config=bool(claude_raw.get("user_config", False)),
@@ -461,8 +471,19 @@ def load_config(project_dir: str | Path | None = None) -> Config:
     targets = {name: parse_target(name, raw or {}) for name, raw in targets_raw.items()}
 
     default_target = merged.get("default_target")
+    default_command = merged.get("default_command", list(BUILTIN_DEFAULT_COMMAND))
+    if not isinstance(default_command, list) or not all(isinstance(part, str) for part in default_command) or not default_command:
+        raise ConfigError("default_command must be a non-empty array of strings")
+    target_default_commands: dict[str, list[str]] = {}
+    for name, raw in target_defaults_raw.items():
+        command = (raw or {}).get("default_command")
+        if not isinstance(command, list) or not all(isinstance(part, str) for part in command) or not command:
+            raise ConfigError(f"target_defaults.{name}.default_command must be a non-empty array of strings")
+        target_default_commands[str(name)] = list(command)
     return Config(
         default_target=str(default_target) if default_target else None,
+        default_command=list(default_command),
+        target_default_commands=target_default_commands,
         claude=claude,
         sync=sync,
         targets=targets,

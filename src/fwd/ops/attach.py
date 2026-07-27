@@ -214,5 +214,5 @@ def smart_default(*, restart: bool = False) -> NoReturn:
         # would launch a second machine for a directory that already has one.
         return attach(session.name, restart=restart)
     ui.info(f"no fwd session for {Path.cwd().name}; looking for a saved target")
-    launch_ops.launch(initial_command=launch_ops.MAGIC_CLAUDE_COMMAND, attach=True)
+    launch_ops.launch(initial_command=None, attach=True)
     raise typer.Exit(0)

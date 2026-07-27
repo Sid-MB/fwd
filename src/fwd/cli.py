@@ -30,7 +30,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
-from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_example_backend, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
+from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
@@ -49,6 +49,14 @@ app = typer.Typer(
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+config_app = typer.Typer(
+    name="config",
+    help="Inspect or update fwd's layered configuration.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+app.add_typer(config_app, name="config")
 
 
 def _interactive_terminal() -> bool:
@@ -87,6 +95,8 @@ def main(
 
     For a launch without saving config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias.
     """
+    if ctx.invoked_subcommand == "set" and (example or schema):
+        ui.die("--example/--schema cannot be combined with 'config set'")
     if ctx.invoked_subcommand is not None:
         return
     from fwd.ops import attach as attach_ops
@@ -240,9 +250,9 @@ class ExampleBackend(str, Enum):
     all = "all"
 
 
-@app.command("config")
+@config_app.callback()
 def config_cmd(
-    backend: Annotated[ExampleBackend | None, typer.Argument(help="With --example, which backend to show; defaults to all.", autocompletion=complete_example_backend)] = None,
+    ctx: typer.Context,
     example: Annotated[bool, typer.Option("--example", help="Print a commented reference config generated from fwd's own schema instead of your effective one.")] = False,
     schema: Annotated[bool, typer.Option("--schema", help="Print the complete machine-readable JSON Schema for config files.")] = False,
 ) -> None:
@@ -250,13 +260,78 @@ def config_cmd(
 
     Outputs go to stdout without terminal formatting. Guide: https://github.com/Sid-MB/fwd#configuration
     """
+    if ctx.invoked_subcommand is not None:
+        return
     if example and schema:
         ui.die("--example and --schema are mutually exclusive")
-    if backend is not None and not example:
-        ui.die(f"'fwd config {backend.value}' is only meaningful with --example; run 'fwd config --example {backend.value}' for a reference, or 'fwd config' for your effective config")
     from fwd.ops import configcmd
 
-    configcmd.show((backend or ExampleBackend.all).value if example else None, schema=schema)
+    configcmd.show(ExampleBackend.all.value if example else None, schema=schema)
+
+
+def _config_example_backend(ctx: typer.Context, backend: ExampleBackend) -> None:
+    """Preserve ``fwd config --example <backend>`` while allowing real config subcommands such as ``set``."""
+    parent = ctx.parent
+    if parent is None or not parent.params.get("example"):
+        ui.die(f"'fwd config {backend.value}' is only meaningful with --example; run 'fwd config --example {backend.value}' for a reference, or 'fwd config' for your effective config")
+    if parent.params.get("schema"):
+        ui.die("--example and --schema are mutually exclusive")
+    from fwd.ops import configcmd
+
+    configcmd.show(backend.value)
+
+
+def _example_backend_command(backend: ExampleBackend):
+    """Create one hidden compatibility command without exposing the captured backend as a CLI parameter."""
+
+    def command(ctx: typer.Context) -> None:
+        _config_example_backend(ctx, backend)
+
+    return command
+
+
+for _example_backend in ExampleBackend:
+    config_app.command(_example_backend.value, hidden=True)(_example_backend_command(_example_backend))
+
+
+def _set_config_value(key: str, value: tuple[str, ...], *, user: bool, project: bool, target: str | None) -> None:
+    """Shared implementation for ``config set`` and its task-focused ``default`` alias."""
+    from fwd.config import ConfigError
+    from fwd.ops import configcmd
+
+    try:
+        configcmd.set_value(key, value, user=user, project=project, target=target)
+    except ConfigError as exc:
+        ui.die(str(exc))
+
+
+@config_app.command("set", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def config_set_cmd(
+    key: Annotated[str, typer.Argument(help="Dotted config key, for example default_target, default_command, or sync.delete.", autocompletion=complete_config_key)],
+    value: Annotated[list[str] | None, typer.Argument(help="Value words. Multiple words become an array; default_command is always stored as argv.", autocompletion=complete_agent)] = None,
+    user: Annotated[bool, typer.Option("--user", help="Write ~/.fwd/config.toml; this is the default scope.")] = False,
+    project: Annotated[bool, typer.Option("--project", help="Write ./.fwd/config.toml for this project.")] = False,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Set a target-specific value, which overrides project and user defaults.", autocompletion=complete_target)] = None,
+) -> None:
+    """Set a configuration value without opening an editor.
+
+    Use '--' before values that begin with '-', for example: fwd config set default_command -- python -m agent
+    """
+    _set_config_value(key, tuple(value or ()), user=user, project=project, target=target)
+
+
+@app.command("default", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def default_cmd(
+    command: Annotated[list[str] | None, typer.Argument(help="Default command argv, such as claude, codex, or python -m agent.", autocompletion=complete_agent)] = None,
+    user: Annotated[bool, typer.Option("--user", help="Set the user-wide default in ~/.fwd/config.toml; this is the default scope.")] = False,
+    project: Annotated[bool, typer.Option("--project", help="Set the default only for the current project.")] = False,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Set the default for one target; target settings override project and user settings.", autocompletion=complete_target)] = None,
+) -> None:
+    """Set the command bare ``fwd`` launches; shorthand for ``fwd config set default_command ...``.
+
+    Use '--' before command flags, for example: fwd default --project -- python -m my_agent
+    """
+    _set_config_value("default_command", tuple(command or ()), user=user, project=project, target=target)
 
 
 @app.command("setup")
