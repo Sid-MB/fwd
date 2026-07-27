@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from dataclasses import MISSING, fields
 from pathlib import Path
@@ -488,10 +489,12 @@ def set_value(
     """
     destination, path_segments, scope = _scope_location(key, user=user, project=project, target=target, project_dir=project_dir)
     document = _read_document(destination)
-    _assign_path(document, path_segments, _config_value(key, values))
+    stored_value = _config_value(key, values)
+    _assign_path(document, path_segments, stored_value)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(config_mod.tomlkit.dumps(document), encoding="utf-8")
-    ui.ok(f"set {key!r} for {scope} in {destination}")
+    displayed_value = shlex.join(stored_value) if key == "default_command" else (stored_value if isinstance(stored_value, str) else _toml_scalar(stored_value))
+    ui.ok(f"set {key!r} for {scope} to {displayed_value!r} in {destination}")
     return destination
 
 

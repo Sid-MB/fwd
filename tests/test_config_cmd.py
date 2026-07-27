@@ -278,7 +278,7 @@ def test_default_command_falls_back_to_claude_without_config(tmp_path: Path, mon
     assert load_config(tmp_path).command_for("runpod") == ("claude",)
 
 
-def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     global_path = tmp_path / "home" / "config.toml"
     _write(global_path, '# keep me\ndefault_target = "runpod"\n')
     project = tmp_path / "project"
@@ -295,9 +295,13 @@ def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path
     assert global_config["default_command"] == ["codex"]
     assert global_config["target_defaults"]["runpod"]["default_command"] == ["claude"]
     assert project_config["default_command"] == ["python", "-m", "agent"]
+    messages = capsys.readouterr().err
+    assert "set 'default_command' for user to 'codex'" in messages
+    assert "set 'default_command' for project to 'python -m agent'" in messages
+    assert "set 'default_command' for target 'runpod' to 'claude'" in messages
 
 
-def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     global_path = tmp_path / "config.toml"
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
     configcmd.set_value("sync.delete", ("false",))
@@ -305,6 +309,9 @@ def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkey
     parsed = tomllib.loads(global_path.read_text(encoding="utf-8"))
     assert parsed["sync"]["delete"] is False
     assert parsed["default_target"] == "runpod"
+    messages = capsys.readouterr().err
+    assert "set 'sync.delete' for user to 'false'" in messages
+    assert "set 'default_target' for user to 'runpod'" in messages
 
 
 def test_config_set_rejects_conflicting_scopes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
