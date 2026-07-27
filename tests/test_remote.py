@@ -455,6 +455,76 @@ def test_bootstrap_codex_mode_validates_codex_without_requiring_claude(tmp_path:
     assert "already applied" in second.stdout
 
 
+def test_bootstrap_codex_falls_back_to_bun_when_npm_fails(tmp_path: Path) -> None:
+    """CPU images commonly have neither Node nor npm; the Bun installed by fwd must still produce a runnable Codex."""
+    prefix = tmp_path / "tools"
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin = tmp_path / "fakebin"
+    for tool in ("uv", "tmux"):
+        _fake_tool(fake_bin, tool)
+    npm = fake_bin / "npm"
+    npm.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    npm.chmod(0o755)
+    bun = fake_bin / "bun"
+    bun.write_text(
+        "#!/bin/sh\n"
+        'if [ "${1:-}" = "--version" ]; then echo "bun 1.0"; exit 0; fi\n'
+        'if [ -f "${1:-}" ]; then entry="$1"; shift; exec "$entry" "$@"; fi\n'
+        'mkdir -p "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin"\n'
+        'mkdir -p "$BUN_INSTALL/bin"\n'
+        'cp "$0" "$BUN_INSTALL/bin/bun"\n'
+        'cat >"$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js" <<\'EOF\'\n'
+        "#!/bin/sh\n"
+        'echo "codex 1.0"\n'
+        "EOF\n"
+        'chmod +x "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js"\n',
+        encoding="utf-8",
+    )
+    bun.chmod(0o755)
+    env = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "FWD_TOOL_PREFIX": str(prefix),
+        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
+        "FWD_AGENT": "codex",
+    }
+
+    result = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert "npm install of @openai/codex failed; trying Bun" in result.stderr
+    assert "codex installed with Bun: codex 1.0" in result.stdout
+    assert (prefix / "bin" / "codex").is_file()
+
+
+def test_bootstrap_codex_failure_aborts_before_writing_success_marker(tmp_path: Path) -> None:
+    """A requested agent missing after bootstrap is a bootstrap error, not a later mysterious dead tmux."""
+    prefix = tmp_path / "tools"
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin = tmp_path / "fakebin"
+    for tool in ("uv", "tmux"):
+        _fake_tool(fake_bin, tool)
+    for tool in ("npm", "bun"):
+        executable = fake_bin / tool
+        executable.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        executable.chmod(0o755)
+    env = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "FWD_TOOL_PREFIX": str(prefix),
+        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
+        "FWD_AGENT": "codex",
+    }
+
+    result = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "Codex was requested but could not be installed" in result.stderr
+    assert not list(prefix.glob(".fwd-bootstrap-*"))
+
+
 def test_bootstrap_requires_its_contract_vars(tmp_path: Path) -> None:
     result = subprocess.run(
         ["bash", str(BOOTSTRAP_PATH)],

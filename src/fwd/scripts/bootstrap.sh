@@ -31,7 +31,7 @@
 set -euo pipefail
 
 # Bump when the layout or the contents of fwd-env.sh change; stale markers from other versions force a full re-run.
-FWD_BOOTSTRAP_VERSION=2
+FWD_BOOTSTRAP_VERSION=3
 
 : "${FWD_TOOL_PREFIX:?bootstrap requires FWD_TOOL_PREFIX}"
 : "${FWD_REMOTE_DIR:?bootstrap requires FWD_REMOTE_DIR}"
@@ -235,11 +235,35 @@ install_codex() {
     if have npm; then
         log "installing Codex CLI into $NPM_ROOT"
         npm_config_prefix="$NPM_ROOT" npm install -g @openai/codex >/dev/null 2>&1 \
-            || { warn "npm install of @openai/codex failed"; return 0; }
-        have codex && log "codex installed: $(codex --version 2>/dev/null || echo unknown)"
-    else
-        warn "could not install codex because npm is unavailable; launch will fail to start the session"
+            || warn "npm install of @openai/codex failed; trying Bun"
+        if have codex && codex --version >/dev/null 2>&1; then
+            log "codex installed: $(codex --version 2>/dev/null || echo unknown)"
+            return 0
+        fi
     fi
+    if have bun; then
+        log "installing Codex CLI with Bun into $BUN_ROOT"
+        BUN_INSTALL="$BUN_ROOT" bun install --global @openai/codex >/dev/null 2>&1 \
+            || { warn "Bun install of @openai/codex failed"; return 1; }
+        # The npm package's bin script uses `#!/usr/bin/env node`. CPU-first images may have Bun but no Node, so expose
+        # a stable wrapper that explicitly runs the package entrypoint with Bun instead of leaving a broken symlink.
+        local codex_entry="$BUN_ROOT/install/global/node_modules/@openai/codex/bin/codex.js"
+        if [ -f "$codex_entry" ]; then
+            cat >"$BIN_DIR/codex" <<EOF
+#!/bin/sh
+exec "$BUN_ROOT/bin/bun" "$codex_entry" "\$@"
+EOF
+            chmod +x "$BIN_DIR/codex"
+        fi
+        if have codex && codex --version >/dev/null 2>&1; then
+            log "codex installed with Bun: $(codex --version 2>/dev/null || echo unknown)"
+            return 0
+        fi
+        warn "Bun installed @openai/codex but the codex command does not run"
+        return 1
+    fi
+    warn "could not install codex because neither npm nor Bun is available"
+    return 1
 }
 
 link_claude_binary() {
@@ -289,7 +313,11 @@ else
     install_uv || true
     install_bun || true
     install_node || true
-    if [ "$FWD_AGENT" = "codex" ]; then install_codex || true; else install_claude || true; fi
+    if [ "$FWD_AGENT" = "codex" ]; then
+        install_codex || fail "Codex was requested but could not be installed. Install Node/npm or Bun on the remote host, then retry."
+    else
+        install_claude || true
+    fi
     install_tmux
 fi
 
