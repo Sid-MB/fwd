@@ -95,6 +95,19 @@ def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: s
         return raw
 
 
+def _advanced_options_enabled(parameters: list[ConfigParameter], values: dict[str, Any], provider_summary: tuple[str, ...]) -> bool:
+    """Render one reusable gate for a backend's applicable advanced fields.
+
+    Conditional fields are omitted when their dependency does not match, so a CPU RunPod target does not advertise a
+    meaningless GPU volume. A backend may replace generic ``key = value`` details with provider-resolved information,
+    as SSH does after ``ssh -G``.
+    """
+    applicable = [parameter for parameter in parameters if not parameter.prompt_when or all(str(values.get(dependency, "")).lower() == expected.lower() for dependency, expected in parameter.prompt_when)]
+    generic_defaults = [f"{parameter.name} = {values.get(parameter.name)}" for parameter in applicable if parameter.prompt and parameter.name in values]
+    detail = "; ".join(provider_summary or tuple(generic_defaults))
+    return ui.confirm(f"Set advanced options? (Defaults: {detail})", default=False)
+
+
 def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prompt for unsupplied target fields before asking for its fwd label.
 
@@ -129,12 +142,8 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
             if explicitly_supplied:
                 edit_advanced = True
             else:
-                detail = "; ".join(summary) if summary else "no provider-specific values detected"
-                if backend == "ssh":
-                    question = f"Set advanced SSH parameters (non-default SSH key path, proxy jump, user, or port)? OpenSSH currently resolves: {detail}"
-                else:
-                    question = f"Set advanced {backend} parameters? Current resolved values: {detail}"
-                edit_advanced = ui.confirm(question, default=False)
+                known_values = {**defaults, **provided, **answers}
+                edit_advanced = _advanced_options_enabled(advanced_parameters, known_values, summary)
             advanced_decided = True
         if parameter.advanced and not edit_advanced:
             continue
@@ -301,5 +310,5 @@ def run_wizard(
         _test_connection(target, existing, ask=False)
     ui.info("run 'fwd up' in a project directory to launch a session")
     # The wizard only asks about the fields it needs; point at the rest of the schema rather than pretending it is all.
-    ui.info("'fwd config' shows the effective config and which file each value came from")
-    ui.info("'fwd config --example' lists every available field, with defaults and comments")
+    # ui.info("'fwd config' shows the effective config and which file each value came from")
+    # ui.info("'fwd config --example' lists every available field, with defaults and comments")

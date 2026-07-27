@@ -21,6 +21,7 @@ def test_runpod_setup_prompts_for_compute_type_first_and_skips_gpu_for_cpu(monke
         return current
 
     monkeypatch.setattr(wizard, "_prompt_value", accept_default)
+    monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: False)
     answers = wizard._prompt_target_values("runpod")
 
     assert answers == {}
@@ -39,12 +40,37 @@ def test_runpod_setup_switches_to_gpu_defaults_when_gpu_compute_is_selected(monk
         return current
 
     monkeypatch.setattr(wizard, "_prompt_value", accept_default)
+    monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: True)
     answers = wizard._prompt_target_values("runpod", {"compute_type": "gpu"})
 
     assert answers == {"compute_type": "gpu"}
     assert ("gpu", "NVIDIA GeForce RTX 4090") in prompted
     assert ("volume_gb", 50) in prompted
     assert ("image", DEFAULT_RUNPOD_GPU_IMAGE) in prompted
+
+
+def test_runpod_advanced_gate_lists_cpu_defaults_without_gpu_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reusable gate summarizes every applicable advanced default and omits conditionally irrelevant fields."""
+    confirmations: list[str] = []
+    monkeypatch.setattr(wizard, "_prompt_value", lambda field_name, current, **kwargs: current)
+    monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: confirmations.append(message) or False)
+
+    wizard._prompt_target_values("runpod")
+
+    assert confirmations == ["Set advanced options? (Defaults: cloud_type = secure; remote_base = /workspace; tool_prefix = /workspace/.fwd-tools; user = root)"]
+    assert "volume_gb" not in confirmations[0]
+
+
+def test_runpod_advanced_gate_lists_gpu_volume_and_skips_fields_when_declined(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompted: list[str] = []
+    confirmations: list[str] = []
+    monkeypatch.setattr(wizard, "_prompt_value", lambda field_name, current, **kwargs: prompted.append(field_name) or current)
+    monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: confirmations.append(message) or False)
+
+    wizard._prompt_target_values("runpod", {"compute_type": "gpu"})
+
+    assert "volume_gb = 50" in confirmations[0]
+    assert not {"cloud_type", "volume_gb", "remote_base", "tool_prefix", "user"} & set(prompted)
 
 
 def test_compute_type_has_a_noninteractive_setup_flag() -> None:
@@ -106,7 +132,7 @@ def test_ssh_advanced_fields_are_skipped_after_showing_resolved_openssh_values(m
     assert answers == {"host": "externjohn17"}
     assert [name for name, _ in prompted] == ["host", "remote_base"]
     assert len(confirmations) == 1
-    assert "Set advanced SSH parameters" in confirmations[0][0]
+    assert "Set advanced options? (Defaults:" in confirmations[0][0]
     assert "user=sid; port=2222; identity files=~/.ssh/id_work; proxy jump=none" in confirmations[0][0]
     assert confirmations[0][1] is False
 
