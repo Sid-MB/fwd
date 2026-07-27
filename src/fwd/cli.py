@@ -110,6 +110,8 @@ def _up(
 
     Magic commands 'claude' and 'codex' sync their agent settings and auto-attach in an interactive terminal. Startup
     is persistent in tmux. Use --no-attach for a background launch and '--' before remote command flags.
+
+    To add a new target, run 'fwd setup'.
     """
     from fwd.ops import launch as launch_ops
 

@@ -91,6 +91,15 @@ def test_help_groups_short_aliases_with_canonical_commands() -> None:
     assert CliRunner().invoke(app, ["s", "--help"]).exit_code == 0
 
 
+def test_up_help_explains_how_to_add_a_target() -> None:
+    """The launch surface should point users to setup when its target selector lacks the machine they need."""
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["up", "--help"])
+    assert result.exit_code == 0
+    assert "To add a new target, run 'fwd setup'." in result.output
+
+
 def test_version_command() -> None:
     from fwd import __version__
     from fwd.cli import app
