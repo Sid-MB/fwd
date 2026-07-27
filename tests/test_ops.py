@@ -484,7 +484,7 @@ def _seed(store: StateStore, project: Path, **overrides: Any) -> SessionState:
 @pytest.fixture
 def attach_world(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
     """Neutralize the two process-replacing/interactive calls attach makes."""
-    monkeypatch.setattr(launch_ops, "exec_attach", lambda endpoint, tmux: calls.append("exec_attach"))
+    monkeypatch.setattr(launch_ops, "exec_attach", lambda endpoint, tmux, session_name=None: calls.append("exec_attach"))
     monkeypatch.setattr(remote, "tmux_exists", lambda *a, **k: True)
 
 

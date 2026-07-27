@@ -199,7 +199,7 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
 
     session.touch_attached()
     launch_ops.store().upsert(session)
-    launch_ops.exec_attach(endpoint, session.tmux_session)
+    launch_ops.exec_attach(endpoint, session.tmux_session, session.name)
 
 
 def smart_default(*, restart: bool = False) -> NoReturn:

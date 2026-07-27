@@ -142,7 +142,7 @@ def backend_for(session: SessionState, *, config: Config | None = None) -> Provi
     return backends.make_backend(target, cfg)
 
 
-def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str) -> NoReturn:
+def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: str | None = None) -> NoReturn:
     """Replace this process with an interactive attach to a remote tmux session.
 
     Prefers :func:`fwd.remote.tmux_attach_argv` so remote-command construction stays in one place, falling back to
@@ -157,12 +157,12 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str) -> NoReturn:
     if not sys.stdin.isatty():
         ui.die("attach needs an interactive terminal; in scripts use 'fwd up' without --attach")
     try:
-        argv = remote.tmux_attach_argv(endpoint, tmux_session)
+        argv = remote.tmux_attach_argv(endpoint, tmux_session, session_name)
     except NotImplementedError:
         argv = None
     if argv:
         os.execvp(argv[0], argv)
-    endpoint.exec_interactive(f"tmux attach -t {shlex.quote(tmux_session)}")
+    endpoint.exec_interactive(remote.tmux_attach_command(tmux_session, session_name))
 
 
 def build_claude_command(*, resume_id: str | None, use_handoff: bool) -> str:
@@ -579,7 +579,7 @@ def launch(
 
     state.touch_attached()
     st.upsert(state)
-    exec_attach(endpoint, tmux_name)
+    exec_attach(endpoint, tmux_name, session_name)
 
 
 def _persist(

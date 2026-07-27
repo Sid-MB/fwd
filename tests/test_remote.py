@@ -170,6 +170,15 @@ def test_tmux_attach_argv_uses_tty_and_exact_target() -> None:
     assert "fwd-env.sh" in argv[-1]
 
 
+def test_tmux_attach_argv_prints_discoverable_next_steps_after_detach() -> None:
+    argv = tmux_attach_argv(_endpoint(), "fwd-demo", "demo-project")
+    remote_command = argv[-1]
+    assert "To attach, use `fwd attach demo-project`" in remote_command
+    assert "to stop, run `fwd stop demo-project`." in remote_command
+    assert "status=$?" in remote_command
+    assert 'exit \"$status\"' in remote_command
+
+
 def test_tmux_attach_remote_command_is_a_single_argv_element() -> None:
     """ssh takes the remote command as one string; splitting it would break on any quoted argument."""
     argv = tmux_attach_argv(_endpoint(), "fwd-demo")

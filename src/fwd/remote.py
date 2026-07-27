@@ -216,14 +216,29 @@ def _verify_tmux_alive(endpoint: SSHEndpoint, session: str, command: str) -> Non
     )
 
 
-def tmux_attach_argv(endpoint: SSHEndpoint, session: str) -> list[str]:
+def tmux_attach_command(session: str, fwd_session: str | None = None) -> str:
+    """Build the remote attach command, including a local-CLI reminder when tmux returns.
+
+    OpenSSH prints ``Shared connection ... closed`` only after the remote command exits, at which point the local
+    Python process no longer exists because attach deliberately uses ``exec``. Putting the reminder in this remote
+    command preserves the native terminal handoff while placing useful next steps immediately before OpenSSH's line.
+    The tmux exit status is retained so adding the reminder cannot turn a failed attach into success.
+    """
+    attach = f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
+    if not fwd_session:
+        return attach
+    attach_command = shlex.join(["fwd", "attach", fwd_session])
+    stop_command = shlex.join(["fwd", "stop", fwd_session])
+    hint = f"To attach, use `{attach_command}`; to stop, run `{stop_command}`."
+    return f"{attach}; status=$?; printf '\\n%s\\n' {shlex.quote(hint)} >&2; exit \"$status\""
+
+
+def tmux_attach_argv(endpoint: SSHEndpoint, session: str, fwd_session: str | None = None) -> list[str]:
     """Return the full local argv that attaches to a remote tmux session.
 
     Returned rather than executed so the caller can ``exec`` it and hand the tty straight to ssh.
     """
-    # "=name" is tmux's exact-match target syntax; a bare name would fnmatch and could hit "fwd-ab" when asked for "fwd-a".
-    remote = f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
-    return [*endpoint.ssh_argv(tty=True), remote]
+    return [*endpoint.ssh_argv(tty=True), tmux_attach_command(session, fwd_session)]
 
 
 def tmux_kill(endpoint: SSHEndpoint, session: str) -> None:
