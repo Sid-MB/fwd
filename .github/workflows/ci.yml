@@ -1,0 +1,37 @@
+# Minimal CI: the test suite is pure-Python and fully mocked at the ssh/backend boundary, so a plain ubuntu runner with
+# uv is enough — no ssh keys, no cloud credentials, no service containers. The matrix covers the floor (3.12, what
+# requires-python allows) and the current release, because those are the two versions a bug would actually surface on.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to a PR makes the in-flight run redundant; cancel it rather than paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # --frozen fails the run if uv.lock is out of date with pyproject.toml, so a dependency change cannot land
+      # without its lockfile update.
+      - run: uv sync --frozen --all-extras --dev
+        env:
+          UV_PYTHON: ${{ matrix.python-version }}
+
+      - run: uv run pytest -q

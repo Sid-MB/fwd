@@ -1,0 +1,64 @@
+# Publish to PyPI via OIDC trusted publishing — no API token is stored anywhere in this repo.
+#
+# Why the split into two jobs
+# ---------------------------
+# `build` has no special permissions and produces the artifact; `publish` is the only job holding `id-token: write` and
+# the `pypi` environment. Keeping them separate means the job that can mint a PyPI credential runs no project code and
+# no third-party build hooks — it only downloads an already-built artifact and uploads it. That is the shape PyPA
+# recommends, and it is what makes an environment protection rule meaningful: the gate sits in front of the upload, not
+# in front of the compilation.
+#
+# The version published comes from `version` in pyproject.toml, not from the git tag. PyPI refuses to overwrite an
+# existing version, so bump pyproject.toml in the same commit you tag, or the publish job fails at the upload.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # Builds both an sdist and a wheel into dist/. bootstrap.sh is force-included by the hatchling config, so the
+      # wheel is verified to carry it below rather than trusted to.
+      - run: uv build
+
+      # Guard the one packaging invariant that a plain `uv build` would happily get wrong: remote.BOOTSTRAP_PATH
+      # resolves bootstrap.sh out of the installed package, so a wheel missing it produces an fwd that cannot bootstrap
+      # anything. Cheaper to catch here than after it is immutable on PyPI.
+      - name: Verify the wheel ships bootstrap.sh
+        run: |
+          wheel=$(ls dist/*.whl)
+          unzip -l "$wheel" | grep -q 'fwd/scripts/bootstrap.sh' || { echo "::error::bootstrap.sh missing from $wheel"; exit 1; }
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment is where the trusted publisher is scoped and where a manual approval rule can be attached.
+    environment: pypi
+    permissions:
+      # The only permission this job needs: mint the short-lived OIDC token PyPI exchanges for an upload credential.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # No `password` / `user` inputs on purpose — supplying either would switch the action off OIDC and back to a
+      # stored secret.
+      - uses: pypa/gh-action-pypi-publish@release/v1
