@@ -313,6 +313,55 @@ def test_config_set_rejects_conflicting_scopes(tmp_path: Path, monkeypatch: pyte
         configcmd.set_value("default_command", ("codex",), user=True, project=True)
 
 
+def test_config_rm_removes_each_scope_and_prunes_empty_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "global.toml"
+    _write(global_path, 'default_command = ["codex"]\n[target_defaults.runpod]\ndefault_command = ["claude"]\n')
+    project = tmp_path / "project"
+    _write(project / ".fwd" / "config.toml", 'default_command = ["python"]\n[sync]\ndelete = false\n')
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+
+    assert configcmd.remove_value("default_command", force=True)
+    assert configcmd.remove_value("default_command", target="runpod", force=True)
+    assert configcmd.remove_value("sync.delete", project=True, project_dir=project, force=True)
+
+    global_config = tomllib.loads(global_path.read_text(encoding="utf-8"))
+    project_config = tomllib.loads((project / ".fwd" / "config.toml").read_text(encoding="utf-8"))
+    assert "default_command" not in global_config
+    assert "target_defaults" not in global_config
+    assert project_config == {"default_command": ["python"]}
+
+
+def test_config_rm_reports_missing_before_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
+    monkeypatch.setattr(configcmd.ui, "confirm", lambda *args, **kwargs: pytest.fail("missing values must not prompt"))
+    assert configcmd.remove_value("default_command") is False
+    assert "no 'default_command' config exists for user" in capsys.readouterr().err
+
+
+def test_config_rm_confirms_interactively_and_preserves_value_when_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "config.toml"
+    _write(global_path, 'default_command = ["codex"]\n')
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    monkeypatch.setattr(configcmd, "_interactive_terminal", lambda: True)
+    monkeypatch.setattr(configcmd.ui, "confirm", lambda *args, **kwargs: False)
+    assert configcmd.remove_value("default_command") is False
+    assert tomllib.loads(global_path.read_text(encoding="utf-8"))["default_command"] == ["codex"]
+
+    monkeypatch.setattr(configcmd.ui, "confirm", lambda *args, **kwargs: True)
+    assert configcmd.remove_value("default_command") is True
+    assert "default_command" not in tomllib.loads(global_path.read_text(encoding="utf-8"))
+
+
+def test_config_rm_requires_force_noninteractively(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    global_path = tmp_path / "config.toml"
+    _write(global_path, 'default_command = ["codex"]\n')
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    monkeypatch.setattr(configcmd, "_interactive_terminal", lambda: False)
+    with pytest.raises(ConfigError, match="--force"):
+        configcmd.remove_value("default_command")
+    assert configcmd.remove_value("default_command", force=True) is True
+
+
 def test_schema_and_example_discover_command_defaults() -> None:
     schema = json.loads(configcmd.render_schema())
     assert schema["properties"]["default_command"]["default"] == ["claude"]

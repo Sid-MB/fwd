@@ -136,6 +136,7 @@ tooltip/menu description; other shells still complete the session name. Install 
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides |
 | `fwd config` | Print the effective merged config, annotated with where each value came from |
 | `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` |
+| `fwd config rm KEY` | Remove one value at user, project, or target scope, revealing the next-higher default |
 | `fwd config --example [backend]` | Print a commented reference config generated from the schema |
 | `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling |
 | `fwd -V` | Print the installed version |
@@ -262,6 +263,8 @@ The equivalent general command is `fwd config set default_command ...`:
 fwd config set default_command codex
 fwd config set --project default_command -- python -m agent
 fwd config set sync.delete false
+fwd config rm --project default_command       # confirms in a terminal
+fwd config rm --target runpod default_command # removes only the target override
 ```
 
 Precedence is **target > project > user > built-in `claude`**. Commands are stored as argv arrays rather than shell
@@ -277,6 +280,10 @@ default_command = ["python", "-m", "agent"]
 `fwd up` remains explicit: plain `fwd up` starts a background shell, while `fwd up claude`, `fwd up codex`, and
 `fwd up -- <command>` select a command for that launch. Use `--user`, `--project`, or `--target NAME` with
 `fwd default`/`fwd config set`; omitting all three means `--user`.
+
+`fwd config rm` uses the same scope flags. It reports when the selected scope has no such value and leaves the file
+unchanged. Existing values require confirmation in an interactive terminal; scripts and agents must pass `--force`.
+Removing an override reveals the next value in the precedence chain rather than copying that value into the file.
 
 ### Zero-config quickstart
 

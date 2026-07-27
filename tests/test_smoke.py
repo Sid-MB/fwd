@@ -128,6 +128,31 @@ def test_config_example_backend_compatibility_syntax_still_works() -> None:
     assert tomllib.loads(result.output)["targets"]["pod"]["backend"] == "runpod"
 
 
+def test_config_rm_cli_reports_missing_and_removes_with_force(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fwd import config as config_mod
+    from fwd.cli import app
+
+    global_path = tmp_path / "config.toml"
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    missing = CliRunner().invoke(app, ["config", "rm", "default_command"])
+    assert missing.exit_code == 0
+    assert "no 'default_command' config exists" in missing.output
+
+    global_path.write_text('default_command = ["codex"]\n', encoding="utf-8")
+    removed = CliRunner().invoke(app, ["config", "rm", "default_command", "--force"])
+    assert removed.exit_code == 0, removed.output
+    assert "removed 'default_command'" in removed.output
+    assert "default_command" not in tomllib.loads(global_path.read_text(encoding="utf-8"))
+
+
+def test_config_mutation_rejects_parent_rendering_flags() -> None:
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["config", "--schema", "rm", "default_command"])
+    assert result.exit_code != 0
+    assert "cannot be combined with 'config rm'" in result.output
+
+
 def test_version_command() -> None:
     from fwd import __version__
     from fwd.cli import app

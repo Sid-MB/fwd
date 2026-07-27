@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import MISSING, fields
 from pathlib import Path
 from types import UnionType
@@ -44,6 +45,7 @@ from fwd.config import (
     implicit_target,
     load_config,
 )
+from fwd.output import is_machine_environment
 
 # Provenance labels. Kept short so they fit as end-of-line comments; the header legend maps them to real paths.
 SRC_PROJECT = "project"
@@ -435,6 +437,40 @@ def _assign_path(document: Any, path: tuple[str, ...], value: Any) -> None:
     current[path[-1]] = value
 
 
+def _scope_location(
+    key: str,
+    *,
+    user: bool,
+    project: bool,
+    target: str | None,
+    project_dir: Path | None,
+) -> tuple[Path, tuple[str, ...], str]:
+    """Resolve CLI scope flags to one file, one TOML path, and a user-facing scope label."""
+    selected = int(user) + int(project) + int(target is not None)
+    if selected > 1:
+        raise ConfigError("--user, --project, and --target are mutually exclusive")
+    segments = tuple(key.split("."))
+    if not segments or any(not _KEY_SEGMENT.fullmatch(segment) for segment in segments):
+        raise ConfigError(f"invalid config key {key!r}; use dotted names containing letters, numbers, '_' or '-'")
+    if target is not None:
+        if key != "default_command":
+            raise ConfigError("target scope currently supports only default_command")
+        if not target.strip():
+            raise ConfigError("--target requires a non-empty target name")
+        return config_mod.GLOBAL_CONFIG_PATH, ("target_defaults", target, key), f"target {target!r}"
+    if project:
+        return (project_dir or Path.cwd()).resolve() / PROJECT_CONFIG_RELPATH, segments, "project"
+    return config_mod.GLOBAL_CONFIG_PATH, segments, "user"
+
+
+def _read_document(path: Path) -> Any:
+    """Read a round-trippable TOML document, returning an empty document for an absent file."""
+    try:
+        return config_mod.tomlkit.parse(path.read_text(encoding="utf-8")) if path.is_file() else config_mod.tomlkit.document()
+    except Exception as exc:
+        raise ConfigError(f"failed to parse {path}: {exc}") from exc
+
+
 def set_value(
     key: str,
     values: tuple[str, ...],
@@ -450,38 +486,78 @@ def set_value(
     Target scope writes ``[target_defaults.<name>]`` in the user file; it is intentionally independent of
     ``[targets.<name>]`` so implicit targets can receive defaults without becoming incomplete backend declarations.
     """
-    selected = int(user) + int(project) + int(target is not None)
-    if selected > 1:
-        raise ConfigError("--user, --project, and --target are mutually exclusive")
-    segments = tuple(key.split("."))
-    if not segments or any(not _KEY_SEGMENT.fullmatch(segment) for segment in segments):
-        raise ConfigError(f"invalid config key {key!r}; use dotted names containing letters, numbers, '_' or '-'")
-    if target is not None:
-        if key != "default_command":
-            raise ConfigError("target scope currently supports only default_command")
-        if not target.strip():
-            raise ConfigError("--target requires a non-empty target name")
-        path_segments = ("target_defaults", target, key)
-        destination = config_mod.GLOBAL_CONFIG_PATH
-        scope = f"target {target!r}"
-    elif project:
-        destination = (project_dir or Path.cwd()).resolve() / PROJECT_CONFIG_RELPATH
-        path_segments = segments
-        scope = "project"
-    else:
-        destination = config_mod.GLOBAL_CONFIG_PATH
-        path_segments = segments
-        scope = "user"
-
-    try:
-        document = config_mod.tomlkit.parse(destination.read_text(encoding="utf-8")) if destination.is_file() else config_mod.tomlkit.document()
-    except Exception as exc:
-        raise ConfigError(f"failed to parse {destination}: {exc}") from exc
+    destination, path_segments, scope = _scope_location(key, user=user, project=project, target=target, project_dir=project_dir)
+    document = _read_document(destination)
     _assign_path(document, path_segments, _config_value(key, values))
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(config_mod.tomlkit.dumps(document), encoding="utf-8")
     ui.ok(f"set {key!r} for {scope} in {destination}")
     return destination
+
+
+def _remove_path(document: Any, path: tuple[str, ...]) -> bool:
+    """Remove one TOML leaf and prune empty parent tables; return whether the leaf existed."""
+    current = document
+    parents: list[tuple[Any, str]] = []
+    for segment in path[:-1]:
+        child = current.get(segment)
+        if child is None or not hasattr(child, "__getitem__"):
+            return False
+        parents.append((current, segment))
+        current = child
+    if path[-1] not in current:
+        return False
+    del current[path[-1]]
+    for parent, segment in reversed(parents):
+        child = parent[segment]
+        if len(child) != 0:
+            break
+        del parent[segment]
+    return True
+
+
+def _interactive_terminal() -> bool:
+    """Return whether a human can see and answer a destructive config prompt."""
+    return sys.stdin.isatty() and sys.stdout.isatty() and not is_machine_environment()
+
+
+def remove_value(
+    key: str,
+    *,
+    user: bool = False,
+    project: bool = False,
+    target: str | None = None,
+    project_dir: Path | None = None,
+    force: bool = False,
+) -> bool:
+    """Remove one value at exactly one scope, confirming only when that value actually exists.
+
+    Returns:
+        ``True`` when a value was removed and ``False`` when no value existed at the selected scope.
+    """
+    destination, path_segments, scope = _scope_location(key, user=user, project=project, target=target, project_dir=project_dir)
+    document = _read_document(destination)
+    current = document
+    for segment in path_segments:
+        if not hasattr(current, "get") or current.get(segment) is None:
+            ui.info(f"no {key!r} config exists for {scope} in {destination}")
+            return False
+        current = current.get(segment)
+
+    if not force:
+        if not _interactive_terminal():
+            raise ConfigError(f"refusing to remove {key!r} for {scope} in non-interactive mode; re-run with --force")
+        if not ui.confirm(f"remove {key!r} for {scope} from {destination}?", default=False):
+            ui.info("config was not changed")
+            return False
+
+    removed = _remove_path(document, path_segments)
+    if not removed:
+        ui.info(f"no {key!r} config exists for {scope} in {destination}")
+        return False
+    destination.write_text(config_mod.tomlkit.dumps(document), encoding="utf-8")
+    ui.ok(f"removed {key!r} for {scope} from {destination}")
+    return True
 
 
 def explain_target(name: str, project_dir: Path | None = None) -> str:

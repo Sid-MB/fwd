@@ -95,8 +95,6 @@ def main(
 
     For a launch without saving config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias.
     """
-    if ctx.invoked_subcommand == "set" and (example or schema):
-        ui.die("--example/--schema cannot be combined with 'config set'")
     if ctx.invoked_subcommand is not None:
         return
     from fwd.ops import attach as attach_ops
@@ -260,6 +258,8 @@ def config_cmd(
 
     Outputs go to stdout without terminal formatting. Guide: https://github.com/Sid-MB/fwd#configuration
     """
+    if ctx.invoked_subcommand in {"set", "rm"} and (example or schema):
+        ui.die(f"--example/--schema cannot be combined with 'config {ctx.invoked_subcommand}'")
     if ctx.invoked_subcommand is not None:
         return
     if example and schema:
@@ -318,6 +318,28 @@ def config_set_cmd(
     Use '--' before values that begin with '-', for example: fwd config set default_command -- python -m agent
     """
     _set_config_value(key, tuple(value or ()), user=user, project=project, target=target)
+
+
+@config_app.command("rm")
+def config_rm_cmd(
+    key: Annotated[str, typer.Argument(help="Dotted config key to remove at exactly one scope.", autocompletion=complete_config_key)],
+    user: Annotated[bool, typer.Option("--user", help="Remove the user-wide value from ~/.fwd/config.toml; this is the default scope.")] = False,
+    project: Annotated[bool, typer.Option("--project", help="Remove only the current project's value.")] = False,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Remove one target-specific value without changing the target itself.", autocompletion=complete_target)] = None,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation; required in non-interactive mode when the value exists.")] = False,
+) -> None:
+    """Remove a configuration value at one scope, revealing the next-higher-precedence value.
+
+    Missing values are reported as a successful no-op. Interactive removal confirms; agents and pipes must pass
+    --force. Omitting --user, --project, and --target selects user scope.
+    """
+    from fwd.config import ConfigError
+    from fwd.ops import configcmd
+
+    try:
+        configcmd.remove_value(key, user=user, project=project, target=target, force=force)
+    except ConfigError as exc:
+        ui.die(str(exc))
 
 
 @app.command("default", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

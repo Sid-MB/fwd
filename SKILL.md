@@ -52,6 +52,8 @@ fwd default --target runpod -- python -m agent # target overrides project and us
 
 This is shorthand for `fwd config set default_command ...`. Precedence is target > project > user > built-in Claude. Plain `fwd up` is unaffected and still starts a background shell when no command is supplied.
 
+Remove one override with `fwd config rm default_command` and the same `--user` / `--project` / `--target NAME` scopes. It confirms for humans, reports a no-op when no value exists at that exact scope, and requires `--force` from agents or redirected input.
+
 Minimal target per backend:
 
 ```toml

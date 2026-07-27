@@ -143,3 +143,8 @@ def test_config_set_key_and_target_use_rich_completion() -> None:
     for parameter_name in ("key", "value", "target"):
         parameter = next(parameter for parameter in set_command.params if parameter.name == parameter_name)
         assert parameter._custom_shell_complete is not None
+    rm_command = config_command.get_command(config_context, "rm")
+    assert rm_command is not None
+    for parameter_name in ("key", "target"):
+        parameter = next(parameter for parameter in rm_command.params if parameter.name == parameter_name)
+        assert parameter._custom_shell_complete is not None
