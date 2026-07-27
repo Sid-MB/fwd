@@ -31,6 +31,7 @@ import typer
 
 from fwd import __version__, ui
 from fwd.cli_help import AliasHelpGroup
+from fwd.cli_completion import complete_session
 from fwd.output import OutputFormat
 
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
@@ -97,7 +98,7 @@ def _up(
     command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude'/'codex' for a synced coding-agent workflow.")] = None,
     target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", rich_help_panel=PANEL_TARGET)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", rich_help_panel=PANEL_TARGET)] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", rich_help_panel=PANEL_TARGET)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
@@ -133,7 +134,7 @@ app.command("launch", hidden=True, context_settings={"allow_extra_args": True, "
 
 
 def _attach(
-    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
     """Attach to a running remote session's tmux, reconciling live backend status first.
@@ -152,7 +153,7 @@ app.command("a", hidden=True)(_attach)
 
 def _send(
     command: Annotated[list[str] | None, typer.Argument(help="Command and arguments to execute after '--'.")] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
     timeout: Annotated[float | None, typer.Option("--timeout", help="Abort locally if the remote command exceeds this many seconds.")] = None,
 ) -> None:
     """Execute one command in the running session's remote project directory.
@@ -182,7 +183,7 @@ def ls_cmd(
 
 @app.command("push")
 def push_cmd(
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
 ) -> None:
     """Mirror local changes up to the remote session; remote-only files are deleted unless sync.delete is off."""
     from fwd.ops import transfer
@@ -193,7 +194,7 @@ def push_cmd(
 @app.command("pull")
 def pull_cmd(
     paths: Annotated[list[str] | None, typer.Argument(help="Remote-relative paths to fetch; omit to pull the whole remote directory.")] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
 ) -> None:
     """Bring remote changes back down to the local directory, additively — a pull never deletes local files."""
     from fwd.ops import transfer
@@ -203,7 +204,7 @@ def pull_cmd(
 
 @app.command("stop")
 def stop_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
 ) -> None:
     """Kill a session's remote tmux and suspend its target to stop billing; synced data is preserved.
 
@@ -216,7 +217,7 @@ def stop_cmd(
 
 @app.command("rm")
 def rm_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
+    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
 ) -> None:
     """Destroy a session's target and forget the session. Irreversible — remote data is gone.

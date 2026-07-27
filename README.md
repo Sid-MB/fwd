@@ -96,6 +96,24 @@ terminal they use stable `info:`, `ok:`, `warning:`, and `error:` prefixes inste
 Configuration output remains TOML (`fwd config` / `--example`) or JSON Schema (`fwd config --schema`) because those
 formats are already directly machine-readable.
 
+### Session completion
+
+Shell completion for every session-selecting command is state-aware:
+
+```sh
+fwd attach <TAB>
+fwd rm <TAB>
+fwd stop <TAB>
+fwd send --name <TAB>
+fwd push --name <TAB>
+```
+
+Suggestions come from `~/.fwd/state.json` and include help text with the backend, target, local project directory, and
+last-attached time. Completion never contacts a provider, so pressing Tab remains fast and cannot start compute.
+Shells with descriptive completion support (including Fish and appropriately configured Zsh) display that help as a
+tooltip/menu description; other shells still complete the session name. Install scripts with
+`fwd --install-completion` or print one for manual setup with `fwd --show-completion`.
+
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |
