@@ -21,7 +21,7 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
-from fwd import ui
+from fwd import command_docs, ui
 from fwd.remote_env import FWD_ENV_RELPATH, HOME_ENV_RELPATH, source_env as _source_env
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.toolchains import PROJECT_SETUP_RELPATH, plan as toolchain_plan
@@ -172,14 +172,7 @@ def tmux_attach_argv(endpoint: SSHEndpoint, session: str, fwd_session: str | Non
     ssh_argv = [*endpoint.ssh_argv(tty=True), tmux_attach_command(session)]
     if not fwd_session:
         return ssh_argv
-    examples = ui.code_examples(
-        (
-            ("Reattach", shlex.join([ui.COMMAND_NAME, "attach", fwd_session])),
-            ("Stop", shlex.join([ui.COMMAND_NAME, "stop", fwd_session])),
-            ("See all sessions", ui.command("ls")),
-        ),
-        heading="Next steps:",
-    )
+    examples = ui.code_examples(command_docs.post_attach_examples(fwd_session), heading=command_docs.NEXT_STEPS_HEADING)
     ssh_command = shlex.join(ssh_argv)
     wrapper = f"{ssh_command}; status=$?; printf '\\n%s\\n' {shlex.quote(examples)} >&2; exit \"$status\""
     return ["sh", "-c", wrapper]

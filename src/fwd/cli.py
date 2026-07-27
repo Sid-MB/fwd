@@ -30,7 +30,7 @@ from typing import Annotated
 
 import typer
 
-from fwd import __version__, ui
+from fwd import __version__, command_docs, ui
 from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_existing_session, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_session_selector, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
@@ -353,7 +353,7 @@ def _up(
     )
 
 
-UP_HELP = f"""Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
+UP_HELP = f"""{command_docs.UP.summary}
 
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
 in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
@@ -401,8 +401,14 @@ def _attach(
     attach_ops.attach(chosen.name, restart=restart)
 
 
+ATTACH_HELP = f"""{command_docs.ATTACH.summary}
+
+Replaces this process with 'ssh -t', so the remote session owns the terminal outright. Detach with tmux's ctrl-b d;
+the session keeps running.
+"""
+
 # Registered from one callback so the tmux-style `a` alias and `attach` always accept identical arguments.
-app.command("attach")(_attach)
+app.command("attach", help=ATTACH_HELP)(_attach)
 app.command("a", hidden=True)(_attach)
 
 
@@ -445,7 +451,7 @@ def _send(
     raise typer.Exit(code)
 
 
-SEND_HELP = f"""Start, follow, background, list, or cancel durable remote tasks.
+SEND_HELP = f"""{command_docs.SEND.summary}
 
 Every command and agent turn runs in remote tmux and receives a task id. During streams, Ctrl-C cancels and Ctrl-B
 backgrounds. Reattach with {ui.command('send TASK_ID')!r}, cancel with {ui.command('send TASK_ID --stop')!r}, and list
@@ -458,13 +464,13 @@ app.command("send", help=SEND_HELP, context_settings={"allow_extra_args": True, 
 app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
 
 
-@app.command("ls")
+@app.command("ls", help=command_docs.LIST.summary)
 def ls_cmd(
     all_projects: Annotated[bool, typer.Option("--all-projects", help="Show sessions from every locally tracked project instead of only the current project.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
     json_output: JsonOutputOption = False,
 ) -> None:
-    """List this project's managed sessions with live status and cost queried from each backend."""
+    """List this project's managed sessions with live status queried from each backend."""
     from fwd.ops import lifecycle
 
     lifecycle.ls(output_format=_selected_output_format(output_format, json_output=json_output), all_projects=all_projects)
@@ -510,7 +516,7 @@ def diff_cmd(
     raise typer.Exit(code)
 
 
-@app.command("stop", help=f"Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.")
+@app.command("stop", help=f"{command_docs.STOP.summary}\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.")
 def stop_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
 ) -> None:
@@ -523,7 +529,7 @@ def stop_cmd(
     lifecycle.stop(name)
 
 
-@app.command("rm", help=f"Destroy one session target, or every tracked target with --all, and forget their state. Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
+@app.command("rm", help=f"{command_docs.REMOVE.summary} Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
 def rm_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
     all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with a session name.")] = False,

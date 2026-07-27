@@ -43,8 +43,8 @@ def test_skill_core_is_concise_and_links_every_reference() -> None:
     for name in ("targets-and-config.md", "commands-and-lifecycle.md", "agent-transfer.md"):
         assert f"references/{name}" in text
         assert (ROOT / "references" / name).is_file()
-    assert "$fwd continue this project" in text
-    assert "/fwd continue this project" in text
+    assert "$fwd implement TODO.md" in text
+    assert "/fwd implement TODO.md" in text
     assert "fwd diff -q" in text
     assert "Never run bare `fwd`" in text
     assert "uv tool install git+https://github.com/Sid-MB/fwd" in text

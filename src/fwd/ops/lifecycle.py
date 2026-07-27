@@ -17,13 +17,12 @@ container disk on stop. ``remove`` is not reversible, so it confirms and names e
 
 from __future__ import annotations
 
-import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
-from fwd import remote, remote_tasks, ui
+from fwd import command_docs, remote, remote_tasks, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.output import OutputFormat
@@ -32,7 +31,7 @@ from fwd.state import SessionState
 
 # Rendered when a backend cannot be reached or has not implemented status yet. Distinct from every real status so the
 # table never implies knowledge fwd does not have.
-UNKNOWN_STATUS = "?"
+UNKNOWN_STATUS = command_docs.UNKNOWN_STATUS
 
 
 def task_store() -> SendTaskStore:
@@ -82,41 +81,6 @@ def _ids_summary(session: SessionState) -> str:
     if not session.backend_ids:
         return "-"
     return " ".join(f"{k}={v}" for k, v in sorted(session.backend_ids.items()))
-
-
-def _example_command(action: str, session_name: str | None) -> str:
-    """Build a copy-pasteable lifecycle example, retaining an unfenced ``<name>`` placeholder for an empty table."""
-    return shlex.join([ui.COMMAND_NAME, action, session_name]) if session_name else ui.command(f"{action} <name>")
-
-
-def _send_example(session_name: str | None) -> str:
-    """Build a durable-command example, retaining an unfenced ``<name>`` placeholder for an empty table."""
-    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "echo", "hello"]) if session_name else ui.command("send --name <name> -- echo hello")
-
-
-def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | str]]) -> tuple[tuple[str, str], ...]:
-    """Return only commands applicable to at least one displayed session, choosing a suitable session per action."""
-    if not session_statuses:
-        return (
-            ("Reattach", _example_command("attach", None)),
-            ("Send command", _send_example(None)),
-            ("Stop", _example_command("stop", None)),
-            ("Remove", _example_command("rm", None)),
-        )
-    examples: list[tuple[str, str]] = []
-    attachable = next((session for session, status in session_statuses if status == TargetStatus.RUNNING), None)
-    attachable = attachable or next((session for session, status in session_statuses if status == TargetStatus.PENDING), None)
-    attachable = attachable or next((session for session, status in session_statuses if status != TargetStatus.GONE), None)
-    sendable = next((session for session, status in session_statuses if status in (TargetStatus.RUNNING, TargetStatus.PENDING)), None)
-    stoppable = next((session for session, status in session_statuses if status in (TargetStatus.RUNNING, TargetStatus.PENDING, TargetStatus.UNKNOWN, UNKNOWN_STATUS)), None)
-    if attachable is not None:
-        examples.append(("Reattach", _example_command("attach", attachable.name)))
-    if sendable is not None:
-        examples.append(("Send command", _send_example(sendable.name)))
-    if stoppable is not None:
-        examples.append(("Stop", _example_command("stop", stoppable.name)))
-    examples.append(("Remove", _example_command("rm", session_statuses[0][0].name)))
-    return tuple(examples)
 
 
 def _live_status(session: SessionState) -> TargetStatus | str:
@@ -171,10 +135,9 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
         rows,
         output_format=output_format,
     )
-    ui.show_code_examples(
-        _manage_examples(session_statuses),
-        heading="Manage a session:",
-    )
+    examples = command_docs.manage_session_examples(session_statuses) if session_statuses else command_docs.start_session_examples()
+    heading = command_docs.MANAGE_HEADING if session_statuses else command_docs.START_HEADING
+    ui.show_code_examples(examples, heading=heading)
     if not all_projects and other_sessions and ui.interactive_terminal():
         session_count = len(other_sessions)
         if session_count == 1:

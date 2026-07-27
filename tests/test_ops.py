@@ -823,6 +823,7 @@ def test_ls_renders_and_survives_backend_failure(project, state_store, config, m
     assert "fwd sessions (1 active)" in captured.out
     assert "myproject-abc123" in captured.out
     assert lifecycle.UNKNOWN_STATUS in captured.out
+    assert "Manage a session:" in captured.err
     assert "`fwd attach myproject-abc123`" in captured.err
     assert "`fwd stop myproject-abc123`" in captured.err
     assert "`fwd rm myproject-abc123`" in captured.err
@@ -832,7 +833,10 @@ def test_ls_empty_is_not_an_error(project, state_store, config, capsys, wide_con
     lifecycle.ls()
     captured = capsys.readouterr()
     assert "fwd sessions (0 active)" in captured.out
-    assert "`fwd attach <name>`" in captured.err
+    assert "Start a session:" in captured.err
+    assert "`fwd up`" in captured.err
+    assert "`fwd up runpod codex`" in captured.err
+    assert "Manage a session:" not in captured.err
 
 
 def test_ls_shows_live_status(project, state_store, config, calls, monkeypatch, capsys, wide_console) -> None:
