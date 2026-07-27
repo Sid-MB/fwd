@@ -140,6 +140,69 @@ def test_resolver_fails_with_the_requirement_hint_after_all_fallbacks(monkeypatc
         ensure_tools(endpoint, (requirement,))
 
 
+def test_resolver_installs_shared_prerequisites_once_before_dependent_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    prerequisite = ToolRequirement("runtime", "runtime", ("runtime", "--version"), installers=(ToolInstaller("runtime installer", "install-runtime"),))
+    first = ToolRequirement("first", "first", ("first", "--version"), installers=(ToolInstaller("first installer", "install-first", requirements=(prerequisite,)),))
+    second = ToolRequirement("second", "second", ("second", "--version"), installers=(ToolInstaller("second installer", "install-second", requirements=(prerequisite,)),))
+    installed: set[str] = set()
+    scripts: list[str] = []
+
+    def probe(endpoint, requirement):  # noqa: ANN001 - resolver-shaped test double
+        return requirement.command in installed, f"{requirement.command} 1.0" if requirement.command in installed else ""
+
+    class Endpoint:
+        def run_script(self, script, **kwargs):  # noqa: ANN001 - endpoint-shaped test double
+            scripts.append(script)
+            command = next(name for name in ("runtime", "first", "second") if f"install-{name}" in script)
+            installed.add(command)
+            return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(resolver, "_probe", probe)
+    ensure_tools(Endpoint(), (first, second))
+
+    assert [next(name for name in ("runtime", "first", "second") if f"install-{name}" in script) for script in scripts] == ["runtime", "first", "second"]
+
+
+def test_unavailable_prerequisite_skips_only_its_installer_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    unavailable = ToolRequirement("unavailable", "unavailable", ("unavailable", "--version"))
+    parent = ToolRequirement("parent", "parent", ("parent", "--version"), installers=(ToolInstaller("blocked", "blocked-installer", requirements=(unavailable,)), ToolInstaller("fallback", "fallback-installer")))
+    probes = iter(((False, ""), (False, ""), (True, "parent 1.0")))
+    endpoint = _Endpoint((0,))
+    monkeypatch.setattr(resolver, "_probe", lambda endpoint, requirement: next(probes))
+
+    ensure_tools(endpoint, (parent,))
+
+    assert len(endpoint.scripts) == 1
+    assert endpoint.scripts[0].endswith("fallback-installer\n")
+
+
+def test_existing_parent_tool_does_not_resolve_installer_prerequisites(monkeypatch: pytest.MonkeyPatch) -> None:
+    probed: list[str] = []
+
+    def probe(endpoint, requirement):  # noqa: ANN001 - resolver-shaped test double
+        probed.append(requirement.command)
+        return True, "codex 1.0"
+
+    endpoint = _Endpoint()
+    monkeypatch.setattr(resolver, "_probe", probe)
+
+    ensure_tools(endpoint, (CODEX,))
+
+    assert probed == ["codex"]
+    assert endpoint.scripts == []
+
+
+def test_resolver_reports_prerequisite_cycles(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = ToolRequirement("first", "first", ("first", "--version"))
+    second = ToolRequirement("second", "second", ("second", "--version"))
+    object.__setattr__(first, "installers", (ToolInstaller("via second", "install-first", requirements=(second,)),))
+    object.__setattr__(second, "installers", (ToolInstaller("via first", "install-second", requirements=(first,)),))
+    monkeypatch.setattr(resolver, "_probe", lambda endpoint, requirement: (False, ""))
+
+    with pytest.raises(SSHError, match="first -> second -> first"):
+        ensure_tools(_Endpoint(), (first,))
+
+
 def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_wrapper(tmp_path: Path) -> None:
     home = tmp_path / "home"
     prefix = tmp_path / "tools"
@@ -169,7 +232,7 @@ def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_w
 
     ensure_tools(endpoint, (CODEX,))
 
-    assert len(endpoint.scripts) == 2
+    assert len(endpoint.scripts) == 1
     wrapper = prefix / "bin" / "codex"
     assert wrapper.is_file()
     result = subprocess.run([str(wrapper), "--version"], env=endpoint.env, capture_output=True, text=True)

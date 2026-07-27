@@ -16,10 +16,11 @@ from typing import ClassVar
 
 @dataclass(frozen=True, slots=True)
 class ToolInstaller:
-    """One ordered, user-space fallback for a missing remote executable."""
+    """One ordered, user-space fallback and the tools needed specifically by that installation path."""
 
     name: str
     script: str
+    requirements: tuple[ToolRequirement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +71,23 @@ class Toolchain(ABC):
 
 
 def merge_requirements(*groups: tuple[ToolRequirement, ...]) -> tuple[ToolRequirement, ...]:
-    """Deduplicate compatible requirements by executable while rejecting ambiguous definitions."""
-    merged: dict[str, ToolRequirement] = {}
+    """Deduplicate root requirements and validate compatible definitions throughout their installer graphs."""
+    definitions: dict[str, ToolRequirement] = {}
+    roots: dict[str, ToolRequirement] = {}
+
+    def register(requirement: ToolRequirement) -> None:
+        existing = definitions.get(requirement.command)
+        if existing is not None:
+            if existing != requirement:
+                raise ValueError(f"conflicting tool requirements for {requirement.command!r}: {existing.name!r} and {requirement.name!r}")
+            return
+        definitions[requirement.command] = requirement
+        for installer in requirement.installers:
+            for prerequisite in installer.requirements:
+                register(prerequisite)
+
     for group in groups:
         for requirement in group:
-            existing = merged.get(requirement.command)
-            if existing is not None and existing != requirement:
-                raise ValueError(f"conflicting tool requirements for {requirement.command!r}: {existing.name!r} and {requirement.name!r}")
-            merged[requirement.command] = requirement
-    return tuple(merged.values())
+            register(requirement)
+            roots[requirement.command] = requirement
+    return tuple(roots.values())

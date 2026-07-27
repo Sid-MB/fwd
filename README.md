@@ -372,7 +372,8 @@ fwd detects Python and JavaScript projects from their manifests and lockfiles, t
 that project and the selected coding agent. Every requirement first probes the remote command and version, so an
 existing `uv`, Bun, npm, pnpm, Yarn, Claude Code, or Codex installation is reused when it is visible to non-interactive
 SSH commands. Missing tools use ordered user-space fallbacks under the target's persistent fwd tool directory; fwd
-verifies the command again before running dependency setup.
+recursively prepares only the selected fallback's prerequisites, deduplicates them across agents and project
+toolchains, and verifies every resulting command before running dependency setup.
 
 Repositories can commit `.fwd/setup.sh` for an unsupported language, private build system, or extra setup. It runs
 after detected toolchain dependency commands. Contributors adding first-class Swift, Haskell, Rust, or another

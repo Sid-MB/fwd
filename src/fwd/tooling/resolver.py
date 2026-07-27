@@ -30,31 +30,51 @@ mkdir -p "$FWD_TOOL_PREFIX/bin"
 
 
 def ensure_tools(endpoint: SSHEndpoint, requirements: tuple[ToolRequirement, ...]) -> None:
-    """Reuse working remote tools and install only unresolved requirements.
+    """Resolve root tools and installer-specific prerequisites recursively.
 
-    Requirements are deduplicated before probing, so an agent and project toolchain sharing an executable never race or
-    install it twice. Every fallback is followed by the same version probe; an installer returning zero is not treated
-    as success unless the requested command actually works.
+    Successful commands are cached by executable for the whole pass, so agent, toolchain, and prerequisite graphs
+    share one probe/install result. Prerequisite failure skips only that installer path: Codex can try npm, then Bun,
+    without making either an unconditional dependency. Cycles are configuration errors and fail with the full path.
     """
-    for requirement in merge_requirements(requirements):
+    roots = merge_requirements(requirements)
+    resolved: set[str] = set()
+    resolving: list[str] = []
+
+    def resolve(requirement: ToolRequirement, *, fatal: bool) -> bool:
+        if requirement.command in resolved:
+            return True
+        if requirement.command in resolving:
+            start = resolving.index(requirement.command)
+            cycle = (*resolving[start:], requirement.command)
+            raise SSHError(f"tool prerequisite cycle detected: {' -> '.join(cycle)}")
         ready, version = _probe(endpoint, requirement)
         if ready:
             ui.info(f"remote {requirement.name} present{f': {version}' if version else ''}")
-            continue
-        installed_by: str | None = None
-        for installer in requirement.installers:
-            ui.info(f"remote {requirement.name} missing; trying {installer.name}")
-            result = endpoint.run_script(_installer_script(installer.script), check=False, stream=True)
-            ready, version = _probe(endpoint, requirement)
-            if ready:
-                installed_by = installer.name
-                break
-            if result.returncode == 0:
-                ui.warn(f"{installer.name} returned success but {requirement.command!r} still failed its version probe")
-        if installed_by is not None:
-            ui.ok(f"installed remote {requirement.name} with {installed_by}{f': {version}' if version else ''}")
-            continue
-        if requirement.required:
+            resolved.add(requirement.command)
+            return True
+        resolving.append(requirement.command)
+        try:
+            for installer in requirement.installers:
+                unavailable = tuple(prerequisite.name for prerequisite in installer.requirements if not resolve(prerequisite, fatal=False))
+                if unavailable:
+                    ui.info(f"skipping {requirement.name} installer {installer.name}; unavailable prerequisite(s): {', '.join(unavailable)}")
+                    continue
+                ui.info(f"remote {requirement.name} missing; trying {installer.name}")
+                result = endpoint.run_script(_installer_script(installer.script), check=False, stream=True)
+                ready, version = _probe(endpoint, requirement)
+                if ready:
+                    resolved.add(requirement.command)
+                    ui.ok(f"installed remote {requirement.name} with {installer.name}{f': {version}' if version else ''}")
+                    return True
+                if result.returncode == 0:
+                    ui.warn(f"{installer.name} returned success but {requirement.command!r} still failed its version probe")
+        finally:
+            resolving.pop()
+        if fatal:
             hint = f" {requirement.hint}" if requirement.hint else ""
-            raise SSHError(f"required remote tool {requirement.name!r} ({requirement.command}) is unavailable after {len(requirement.installers)} fallback installer(s).{hint}")
-        ui.warn(f"optional remote tool {requirement.name!r} is unavailable")
+            raise SSHError(f"required remote tool {requirement.name!r} ({requirement.command}) is unavailable after {len(requirement.installers)} installer path(s).{hint}")
+        return False
+
+    for requirement in roots:
+        if not resolve(requirement, fatal=requirement.required):
+            ui.warn(f"optional remote tool {requirement.name!r} is unavailable")

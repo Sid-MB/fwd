@@ -90,17 +90,24 @@ Fallback installers are optional:
 
 ```python
 from fwd.tooling import ToolInstaller, ToolRequirement
+from fwd.tooling.requirements import CURL
 
 EXAMPLE = ToolRequirement(
     name="Example",
     command="example",
     version_command=("example", "--version"),
     installers=(
-        ToolInstaller("official installer", 'curl -fsSL https://example.invalid/install.sh | env INSTALL_DIR="$FWD_TOOL_PREFIX/bin" sh'),
+        ToolInstaller(
+            "official installer",
+            'curl -fsSL https://example.invalid/install.sh | env INSTALL_DIR="$FWD_TOOL_PREFIX/bin" sh',
+            requirements=(CURL,),
+        ),
     ),
     hint="Install Example on the remote host or provide curl for the persistent user-space installer.",
 )
 ```
+
+Prerequisites belong to the specific installer that uses them, not unconditionally to the resulting tool. For example, Codex's npm installer declares `requirements=(NPM,)`, while its Bun installer declares `requirements=(BUN,)`. The resolver first reuses an existing Codex; otherwise it recursively resolves only the current installer path, skips that path if a prerequisite cannot be prepared, and continues to the next installer. Successfully resolved prerequisites are shared across every agent and toolchain requirement in the launch. Cycles fail before running an installer and show the complete executable chain.
 
 Installer requirements:
 
@@ -110,6 +117,7 @@ Installer requirements:
 - put caches under `FWD_SCRATCH`;
 - return nonzero when installation did not succeed;
 - leave final success to the resolver's version re-probe;
+- declare reusable executable prerequisites through `ToolInstaller.requirements` instead of repeating `command -v` checks or embedding another tool's installer;
 - provide a precise `hint` for machines where automatic installation is impossible.
 
 Avoid downloading a compiler merely because fwd supports its ecosystem. Installation happens only after project detection or explicit agent selection produces the requirement.
