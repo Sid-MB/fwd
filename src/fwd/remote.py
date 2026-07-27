@@ -79,6 +79,18 @@ def _source_env() -> str:
     )
 
 
+def _tmux_exact_target(session: str) -> str:
+    """Return tmux's exact-match target with shell quoting forced.
+
+    tmux uses a leading ``=`` to disable prefix/glob target matching. Python's :func:`shlex.quote` considers ``=`` a
+    safe character and leaves ``=fwd-name`` bare, but zsh interprets a leading equals sign as executable-path
+    expansion before tmux sees it. Explicit single-quote construction is therefore required even for sanitized fwd
+    session names; the replacement keeps this helper correct for arbitrary future names.
+    """
+    value = f"={session}"
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
 def run_bootstrap(
     endpoint: SSHEndpoint,
     *,
@@ -192,7 +204,7 @@ def _verify_tmux_alive(endpoint: SSHEndpoint, session: str, command: str) -> Non
     Raises:
         SSHError: If the session is gone, with the failing command and a probe of whether its binary exists.
     """
-    probe = f"{_source_env()}sleep {TMUX_SETTLE_SECONDS}; tmux has-session -t {shlex.quote('=' + session)} 2>/dev/null"
+    probe = f"{_source_env()}sleep {TMUX_SETTLE_SECONDS}; tmux has-session -t {_tmux_exact_target(session)} 2>/dev/null"
     if endpoint.run(probe, check=False).returncode == 0:
         return
     binary = shlex.split(command)[0] if command.strip() else command
@@ -210,17 +222,17 @@ def tmux_attach_argv(endpoint: SSHEndpoint, session: str) -> list[str]:
     Returned rather than executed so the caller can ``exec`` it and hand the tty straight to ssh.
     """
     # "=name" is tmux's exact-match target syntax; a bare name would fnmatch and could hit "fwd-ab" when asked for "fwd-a".
-    remote = f"{_source_env()}tmux attach -t {shlex.quote('=' + session)}"
+    remote = f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
     return [*endpoint.ssh_argv(tty=True), remote]
 
 
 def tmux_kill(endpoint: SSHEndpoint, session: str) -> None:
     """Kill a remote tmux session; no-op if it does not exist."""
-    remote = f"{_source_env()}tmux kill-session -t {shlex.quote('=' + session)} 2>/dev/null || true"
+    remote = f"{_source_env()}tmux kill-session -t {_tmux_exact_target(session)} 2>/dev/null || true"
     endpoint.run(remote, check=False)
 
 
 def tmux_exists(endpoint: SSHEndpoint, session: str) -> bool:
     """Return whether a remote tmux session is alive (``tmux has-session``)."""
-    remote = f"{_source_env()}tmux has-session -t {shlex.quote('=' + session)} 2>/dev/null"
+    remote = f"{_source_env()}tmux has-session -t {_tmux_exact_target(session)} 2>/dev/null"
     return endpoint.run(remote, check=False).returncode == 0

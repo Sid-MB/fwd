@@ -166,7 +166,7 @@ def test_tmux_attach_argv_uses_tty_and_exact_target() -> None:
     assert "-t" in argv
     assert argv[argv.index("-p") + 1] == "2299"
     # "=fwd-demo" is tmux's exact-match syntax; a bare name would fnmatch onto "fwd-demo2".
-    assert argv[-1].endswith("tmux attach -t =fwd-demo")
+    assert argv[-1].endswith("tmux attach -t '=fwd-demo'")
     assert "fwd-env.sh" in argv[-1]
 
 
@@ -200,13 +200,23 @@ def test_tmux_helpers_issue_the_expected_remote_commands(monkeypatch) -> None:
     new_cmd, verify_cmd, kill_cmd, exists_cmd = (cmd for cmd, _ in issued)
     assert "tmux new-session -d -s fwd-demo -c /home/dev/proj bash -lc" in new_cmd
     assert f"sleep {remote_mod.TMUX_SETTLE_SECONDS}" in verify_cmd
-    assert "has-session -t =fwd-demo" in verify_cmd
+    assert "has-session -t '=fwd-demo'" in verify_cmd
     # The inner shell snippet is shlex-quoted into the tmux argv, so the export survives one level of nesting.
     assert "bar baz" in new_cmd
-    assert "kill-session -t =fwd-demo" in kill_cmd
-    assert "has-session -t =fwd-demo" in exists_cmd
+    assert "kill-session -t '=fwd-demo'" in kill_cmd
+    assert "has-session -t '=fwd-demo'" in exists_cmd
     # Killing something that is already gone must not raise.
     assert issued[2][1]["check"] is False
+
+
+def test_tmux_exact_target_survives_zsh_equals_expansion() -> None:
+    """A bare `=name` is special syntax in zsh; every remote tmux target must keep literal shell quotes."""
+    from fwd.remote import _tmux_exact_target
+
+    assert _tmux_exact_target("fwd-demo") == "'=fwd-demo'"
+    result = subprocess.run(["zsh", "-c", f"printf %s {_tmux_exact_target('fwd-demo')}"], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert result.stdout == "=fwd-demo"
 
 
 def test_tmux_new_raises_when_the_session_dies_immediately(monkeypatch) -> None:
