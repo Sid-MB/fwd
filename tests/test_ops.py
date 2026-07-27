@@ -772,15 +772,20 @@ def test_ls_renders_and_survives_backend_failure(project, state_store, config, m
     monkeypatch.setattr(launch_ops.backends, "make_backend", lambda target, config: Exploding([]))
     _seed(state_store, project)
     lifecycle.ls()
-    out = capsys.readouterr().out
-    assert "fwd sessions (1 active)" in out
-    assert "myproject-abc123" in out
-    assert lifecycle.UNKNOWN_STATUS in out
+    captured = capsys.readouterr()
+    assert "fwd sessions (1 active)" in captured.out
+    assert "myproject-abc123" in captured.out
+    assert lifecycle.UNKNOWN_STATUS in captured.out
+    assert "`fwd attach myproject-abc123`" in captured.err
+    assert "`fwd stop myproject-abc123`" in captured.err
+    assert "`fwd rm myproject-abc123`" in captured.err
 
 
 def test_ls_empty_is_not_an_error(project, state_store, config, capsys, wide_console) -> None:
     lifecycle.ls()
-    assert "fwd sessions (0 active)" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "fwd sessions (0 active)" in captured.out
+    assert "`fwd attach <name>`" in captured.err
 
 
 def test_ls_shows_live_status(project, state_store, config, calls, monkeypatch, capsys, wide_console) -> None:

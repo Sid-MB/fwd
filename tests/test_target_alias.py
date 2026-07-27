@@ -105,7 +105,9 @@ def test_interactive_target_alias_launches_default_and_attaches(monkeypatch: pyt
     target_alias.forward("work")
 
     assert received == {"target": "work", "initial_command": None, "attach": True}
-    assert "sid@work.example:2200" in capsys.readouterr().err
+    output = capsys.readouterr().err
+    assert output.splitlines()[0] == "info: fwd work → fwd up --target work --attach -- claude"
+    assert "sid@work.example:2200" in output
 
 
 def test_missing_backend_never_runs_setup_noninteractively(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

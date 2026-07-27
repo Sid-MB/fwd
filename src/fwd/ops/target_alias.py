@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import shlex
 import sys
 
 from fwd import ui
@@ -73,6 +74,8 @@ def _session_recency(session: SessionState) -> str:
 def _most_recent_target_name(config: Config, backend: str) -> str | None:
     """Return the most recently used configured target for ``backend``, or ``None`` when history cannot decide."""
     candidates = {name for name, target in config.targets.items() if target.backend == backend}
+    if not candidates:
+        return None
     if len(candidates) == 1:
         return next(iter(candidates))
     matching_sessions = [session for session in store().all() if session.flags.get("target") in candidates]
@@ -111,6 +114,29 @@ def _identity(target: TargetConfig) -> str:
     return f"runpod {detail}, {target.cloud_type} cloud"
 
 
+def expanded_command(selector: str, config: Config | None = None) -> str:
+    """Describe a dynamic target/backend alias as an explicit command without prompting or provider calls."""
+    if config is None:
+        try:
+            config = load_config()
+        except Exception:
+            return ui.command(f"up --target {selector} --attach")
+    if selector in config.targets:
+        target = config.targets[selector]
+    elif selector in TARGET_TYPES:
+        selected_name = _most_recent_target_name(config, selector)
+        if selected_name is None:
+            matching = [target for target in config.targets.values() if target.backend == selector]
+            if not matching:
+                return ui.command(f"setup --backend {selector}")
+            return ui.command(f"up --target <{selector}-target> --attach")
+        target = config.targets[selected_name]
+    else:
+        return ui.command(f"up --target {selector} --attach")
+    initial_command = config.command_for(target.name)
+    return shlex.join([ui.COMMAND_NAME, "up", "--target", target.name, "--attach", "--", *initial_command])
+
+
 def _setup_missing_backend(selector: str) -> TargetSelection:
     """Offer the setup wizard for a known backend, then resolve the target it created."""
     if not interactive_terminal():
@@ -133,7 +159,9 @@ def _setup_missing_backend(selector: str) -> TargetSelection:
 
 def forward(selector: str) -> None:
     """Launch the resolved target's configured default command and attach in a human terminal."""
-    selection = resolve(selector)
+    config = load_config()
+    ui.announce_alias(expanded_command(selector, config), invoked=ui.command(selector))
+    selection = resolve(selector, config)
     if selection is None:
         if selector not in TARGET_TYPES:
             ui.die(f"unknown target or command {selector!r}; configure a target with {ui.command('setup')!r} or list commands with {ui.command('--help')!r}")

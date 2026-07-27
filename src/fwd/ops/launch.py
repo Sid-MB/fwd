@@ -178,8 +178,9 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: 
     """Replace this process with an interactive attach to a remote tmux session.
 
     Prefers :func:`fwd.remote.tmux_attach_argv` so remote-command construction stays in one place, falling back to
-    :meth:`~fwd.sshexec.SSHEndpoint.exec_interactive` when that helper is unavailable. Either way the Python process
-    is *replaced*: attach I/O is never proxied through Python, which is what keeps resize, mouse and ctrl-C native.
+    :meth:`~fwd.sshexec.SSHEndpoint.exec_interactive` when that helper is unavailable. The Python process is replaced
+    by either SSH directly or a tiny local shell that waits for SSH and prints follow-up commands after its closing
+    line; attach I/O is never proxied through Python, so resize, mouse, and Ctrl-C remain native.
 
     Refuses up front without a tty. ``tmux attach`` cannot work on a pipe, so this is guaranteed to fail either way —
     but exec'ing into ssh to find out leaks two confusing lines from other tools (``Pseudo-terminal will not be
@@ -194,7 +195,7 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: 
         argv = None
     if argv:
         os.execvp(argv[0], argv)
-    endpoint.exec_interactive(remote.tmux_attach_command(tmux_session, session_name))
+    endpoint.exec_interactive(remote.tmux_attach_command(tmux_session))
 
 
 def build_claude_command(*, resume_id: str | None, use_handoff: bool) -> str:

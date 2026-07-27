@@ -172,11 +172,14 @@ def test_tmux_attach_argv_uses_tty_and_exact_target() -> None:
 
 def test_tmux_attach_argv_prints_discoverable_next_steps_after_detach() -> None:
     argv = tmux_attach_argv(_endpoint(), "fwd-demo", "demo-project")
-    remote_command = argv[-1]
-    assert "To attach, use `fwd attach demo-project`" in remote_command
-    assert "to stop, run `fwd stop demo-project`." in remote_command
-    assert "status=$?" in remote_command
-    assert 'exit \"$status\"' in remote_command
+    wrapper = argv[-1]
+    assert argv[:2] == ["sh", "-c"]
+    assert "`fwd attach demo-project`" in wrapper
+    assert "`fwd stop demo-project`" in wrapper
+    assert "`fwd ls`" in wrapper
+    assert wrapper.index("tmux attach") < wrapper.index("Next steps:")
+    assert "status=$?" in wrapper
+    assert 'exit \"$status\"' in wrapper
 
 
 def test_tmux_attach_remote_command_is_a_single_argv_element() -> None:

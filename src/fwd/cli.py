@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from enum import Enum
 import os
+import shlex
 import sys
 from typing import Annotated
 
@@ -38,6 +39,13 @@ from fwd.output import OutputFormat
 PANEL_TARGET = "Target & session"
 PANEL_CLAUDE = "Claude context"
 CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
+COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
+    "a": ("attach",),
+    "s": ("send",),
+    "launch": ("up",),
+    "default": ("config", "set", "default_command"),
+    "version": ("-V",),
+}
 
 app = typer.Typer(
     cls=AliasHelpGroup,
@@ -85,6 +93,22 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _announce_root_alias(ctx: typer.Context, *, restart: bool) -> None:
+    """Announce static and bare-command expansions before onboarding or operation logs can obscure them."""
+    invoked = ctx.invoked_subcommand
+    if invoked in COMMAND_ALIASES:
+        original = tuple(ctx.meta.get("fwd_invocation_argv", (invoked,)))
+        remaining = original[1:] if original and original[0] == invoked else ()
+        actual_argv = [ui.COMMAND_NAME, *COMMAND_ALIASES[invoked], *remaining]
+        invoked_argv = [ui.COMMAND_NAME, *original]
+        ui.announce_alias(shlex.join(actual_argv), invoked=shlex.join(invoked_argv))
+        return
+    if invoked is None:
+        from fwd.ops import attach as attach_ops
+
+        ui.announce_alias(attach_ops.smart_default_command(restart=restart))
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -95,6 +119,8 @@ def main(
 
     For a launch without saving config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias.
     """
+    if not ctx.resilient_parsing:
+        _announce_root_alias(ctx, restart=restart)
     if not ctx.resilient_parsing and _interactive_terminal():
         from fwd import completion_setup, skill_setup
 

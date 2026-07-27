@@ -218,29 +218,38 @@ def _verify_tmux_alive(endpoint: SSHEndpoint, session: str, command: str) -> Non
     )
 
 
-def tmux_attach_command(session: str, fwd_session: str | None = None) -> str:
-    """Build the remote attach command, including a local-CLI reminder when tmux returns.
+def tmux_attach_command(session: str) -> str:
+    """Build the remote tmux attach command without post-session output.
 
-    OpenSSH prints ``Shared connection ... closed`` only after the remote command exits, at which point the local
-    Python process no longer exists because attach deliberately uses ``exec``. Putting the reminder in this remote
-    command preserves the native terminal handoff while placing useful next steps immediately before OpenSSH's line.
-    The tmux exit status is retained so adding the reminder cannot turn a failed attach into success.
+    Follow-up guidance belongs to the local wrapper in :func:`tmux_attach_argv`: OpenSSH prints its
+    ``Shared connection ... closed`` message locally after this remote command exits, so a remote-side reminder would
+    necessarily appear above that line rather than below it.
     """
-    attach = f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
-    if not fwd_session:
-        return attach
-    attach_command = shlex.join([ui.COMMAND_NAME, "attach", fwd_session])
-    stop_command = shlex.join([ui.COMMAND_NAME, "stop", fwd_session])
-    hint = f"To attach, use `{attach_command}`; to stop, run `{stop_command}`."
-    return f"{attach}; status=$?; printf '\\n%s\\n' {shlex.quote(hint)} >&2; exit \"$status\""
+    return f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
 
 
 def tmux_attach_argv(endpoint: SSHEndpoint, session: str, fwd_session: str | None = None) -> list[str]:
-    """Return the full local argv that attaches to a remote tmux session.
+    """Return the local argv that attaches and, when possible, prints useful commands after SSH exits.
 
-    Returned rather than executed so the caller can ``exec`` it and hand the tty straight to ssh.
+    Without an fwd session name this is the direct ``ssh -t`` argv used by low-level callers. Production attaches
+    include the name, so a small local ``sh`` wrapper waits for SSH to print its closing message, prints the fenced
+    reattach/stop/list examples beneath it, and then preserves SSH's exit status. The shell and SSH share the terminal
+    process group; terminal resize, mouse reporting, and Ctrl-C continue to go directly to the foreground SSH client.
     """
-    return [*endpoint.ssh_argv(tty=True), tmux_attach_command(session, fwd_session)]
+    ssh_argv = [*endpoint.ssh_argv(tty=True), tmux_attach_command(session)]
+    if not fwd_session:
+        return ssh_argv
+    examples = ui.code_examples(
+        (
+            ("Reattach", shlex.join([ui.COMMAND_NAME, "attach", fwd_session])),
+            ("Stop", shlex.join([ui.COMMAND_NAME, "stop", fwd_session])),
+            ("See all sessions", ui.command("ls")),
+        ),
+        heading="Next steps:",
+    )
+    ssh_command = shlex.join(ssh_argv)
+    wrapper = f"{ssh_command}; status=$?; printf '\\n%s\\n' {shlex.quote(examples)} >&2; exit \"$status\""
+    return ["sh", "-c", wrapper]
 
 
 def tmux_kill(endpoint: SSHEndpoint, session: str) -> None:

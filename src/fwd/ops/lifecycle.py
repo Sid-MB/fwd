@@ -17,6 +17,8 @@ container disk on stop. ``remove`` is not reversible, so it confirms and names e
 
 from __future__ import annotations
 
+import shlex
+
 import typer
 
 from fwd import remote, remote_tasks, ui
@@ -48,6 +50,11 @@ def _ids_summary(session: SessionState) -> str:
     if not session.backend_ids:
         return "-"
     return " ".join(f"{k}={v}" for k, v in sorted(session.backend_ids.items()))
+
+
+def _example_command(action: str, session_name: str | None) -> str:
+    """Build a copy-pasteable lifecycle example, retaining an unfenced ``<name>`` placeholder for an empty table."""
+    return shlex.join([ui.COMMAND_NAME, action, session_name]) if session_name else ui.command(f"{action} <name>")
 
 
 def _live_status(session: SessionState) -> str:
@@ -92,6 +99,15 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
         ["name", "backend", "status", "tmux", "local dir", "last attached", "ids"],
         rows,
         output_format=output_format,
+    )
+    example_name = sessions[0].name if sessions else None
+    ui.show_code_examples(
+        (
+            ("Reattach", _example_command("attach", example_name)),
+            ("Stop", _example_command("stop", example_name)),
+            ("Remove", _example_command("rm", example_name)),
+        ),
+        heading="Manage a session:",
     )
 
 

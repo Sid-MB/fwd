@@ -33,6 +33,8 @@ from typing import NoReturn
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.text import Text
+
 from fwd.output import OutputFormat, RecordElement, TableElement, render
 
 console = Console()
@@ -140,6 +142,9 @@ def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[str]], *, 
     """
     element = TableElement(title, tuple(columns), tuple(tuple(row) for row in rows))
     render(element, output_format=output_format, console=console)
+    # Some commands follow structured stdout with usage guidance on stderr. Flush the data first so a merged terminal
+    # or subprocess log preserves the intended table-then-guidance order even when stdout is block-buffered.
+    console.file.flush()
 
 
 def record(title: str, fields: Sequence[tuple[str, object]], *, output_format: OutputFormat | str = OutputFormat.auto) -> None:
@@ -169,6 +174,48 @@ def accent(text: str) -> str:
 def command_accent() -> str:
     """Return the configured command name as the purple brand anchor used in interactive prompts."""
     return typer.style(command(), fg=typer.colors.MAGENTA, bold=True)
+
+
+def announce_alias(actual: str, *, invoked: str | None = None) -> None:
+    """Print an alias expansion before the canonical command begins producing its own progress output."""
+    info(f"{invoked or command()} → {actual}")
+
+
+def code(text: str) -> str:
+    """Render an inline code fragment for the active output mode.
+
+    Interactive terminals get bold cyan text so commands remain visually distinct without punctuation noise.
+    Redirected, agent, and CI output gets Markdown-compatible backtick fencing. The fence is always longer than any
+    backtick run in the fragment, so shell snippets containing command substitution remain valid Markdown.
+    """
+    if _tty():
+        return typer.style(text, fg=typer.colors.CYAN, bold=True)
+    longest_run = current_run = 0
+    for character in text:
+        current_run = current_run + 1 if character == "`" else 0
+        longest_run = max(longest_run, current_run)
+    fence = "`" * (longest_run + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{padding}{text}{padding}{fence}"
+
+
+def code_examples(examples: Sequence[tuple[str, str]], *, heading: str = "Useful commands:") -> str:
+    """Format labeled command examples for either direct printing or embedding in a post-process shell message."""
+    lines = [heading]
+    lines.extend(f"  {label}: {code(command_text)}" for label, command_text in examples)
+    return "\n".join(lines)
+
+
+def show_code_examples(examples: Sequence[tuple[str, str]], *, heading: str = "Useful commands:") -> None:
+    """Print a compact command-reference block to stderr without contaminating structured stdout.
+
+    ``code_examples`` deliberately returns a plain string because the attach path embeds it in a local shell wrapper
+    that runs only after SSH exits. In a terminal that string contains ANSI styling produced by :func:`code`, so it
+    must be decoded into a Rich ``Text`` object instead of passed through the regular message escaper; treating an ANSI
+    control sequence as Rich markup corrupts it. Non-interactive output disables markup and retains literal backticks.
+    """
+    rendered = code_examples(examples, heading=heading)
+    err_console.print(Text.from_ansi(rendered) if _tty() else rendered, markup=False)
 
 
 def confirm(prompt: str, *, default: bool = False) -> bool:

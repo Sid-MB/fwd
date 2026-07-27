@@ -7,7 +7,9 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
+from fwd import ui
 from fwd.output import OutputFormat, RecordElement, TableElement, render, resolve_format
 
 
@@ -52,3 +54,34 @@ def test_auto_uses_markdown_for_pipes_and_agent_environments(monkeypatch: pytest
 def test_table_rejects_rows_with_the_wrong_shape() -> None:
     with pytest.raises(ValueError, match="expected 2 cells"):
         TableElement("bad", ("a", "b"), (("only one",),))
+
+
+def test_code_fragments_are_colored_interactively_and_backtick_fenced_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ui, "_tty", lambda: False)
+    assert ui.code("fwd ls") == "`fwd ls`"
+    assert ui.code("echo `x`") == "`` echo `x` ``"
+
+    monkeypatch.setattr(ui, "_tty", lambda: True)
+    styled = ui.code("fwd ls")
+    assert "\x1b[" in styled
+    assert "fwd ls" in styled
+    assert "`" not in styled
+
+
+def test_code_examples_render_cleanly_in_terminal_and_machine_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    terminal_stream = StringIO()
+    monkeypatch.setattr(ui, "err_console", Console(file=terminal_stream, force_terminal=True, color_system="standard", width=100))
+    monkeypatch.setattr(ui, "_tty", lambda: True)
+    ui.show_code_examples((("List", "fwd ls"),))
+    terminal_output = terminal_stream.getvalue()
+    assert "\x1b[" in terminal_output
+    assert "\x1b\x1b[" not in terminal_output
+    assert "List: fwd ls" in Text.from_ansi(terminal_output).plain
+    assert "`fwd ls`" not in terminal_output
+
+    machine_stream = StringIO()
+    monkeypatch.setattr(ui, "err_console", Console(file=machine_stream, force_terminal=False, width=100))
+    monkeypatch.setattr(ui, "_tty", lambda: False)
+    ui.show_code_examples((("List", "fwd ls"),))
+    assert machine_stream.getvalue() == "Useful commands:\n  List: `fwd ls`\n"

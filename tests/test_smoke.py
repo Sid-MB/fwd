@@ -112,6 +112,31 @@ def test_help_groups_short_aliases_with_canonical_commands() -> None:
     assert CliRunner().invoke(app, ["s", "--help"]).exit_code == 0
 
 
+def test_short_alias_prints_exact_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Alias discovery must precede operation output and retain the user's arguments and flags."""
+    from fwd.cli import app
+    from fwd.ops import attach
+
+    monkeypatch.setattr(attach, "attach", lambda *args, **kwargs: None)
+    result = CliRunner().invoke(app, ["a", "demo", "--restart"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0] == "info: fwd a demo --restart → fwd attach demo --restart"
+
+
+def test_bare_command_prints_resolved_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare fwd is itself an alias whose resolved operation should be visible before dispatch."""
+    from fwd.cli import app
+    from fwd.ops import attach
+
+    monkeypatch.setattr(attach, "smart_default_command", lambda **kwargs: "fwd attach demo")
+    monkeypatch.setattr(attach, "smart_default", lambda **kwargs: None)
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0] == "info: fwd → fwd attach demo"
+
+
 def test_up_help_explains_how_to_add_a_target() -> None:
     """The launch surface should point users to setup when its target selector lacks the machine they need."""
     from fwd.cli import app

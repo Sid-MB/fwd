@@ -19,6 +19,13 @@ class AliasHelpGroup(TyperGroup):
 
     aliases: ClassVar[dict[str, tuple[str, ...]]] = {"attach": ("a",), "send": ("s",)}
 
+    def resolve_command(self, ctx: click.Context, args: list[str]) -> tuple[str | None, click.Command | None, list[str]]:
+        """Retain the user's original subcommand argv so alias announcements can preserve every argument and flag."""
+        original = tuple(args)
+        resolved = super().resolve_command(ctx, args)
+        ctx.meta["fwd_invocation_argv"] = original
+        return resolved
+
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Resolve registered commands first, then configured target/backend shorthand commands."""
         command = super().get_command(ctx, cmd_name)

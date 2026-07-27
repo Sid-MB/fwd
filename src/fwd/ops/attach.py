@@ -26,6 +26,7 @@ remote tmux rather than being a pipe fwd copies bytes through.
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -216,3 +217,32 @@ def smart_default(*, restart: bool = False) -> NoReturn:
     ui.info(f"no {ui.command()} sessions for {Path.cwd().name}; looking for a saved target")
     launch_ops.launch(initial_command=None, attach=True)
     raise typer.Exit(0)
+
+
+def smart_default_command(*, restart: bool = False) -> str:
+    """Describe the canonical command that bare ``fwd`` will execute without changing state or prompting.
+
+    Existing sessions expand to an explicit attach. With no session, a resolvable saved target expands to an explicit
+    target/default-command launch; a genuinely empty configuration expands to setup. Invalid or ambiguous config uses
+    the generic launch spelling because the launch path itself owns the actionable error.
+    """
+    session = launch_ops.store().get_for_cwd(Path.cwd())
+    if session is None:
+        session = launch_ops.store().get(launch_ops.derive_session_name(Path.cwd()))
+    if session is not None:
+        arguments = [ui.COMMAND_NAME, "attach", session.name]
+        if restart:
+            arguments.append("--restart")
+        return shlex.join(arguments)
+    try:
+        cfg = launch_ops.load_config(Path.cwd())
+    except Exception:
+        return ui.command("up --attach")
+    if not cfg.targets and not cfg.default_target:
+        return ui.command("setup")
+    try:
+        target = cfg.target(None)
+        initial_command = cfg.command_for(target.name)
+    except Exception:
+        return ui.command("up --attach")
+    return shlex.join([ui.COMMAND_NAME, "up", "--target", target.name, "--attach", "--", *initial_command])
