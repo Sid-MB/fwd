@@ -44,13 +44,17 @@ ESSENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
 
 # Fields that must be non-empty for the target to be usable at all; the wizard re-asks until they are given.
 REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "ssh": ("host", "user"),
+    # SSH user is deliberately optional: an alias in ~/.ssh/config may already specify User, IdentityFile, ProxyJump,
+    # and other connection details. Passing an empty user lets OpenSSH resolve the complete alias as it normally would.
+    "ssh": ("host",),
     "runpod": (),
     "slurm": ("login_host", "user", "remote_base"),
 }
 
 # Human-readable guidance shown alongside the prompt for fields whose purpose is not obvious from the name.
 FIELD_HELP: dict[str, str] = {
+    "host": "hostname, IP, or Host alias from ~/.ssh/config",
+    "user": "remote username; SSH targets may leave this blank to defer to OpenSSH",
     "remote_base": "parent directory for project checkouts on the remote side",
     "tool_prefix": "persistent path for installed tooling (survives stop/restart)",
     "alloc": "flags passed to salloc, e.g. --time=04:00:00 --gres=gpu:1",
@@ -108,15 +112,17 @@ def _prompt_value(field_name: str, current: Any, *, required: bool) -> Any:
         return raw
 
 
-def _prompt_target(name: str, backend: str) -> tuple[TargetConfig, dict[str, Any]]:
-    """Prompt for a target's fields.
+def _prompt_target_values(backend: str) -> dict[str, Any]:
+    """Prompt for a target's connection fields before asking for its fwd label.
 
     Returns:
-        The constructed dataclass (for the optional connection test) and the dict of values that actually differ from
-        the defaults, which is all that gets written to disk.
+        Values that differ from the backend defaults, which is all that gets written to disk.
+
+    A placeholder name is used only to construct the dataclass defaults; target names do not affect field defaults.
+    Asking for the label after these concrete connection details gives the user enough context to choose a useful name.
     """
     cls = TARGET_TYPES[backend]
-    defaults = {f.name: getattr(cls(name=name), f.name) for f in dataclass_fields(cls)}
+    defaults = {f.name: getattr(cls(name=backend), f.name) for f in dataclass_fields(cls)}
     required = REQUIRED_FIELDS.get(backend, ())
 
     answers: dict[str, Any] = {}
@@ -126,7 +132,7 @@ def _prompt_target(name: str, backend: str) -> tuple[TargetConfig, dict[str, Any
         value = _prompt_value(field_name, defaults[field_name], required=field_name in required)
         if value != defaults[field_name]:
             answers[field_name] = value
-    return cls(name=name, **answers), answers
+    return answers
 
 
 def _test_connection(target: TargetConfig, cfg: Config) -> None:
@@ -183,13 +189,15 @@ def run_wizard() -> None:
     if backend not in TARGET_TYPES:
         ui.die(f"unknown backend {backend!r}; expected one of: {', '.join(backends_list)}")
 
+    values = _prompt_target_values(backend)
+
     default_name = backend if backend not in existing.targets else f"{backend}-2"
-    target_name = _ask("target name", default=default_name).strip() or default_name
+    target_name = _ask("fwd target name (a local label for this connection)", default=default_name).strip() or default_name
     if target_name in existing.targets and not ui.confirm(f"target {target_name!r} exists; overwrite it?", default=False):
         ui.info("aborted")
         return
 
-    target, values = _prompt_target(target_name, backend)
+    target = TARGET_TYPES[backend](name=target_name, **values)
     make_default = not existing.default_target or ui.confirm(
         f"make {target_name!r} the default target?", default=not existing.targets
     )

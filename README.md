@@ -141,6 +141,8 @@ narrows it to one backend, and the output is valid TOML you can redirect straigh
 own files currently resolve to, and which file set each value, run `fwd config`. For agents, editors, and validators,
 `fwd config --schema` emits the same contract as JSON Schema Draft 2020-12.
 
+Provider authors should read [Adding a target backend](docs/adding-target-backends.md), which covers the SSH compatibility boundary, backend contract, config/schema registration, lifecycle safety, state, documentation, and verification.
+
 `~/.fwd/config.toml` is the global config; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can
 override a single field of a globally-declared target without restating the rest.
 
@@ -245,6 +247,9 @@ Notes specific to Slurm (`docs/slurm-notes.md`):
   quotas a single `node_modules` can exhaust.
 - When your allocation ends, `fwd attach` offers a **new allocation in place** — it does not re-sync or re-bootstrap,
   since the shared filesystem still has everything.
+
+### [your tool here]: Contribute a target!
+[Open an issue](https://github.com/Sid-MB/fwd/issues/new) and tag me or write a PR!
 
 ### Global options
 

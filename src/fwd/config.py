@@ -334,9 +334,12 @@ class Config:
             raise ConfigError(f"default_target {self.default_target!r} is not defined in [targets] and is not an inferable name")
         if not self.targets:
             raise ConfigError(
-                f"no targets configured. Run 'fwd setup' for the wizard, or add [targets.<name>] to {GLOBAL_CONFIG_PATH} "
-                f"(see 'fwd config --example'). For a zero-config launch right now, name a target explicitly: "
-                f"'fwd up --target runpod' rents a GPU pod, 'fwd up --target user@host' uses a machine you already have."
+                "No target is configured or selected.\n\n"
+                "Launch now without a config file:\n"
+                "  fwd up --target runpod       Rent a GPU pod\n"
+                "  fwd up --target user@host    Use an existing SSH machine\n\n"
+                "To save a default, run 'fwd setup'. To configure manually, run 'fwd config --example' and add "
+                f"[targets.<name>] to {GLOBAL_CONFIG_PATH}."
             )
         if len(self.targets) == 1:
             return next(iter(self.targets.values()))

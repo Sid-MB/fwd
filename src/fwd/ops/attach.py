@@ -202,16 +202,16 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
 
 
 def smart_default(*, restart: bool = False) -> NoReturn:
-    """Implement bare ``fwd``: attach to this directory's session, else launch one with defaults.
+    """Implement bare ``fwd``: attach to this directory's session, else launch a deliberately saved default.
 
-    The ergonomic premise of the tool is that one word gets you back to work, so ambiguity always resolves toward
-    doing something useful rather than printing help.
+    First-use provider selection belongs to ``fwd up --target ...`` because a bare command cannot safely choose between
+    an existing SSH machine and billable compute. Once a session or default exists, one word still gets back to work.
     """
     session = launch_ops.resolve_session(None, required=False)
     if session is not None:
         # Returned rather than called bare: attach never returns in production, but if it ever did, falling through
         # would launch a second machine for a directory that already has one.
         return attach(session.name, restart=restart)
-    ui.info(f"no fwd session for {Path.cwd().name}; launching one")
+    ui.info(f"no fwd session for {Path.cwd().name}; looking for a saved default target")
     launch_ops.launch()
     raise typer.Exit(0)
