@@ -1,7 +1,7 @@
 
 ## Things we are looking for
 - [ ] New targets (cloud service, HPC, etc.) you want to see
-- [ ] Clearer documentation, SKILL.md, and examples
+- [ ] Clearer [documentation](./docs), [README.md](./README.md), [SKILL.md](./SKILL.md), and examples
 - [ ] Support other server-running coding agents (beyond Claude Code and Codex)
 - [ ] New features
 - [ ] Bug reports and fixes

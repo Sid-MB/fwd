@@ -11,8 +11,8 @@
   "keywords": ["remote-development", "ssh", "runpod", "slurm", "claude-code", "codex"],
   "skills": "./skills/",
   "interface": {
-    "displayName": "fwd Remote Development",
-    "shortDescription": "Move coding work to remote compute.",
+    "displayName": "fwd: Remote Development",
+    "shortDescription": "Transfer coding sessions to remote compute.",
     "longDescription": "Provision or reuse SSH, RunPod, and Slurm targets; synchronize a project; and continue work with a shell, command, Claude Code, or Codex.",
     "developerName": "Sid-MB",
     "category": "Developer Tools",
@@ -21,7 +21,8 @@
     "defaultPrompt": [
       "Continue this project on a remote machine.",
       "Start Codex on my RunPod CPU target.",
-      "Run this workload on my Slurm cluster."
+      "Run this workload on Slurm.",
+      "Move this session to the cluster."
     ]
   }
 }

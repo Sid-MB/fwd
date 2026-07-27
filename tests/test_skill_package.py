@@ -66,8 +66,8 @@ def test_plugin_manifest_packages_the_root_skill_with_matching_version() -> None
     assert manifest["name"] == "fwd"
     assert manifest["version"] == project["version"]
     assert manifest["skills"] == "./skills/"
-    assert manifest["interface"]["displayName"] == "fwd Remote Development"
-    assert len(manifest["interface"]["defaultPrompt"]) == 3
+    assert manifest["interface"]["displayName"] == "fwd: Remote Development"
+    assert len(manifest["interface"]["defaultPrompt"]) == 4
     plugin_skill = (ROOT / "skills" / "fwd" / "SKILL.md").read_text(encoding="utf-8")
     assert "../../SKILL.md" in plugin_skill
     assert _frontmatter(ROOT / "skills" / "fwd" / "SKILL.md") == _frontmatter()
