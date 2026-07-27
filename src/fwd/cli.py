@@ -96,9 +96,10 @@ def main(
     For a launch without saving config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias.
     """
     if not ctx.resilient_parsing and _interactive_terminal():
-        from fwd import completion_setup
+        from fwd import completion_setup, skill_setup
 
         completion_setup.offer_once()
+        skill_setup.offer_once()
     if ctx.invoked_subcommand is not None:
         return
     from fwd.ops import attach as attach_ops

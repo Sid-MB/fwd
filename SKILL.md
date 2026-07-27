@@ -17,7 +17,7 @@ uv tool install git+https://github.com/Sid-MB/fwd
 
 Or run it once without installing: `uvx --from git+https://github.com/Sid-MB/fwd fwd --help`.
 
-The first human terminal invocation offers to install shell completion. Agent and redirected invocations never prompt; completion can always be installed explicitly with `fwd --install-completion`.
+The first human terminal invocation offers to install shell completion and then this coding-agent skill with `npx skills add Sid-MB/fwd`. Agent and redirected invocations never prompt; either can always be installed explicitly later.
 
 Needs Python 3.12+ locally, plus `ssh` and `rsync`. The RunPod backend additionally needs `runpodctl` >= 2.6.0 configured. Everything the *remote* needs is installed by `fwd` on first launch.
 

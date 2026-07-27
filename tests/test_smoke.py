@@ -24,6 +24,7 @@ MODULES = [
     "fwd.cli_help",
     "fwd.cli_completion",
     "fwd.completion_setup",
+    "fwd.skill_setup",
     "fwd.config",
     "fwd.state",
     "fwd.sshexec",

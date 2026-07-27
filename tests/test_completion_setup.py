@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fwd import cli, completion_setup
+from fwd import cli, completion_setup, skill_setup
 
 
 def _marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -76,6 +76,7 @@ def test_root_callback_offers_only_for_normal_interactive_parsing(monkeypatch: p
     offered: list[str] = []
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
     monkeypatch.setattr(completion_setup, "offer_once", lambda: offered.append("offer"))
+    monkeypatch.setattr(skill_setup, "offer_once", lambda: None)
     cli.main(SimpleNamespace(resilient_parsing=False, invoked_subcommand="info"))
     cli.main(SimpleNamespace(resilient_parsing=True, invoked_subcommand="info"))
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: False)
