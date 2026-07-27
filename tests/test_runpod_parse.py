@@ -328,6 +328,19 @@ class TestCreateSummary:
         assert "community cloud" in create_summary(runpod_target(cloud_type="community"))
 
 
+def test_interrupted_provision_cleanup_deletes_only_invocation_owned_pod(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = runpod_target()
+    backend = RunpodBackend(cfg, Config(targets={"pod": cfg}))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(backend, "_run_ctl", lambda args, **kwargs: calls.append(args) or "")
+
+    assert backend.cleanup_interrupted_provision("demo") is False
+    backend._created_pod_id = "new-pod"
+    assert backend.cleanup_interrupted_provision("demo") is True
+    assert calls == [["pod", "delete", "new-pod"]]
+    assert backend.cleanup_interrupted_provision("demo") is False
+
+
 class TestStatusNeverConfusesUnreachableWithGone:
     """R2-1: only a confirmed 404 may become ``GONE``, because ``GONE`` unlocks deleting the user's session entry.
 

@@ -460,6 +460,10 @@ excluded: the remote session needs history to diff, blame and commit.
 
 ## Notes
 
+- **Ctrl-C cleans up what this invocation owns.** If a launch creates a new provider resource and is interrupted before
+  startup finishes, fwd removes that new resource, deletes its state entry, and reports how many sessions remain.
+  Reused targets are never destroyed by cancellation. If `fwd stop` is interrupted while closing tmux, fwd still
+  completes the provider stop before exiting so compute is not left billing.
 - **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
   additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet.
 - **Destructive and billable actions never happen on a default.** `fwd rm` needs `--force` when non-interactive: its

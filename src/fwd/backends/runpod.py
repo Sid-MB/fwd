@@ -329,6 +329,7 @@ class RunpodBackend(Backend):
 
     def __init__(self, target: RunpodTargetConfig, config: Config) -> None:
         super().__init__(target, config)
+        self._created_pod_id: str | None = None
 
     @classmethod
     def config_parameters(cls) -> tuple[ConfigParameter, ...]:
@@ -518,6 +519,9 @@ class RunpodBackend(Backend):
         if existing is None:
             with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu)})"):
                 pod = self._create_pod(pod_name, gpu)
+            # Record ownership before the readiness wait: Ctrl-C during that wait must delete this invocation's pod,
+            # while a pod discovered by name remains categorically off-limits to interruption cleanup.
+            self._created_pod_id = str(pod["id"])
         else:
             pod = existing
             pod_id = str(pod["id"])
@@ -550,6 +554,17 @@ class RunpodBackend(Backend):
             scratch=scratch,
             notes=notes,
         )
+
+    def cleanup_interrupted_provision(self, session_name: str) -> bool:
+        """Delete only the pod created by this backend instance for the interrupted launch."""
+        del session_name
+        pod_id = self._created_pod_id
+        if not pod_id:
+            return False
+        # A failed delete must propagate so the caller never claims cleanup succeeded while a pod keeps billing.
+        self._run_ctl(["pod", "delete", pod_id], check=True)
+        self._created_pod_id = None
+        return True
 
     def endpoint(self, session: SessionState) -> SSHEndpoint:
         """Re-resolve the pod's current direct ``IP:port`` for 22/tcp, falling back to the proxy if permitted.

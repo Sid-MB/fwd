@@ -100,6 +100,7 @@ def stop(name: str | None = None) -> None:
     """
     session = launch_ops.resolve_session(name)
     backend = launch_ops.backend_for(session)
+    interrupted = False
 
     try:
         endpoint = backend.endpoint(session)
@@ -108,11 +109,27 @@ def stop(name: str | None = None) -> None:
     try:
         with ui.step(f"Stopping remote session {session.tmux_session!r}"):
             remote.tmux_kill(endpoint, session.tmux_session)
+    except KeyboardInterrupt:
+        # The provider stop is the billing-critical half. Ctrl-C may cancel a slow SSH/tmux call, but it must not
+        # strand running compute; finish the provider action before honoring the interrupt.
+        interrupted = True
+        ui.warn("stop interrupted while closing tmux; continuing with the provider stop")
     except Exception as exc:
         ui.warn(f"could not kill the remote tmux session ({exc}); continuing to stop the target")
 
-    with ui.step(f"Stopping {session.backend} target for {session.name!r}"):
-        backend.stop(session)
+    try:
+        with ui.step(f"Stopping {session.backend} target for {session.name!r}"):
+            backend.stop(session)
+    except KeyboardInterrupt:
+        interrupted = True
+        ui.warn("provider stop was interrupted; retrying once so compute is not left billing")
+        with ui.step(f"Retrying stop for {session.backend} target {session.name!r}"):
+            backend.stop(session)
+    if interrupted:
+        remaining = max(0, len(launch_ops.store().all()) - 1)
+        noun = "session" if remaining == 1 else "sessions"
+        ui.warn(f"stop canceled by user after the provider was stopped; {remaining} {noun} still running")
+        raise KeyboardInterrupt
     target = getattr(backend, "target", None)
     if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu":
         ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with 'fwd attach {session.name}'")

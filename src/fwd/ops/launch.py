@@ -37,6 +37,7 @@ import shlex
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -48,6 +49,37 @@ from fwd.state import SessionState, StateStore, endpoint_to_dict
 # Length of the cwd digest appended to a derived session name. Six hex chars is ~16M values: plenty to separate the
 # handful of checkouts one person has, short enough to stay readable in a tmux session name.
 SESSION_HASH_LEN = 6
+
+
+@dataclass(slots=True)
+class _InterruptCleanup:
+    """Track enough launch ownership to clean up safely when the user presses Ctrl-C."""
+
+    store: StateStore
+    session_name: str
+    backend: Provisioner | None = None
+
+    def cancel(self) -> None:
+        """Remove an invocation-created resource, retain reused resources, and report remaining session count."""
+        removed = False
+        cleanup_error: Exception | None = None
+        if self.backend is not None:
+            try:
+                removed = self.backend.cleanup_interrupted_provision(self.session_name)
+            except Exception as exc:
+                cleanup_error = exc
+        if removed:
+            self.store.remove(self.session_name)
+        remaining = len(self.store.all())
+        noun = "session" if remaining == 1 else "sessions"
+        suffix = f"{remaining} {noun} still running"
+        if cleanup_error is not None:
+            disposition = "it remains tracked" if self.store.get(self.session_name) is not None else "it may still exist at the provider; check the provider console"
+            ui.warn(f"startup canceled; could not remove the newly created session ({cleanup_error}); {disposition}; {suffix}")
+        elif removed:
+            ui.warn(f"startup canceled; removed newly created session {self.session_name!r}; {suffix}")
+        else:
+            ui.warn(f"startup canceled; no newly created resource was removed; {suffix}")
 
 # The prompt handed to claude when context arrives as a document rather than a transcript.
 HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
@@ -423,6 +455,41 @@ def launch(
     attach: bool = False,
     push_only: bool = False,
 ) -> SessionState:
+    """Run the launch pipeline and safely clean up invocation-owned resources on Ctrl-C."""
+    cleanup = _InterruptCleanup(store=store(), session_name=name or derive_session_name(Path.cwd()))
+    try:
+        return _launch(
+            target=target,
+            gpu=gpu,
+            name=name,
+            initial_command=initial_command,
+            session=session,
+            handoff=handoff,
+            user_config=user_config,
+            creds=creds,
+            attach=attach,
+            push_only=push_only,
+            interrupt_cleanup=cleanup,
+        )
+    except KeyboardInterrupt:
+        cleanup.cancel()
+        raise
+
+
+def _launch(
+    target: str | None = None,
+    gpu: str | None = None,
+    name: str | None = None,
+    *,
+    initial_command: tuple[str, ...] | None = MAGIC_CLAUDE_COMMAND,
+    session: bool = False,
+    handoff: bool = False,
+    user_config: bool = False,
+    creds: bool = False,
+    attach: bool = False,
+    push_only: bool = False,
+    interrupt_cleanup: _InterruptCleanup,
+) -> SessionState:
     """Provision, sync and bootstrap a target, then start a persistent shell, command, or Claude session.
 
     Args:
@@ -449,16 +516,18 @@ def launch(
     except ConfigError as exc:
         ui.die(str(exc))
 
-    st = store()
+    st = interrupt_cleanup.store
     session_name = name or derive_session_name(local_cwd)
     # An explicit --name looks up exactly that name; otherwise a session already registered for this directory wins,
     # even if it was created under an older naming scheme.
     existing = st.get(session_name) if name else (st.get_for_cwd(local_cwd) or st.get(session_name))
     if existing is not None:
         session_name = existing.name
+    interrupt_cleanup.session_name = session_name
 
     target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
+    interrupt_cleanup.backend = backend
     if initial_command is None:
         initial_command = cfg.command_for(target_cfg.name)
     agent = agents.resolve(initial_command)

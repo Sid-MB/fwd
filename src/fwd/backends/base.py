@@ -176,6 +176,17 @@ class Backend(ABC):
         """
         return {}, ()
 
+    def cleanup_interrupted_provision(self, session_name: str) -> bool:
+        """Remove a resource this backend created during the current, interrupted :meth:`provision` call.
+
+        Returns ``True`` only when an invocation-owned resource was removed. The conservative default does nothing:
+        static SSH machines and pre-existing provider resources must never be destroyed merely because their launch
+        was interrupted. Provisioning backends should record ownership as soon as creation succeeds, before readiness
+        polling, so Ctrl-C during a long boot wait cannot orphan billable compute.
+        """
+        del session_name
+        return False
+
     @abstractmethod
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:
         """Create or reuse a target and return how to reach it.

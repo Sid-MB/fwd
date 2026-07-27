@@ -55,6 +55,7 @@ class FakeBackend:
         self._job_id = job_id
         self.wrapper_args: tuple[Any, ...] | None = None
         self.provision_args: tuple[Any, ...] | None = None
+        self.cleanup_created = False
         if slurm_like:
             # Only present when a test asks for it, mirroring how ops dispatches on hasattr for the Slurm-only hooks.
             self.claude_launch_wrapper = self._claude_launch_wrapper
@@ -88,6 +89,10 @@ class FakeBackend:
 
     def doctor(self) -> list:
         return []
+
+    def cleanup_interrupted_provision(self, session_name: str) -> bool:
+        self.calls.append("cleanup_interrupted_provision")
+        return self.cleanup_created
 
     def _claude_launch_wrapper(self, endpoint, session_name: str, remote_dir: str, claude_cmd: str, *, tool_prefix: str | None = None, gpu: str | None = None) -> str:
         self.calls.append("claude_launch_wrapper")
@@ -308,7 +313,7 @@ def test_launch_persists_state(project, state_store, config, fake_backend, stub_
 def test_launch_prints_exact_resolved_instance(project, state_store, config, fake_backend, stub_world, capsys: pytest.CaptureFixture[str]) -> None:
     """Users selecting a generic backend alias must still see the concrete target, endpoint, port, and provider id."""
     launch_ops.launch(attach=False)
-    output = capsys.readouterr().err
+    output = " ".join(capsys.readouterr().err.split())
     assert "resolved target 'dev' to ssh instance root@10.0.0.5:2222" in output
     assert "pod_id=abc123" in output
 
@@ -337,6 +342,35 @@ def test_launch_failure_after_provision_remains_listable_and_stoppable(project, 
     assert saved.flags["target"] == "dev"
     lifecycle.stop(saved.name)
     assert "stop" in calls
+
+
+def test_ctrl_c_during_new_provision_removes_owned_resource_and_reports_zero_sessions(project, state_store, config, fake_backend, capsys, monkeypatch, wide_console) -> None:
+    """Interruption cleanup is armed before provision returns, covering Ctrl-C during a provider readiness wait."""
+    fake_backend.cleanup_created = True
+    monkeypatch.setattr(fake_backend, "provision", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        launch_ops.launch(initial_command=("codex",), attach=False)
+
+    assert "cleanup_interrupted_provision" in fake_backend.calls
+    assert state_store.all() == []
+    output = " ".join(capsys.readouterr().err.split())
+    assert "startup canceled; removed newly created session" in output
+    assert "0 sessions still running" in output
+
+
+def test_ctrl_c_during_reused_launch_keeps_resource_and_uses_singular_count(project, state_store, config, fake_backend, stub_world, capsys, monkeypatch, wide_console) -> None:
+    """A reused resource is not owned by this invocation and must survive its interruption."""
+    existing = _seed(state_store, project)
+    monkeypatch.setattr(remote, "run_bootstrap", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        launch_ops.launch(initial_command=("codex",), attach=False)
+
+    assert state_store.get(existing.name) is not None
+    output = " ".join(capsys.readouterr().err.split())
+    assert "no newly created resource was removed" in output
+    assert "1 session still running" in output
 
 
 def test_launch_transfers_transcript_by_default(project, state_store, config, fake_backend, stub_world, calls) -> None:
@@ -779,6 +813,20 @@ def test_stop_still_stops_target_when_tmux_kill_fails(project, state_store, conf
     _seed(state_store, project)
     lifecycle.stop()
     assert "stop" in calls
+
+
+def test_ctrl_c_during_stop_still_stops_provider_and_reports_remaining_sessions(project, state_store, config, fake_backend, stub_world, calls, monkeypatch, capsys) -> None:
+    _seed(state_store, project)
+    _seed(state_store, project, name="other-session", local_cwd="/tmp/other")
+    monkeypatch.setattr(remote, "tmux_kill", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        lifecycle.stop("myproject-abc123")
+
+    assert "stop" in calls
+    output = " ".join(capsys.readouterr().err.split())
+    assert "provider was stopped" in output
+    assert "1 session still running" in output
 
 
 def test_stop_warns_that_cpu_runpod_data_was_wiped(project, state_store, config, fake_backend, stub_world, capsys) -> None:
