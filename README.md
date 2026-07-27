@@ -186,6 +186,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
 | `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
 | `fwd rm [name]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm --all` |
+| `fwd uninstall` | Remove local data, skills, completions, and temporary logs, then print the package-manager removal command | `fwd uninstall` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
@@ -416,6 +417,16 @@ default_command = ["python", "-m", "agent"]
 `fwd config rm` uses the same scope flags. It reports when the selected scope has no such value and leaves the file
 unchanged. Existing values require confirmation in an interactive terminal; scripts and agents must pass `--force`.
 Removing an override reveals the next value in the precedence chain rather than copying that value into the file.
+
+### Uninstall
+
+Run `fwd uninstall` to remove `~/.fwd`, the installed Codex/Claude skill, fwd-specific shell completion, and fwd
+temporary directories. It then prints the appropriate `uv tool uninstall`, `pipx uninstall`, or `python -m pip
+uninstall` command because a running process cannot portably remove its own environment. It also prints the matching
+GitHub reinstall command, an `uvx`/`pipx run` one-off command when available, and the project issues URL.
+
+Uninstall never destroys remote resources. When sessions remain tracked it asks you to run `fwd rm --all` first;
+`fwd uninstall --force` removes local state anyway and may leave remote resources running and billing.
 
 ### Target shortcuts and zero-config launches
 

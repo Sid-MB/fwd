@@ -147,7 +147,7 @@ def main(
     """
     if not ctx.resilient_parsing:
         _announce_root_alias(ctx, target=target, agent=agent, name=name, restart=restart)
-    if not ctx.resilient_parsing and _interactive_terminal():
+    if not ctx.resilient_parsing and ctx.invoked_subcommand != "uninstall" and _interactive_terminal():
         from fwd import completion_setup, skill_setup
 
         completion_setup.offer_once()
@@ -524,6 +524,20 @@ def rm_cmd(
         lifecycle.remove_all(force=force)
     else:
         lifecycle.remove(name, force=force)
+
+
+@app.command("uninstall")
+def uninstall_cmd(
+    force: Annotated[bool, typer.Option("--force", help="Skip confirmation; if sessions remain tracked, forget them without stopping or destroying their remote resources.")] = False,
+) -> None:
+    """Remove local fwd data, coding-agent skills, completions, and temporary logs.
+
+    Refuses to discard state for tracked remote resources unless --force explicitly accepts orphaning them. The
+    running CLI cannot remove its own environment portably, so the final package-manager command is printed for you.
+    """
+    from fwd.ops import uninstall as uninstall_ops
+
+    raise typer.Exit(uninstall_ops.uninstall(force=force))
 
 
 class ExampleBackend(str, Enum):

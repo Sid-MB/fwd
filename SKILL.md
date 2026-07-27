@@ -41,6 +41,7 @@ replacement; `--stop` alone cancels without ending the agent session.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
+- Run `fwd uninstall --force` only when the user explicitly requests local fwd removal and understands that tracked remote resources are not destroyed; prefer `fwd rm --all` first.
 - Prefer `fwd diff -q` before deciding whether to push or pull. Exit 0 means synchronized, 1 means different, and 2 means an error.
 - In non-interactive environments, use explicit flags. Never invoke a setup wizard or invent a missing target.
 - Missing `npx`, the optional `skills` CLI, or an unsuccessful skill refresh must not block normal fwd commands.

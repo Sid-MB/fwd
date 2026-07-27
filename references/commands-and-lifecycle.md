@@ -8,6 +8,7 @@
 - Session inspection
 - Attachment
 - Stop and destroy
+- Uninstall
 - Interruptions and recovery
 
 ## Launching
@@ -103,6 +104,13 @@ fwd rm --all --force
 ```
 
 Stopping kills tmux and suspends supported compute. A CPU RunPod's container-disk data is wiped. Destroying is irreversible and requires explicit user authorization; `fwd rm --all` applies the same cleanup to every tracked session after one bulk confirmation. Restarting stopped billable compute requires `--restart` and explicit user authorization.
+
+## Uninstall
+
+`fwd uninstall` removes local fwd state/configuration, the installed coding-agent skill, fwd shell-completion files,
+and fwd-prefixed temporary artifacts. It does not destroy remote resources and refuses to discard tracked session
+state by default; run `fwd rm --all` first. After local cleanup it prints the detected package manager's final
+uninstall command, GitHub reinstall and temporary-run commands, and the GitHub issues URL.
 
 ## Interruptions and recovery
 
