@@ -108,9 +108,10 @@ Stopping kills tmux and suspends supported compute. A CPU RunPod's container-dis
 ## Uninstall
 
 `fwd uninstall` removes local fwd state/configuration, the installed coding-agent skill, fwd shell-completion files,
-and fwd-prefixed temporary artifacts. It does not destroy remote resources and refuses to discard tracked session
-state by default; run `fwd rm --all` first. After local cleanup it prints the detected package manager's final
-uninstall command, GitHub reinstall and temporary-run commands, and the GitHub issues URL.
+and fwd-prefixed temporary artifacts. When available, `npx skills remove` runs first to clean its own global skill
+metadata and agent links; exact-path cleanup remains as a fallback. It does not destroy remote resources and refuses
+to discard tracked session state by default; run `fwd rm --all` first. After local cleanup it prints the detected
+package manager's final uninstall command, GitHub reinstall and temporary-run commands, and the GitHub issues URL.
 
 ## Interruptions and recovery
 

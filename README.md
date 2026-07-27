@@ -421,9 +421,11 @@ Removing an override reveals the next value in the precedence chain rather than 
 ### Uninstall
 
 Run `fwd uninstall` to remove `~/.fwd`, the installed Codex/Claude skill, fwd-specific shell completion, and fwd
-temporary directories. It then prints the appropriate `uv tool uninstall`, `pipx uninstall`, or `python -m pip
-uninstall` command because a running process cannot portably remove its own environment. It also prints the matching
-GitHub reinstall command, an `uvx`/`pipx run` one-off command when available, and the project issues URL.
+temporary directories. When `npx` is available, fwd first uses `npx skills remove` so the skills CLI can clean up its
+own links and metadata, then removes any known paths it left behind. It then prints the appropriate `uv tool
+uninstall`, `pipx uninstall`, or `python -m pip uninstall` command because a running process cannot portably remove
+its own environment. It also prints the matching GitHub reinstall command, an `uvx`/`pipx run` one-off command when
+available, and the project issues URL.
 
 Uninstall never destroys remote resources. When sessions remain tracked it asks you to run `fwd rm --all` first;
 `fwd uninstall --force` removes local state anyway and may leave remote resources running and billing.

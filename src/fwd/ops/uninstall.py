@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fwd import ui
+from fwd.skill_setup import skills_environment
 from fwd.state import STATE_PATH, StateStore
 
 PACKAGE_NAME = "fwd"
@@ -29,6 +30,7 @@ REPOSITORY_URL = "https://github.com/Sid-MB/fwd"
 PACKAGE_SPEC = f"git+{REPOSITORY_URL}"
 ISSUES_URL = f"{REPOSITORY_URL}/issues"
 TEMP_PREFIXES = ("fwd-skill-update-", "fwd-session-", "fwd-codex-", "fwd-cm-")
+SKILLS_REMOVE_TIMEOUT_SECONDS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,31 @@ def _skill_paths(home: Path) -> tuple[Path, ...]:
         home / ".codex" / "skills" / ui.COMMAND_NAME,
         home / ".agents" / "skills" / ui.COMMAND_NAME,
     )
+
+
+def _remove_skill_with_npx() -> bool:
+    """Ask the skills CLI to remove fwd from every global agent, returning whether it completed successfully.
+
+    Direct path cleanup still follows because older skills CLI releases can retain their shared canonical directory
+    when agent-specific links exist. Running the owner CLI first lets it clean any metadata and additional agent links
+    that fwd itself does not know about.
+    """
+    npx = shutil.which("npx")
+    if not npx:
+        return False
+    command = [npx, "--yes", "skills", "remove", "--global", PACKAGE_NAME, "--agent", "*", "--yes"]
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=SKILLS_REMOVE_TIMEOUT_SECONDS, env=skills_environment(noninteractive=True))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        ui.warn(f"could not remove the coding-agent skill using npx skills ({exc}); cleaning its known paths directly")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[-1]}" if detail else ""
+        ui.warn(f"npx skills could not remove the coding-agent skill{suffix}; cleaning its known paths directly")
+        return False
+    ui.ok("removed the installed fwd coding-agent skill using npx skills")
+    return True
 
 
 def _remove_skill_lock_entry(home: Path) -> bool:
@@ -205,6 +232,7 @@ def uninstall(*, force: bool = False) -> int:
             return 0
 
     home = Path.home()
+    _remove_skill_with_npx()
     paths = (*_skill_paths(home), *_completion_paths(home), *_temporary_paths(), home / ".fwd")
     removed = 0
     failures: list[tuple[Path, str]] = []

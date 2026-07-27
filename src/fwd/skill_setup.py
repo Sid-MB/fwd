@@ -60,7 +60,7 @@ def _add_command(npx: str, source: Path, *, noninteractive: bool) -> list[str]:
     return command
 
 
-def _skills_environment(*, noninteractive: bool) -> dict[str, str]:
+def skills_environment(*, noninteractive: bool) -> dict[str, str]:
     """Return an inherited environment with telemetry disabled always and agent detection for noninteractive calls."""
     environment = {**os.environ, "DISABLE_TELEMETRY": "1"}
     if noninteractive:
@@ -117,7 +117,7 @@ def offer_once() -> None:
         return
     try:
         source = _materialize_skill_source()
-        result = subprocess.run(_add_command(npx, source, noninteractive=False), check=False, env=_skills_environment(noninteractive=False))
+        result = subprocess.run(_add_command(npx, source, noninteractive=False), check=False, env=skills_environment(noninteractive=False))
     except OSError as exc:
         ui.warn(f"could not install the bundled {ui.command()} skill ({exc}); it will offer again next time")
         return
@@ -151,7 +151,7 @@ def update_if_needed() -> None:
     try:
         source = _materialize_skill_source()
         with log_path.open("w", encoding="utf-8") as log:
-            result = subprocess.run(_add_command(npx, source, noninteractive=True), check=False, stdout=log, stderr=subprocess.STDOUT, env=_skills_environment(noninteractive=True))
+            result = subprocess.run(_add_command(npx, source, noninteractive=True), check=False, stdout=log, stderr=subprocess.STDOUT, env=skills_environment(noninteractive=True))
     except OSError as exc:
         ui.warn(f"could not update the installed {ui.command()} skill from the local package ({exc}); logs at {log_path}; it will retry next time")
         return
