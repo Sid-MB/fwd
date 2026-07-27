@@ -3,7 +3,7 @@
 ## Contents
 
 - Launching
-- One-shot commands
+- Durable send tasks
 - Synchronization
 - Session inspection
 - Attachment
@@ -22,18 +22,33 @@ fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 
 `fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
 
-## One-shot commands
+## Durable send tasks
 
-`fwd send` (alias `fwd s`) runs from the remote project directory, streams stdout/stderr, and returns the remote exit status. It never starts or restarts compute.
+`fwd send` (alias `fwd s`) runs from the remote project directory in a managed remote tmux window. Every command or agent turn receives a durable task ID and log. It never starts or restarts compute.
 
 ```sh
 fwd send -- pwd
 fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
+fwd send --detach -- python train.py
 fwd send -- bash -lc 'cat outputs/*.json | jq .'
+fwd send --ls --format json
+fwd send TASK_ID
+fwd send TASK_ID --stop
 ```
 
-Invoke a shell explicitly for pipes, redirects, globs, or other shell syntax. On Slurm, `send` runs on the login node; use `srun` when the command belongs in an allocation.
+Streaming commands print `(Press Ctrl-C to cancel, Ctrl-B to background)` after two seconds. Ctrl-C cancels the remote task; Ctrl-B detaches the viewer and leaves it running. `--detach` backgrounds immediately. Invoke a shell explicitly for pipes, redirects, globs, or other shell syntax. On Slurm, `send` runs on the login node; use `srun` when the command belongs in an allocation.
+
+Agent sessions add conversation-aware forms:
+
+```sh
+fwd send agent "continue the implementation"
+fwd send agent --stop
+fwd send agent --stop "replace the current approach"
+fwd send agent --immediate "replace the current approach"
+```
+
+Normal agent follow-ups serialize. `--stop MESSAGE` and `--immediate MESSAGE` both cancel the active turn and send the replacement. `--stop` alone leaves the agent conversation, tmux session, and remote resource alive.
 
 ## Synchronization
 

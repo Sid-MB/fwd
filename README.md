@@ -6,7 +6,7 @@ You are working on your laptop and want another machine: a clean CPU VM for deve
 access to your cluster's data. `fwd` moves the working environment there. It provisions (or reuses) a remote target,
 mirrors your working directory, installs the requested toolchain, and starts a persistent command in remote `tmux`.
 It can carry a Claude transcript across, sync Codex settings and skills, start an ordinary shell or command, and run
-one-shot commands whose responses remain local. Close the laptop, return tomorrow, and the remote session is waiting.
+durable command and agent tasks whose logs can be reattached later. Close the laptop, return tomorrow, and the remote session is waiting.
 
 Existing tools either remote-*view* a session that stays pinned to your laptop, or provision machines with no session
 story at all. `fwd` does the handoff itself.
@@ -156,7 +156,11 @@ installs are automatically refreshed once per updated fwd build with the non-int
 | `fwd BACKEND` | Use the most recently used configured target of that backend and attach; offer setup interactively if none exists | `fwd runpod` |
 | `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching | `fwd up codex` |
 | `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first | `fwd a demo` |
-| `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status | `fwd s -- pwd` |
+| `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
+| `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
+| `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
+| `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
+| `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls` |
 | `fwd ls` | List sessions with live status queried from each backend | `fwd ls --format json` |
 | `fwd push` | Re-sync local changes up | `fwd push` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
@@ -174,18 +178,31 @@ installs are automatically refreshed once per updated fwd build with the non-int
 | `fwd -V` | Print the installed version | `fwd -V` |
 | `fwd info` | Print version plus config and state paths | `fwd info --format json` |
 
-### One-shot remote commands
+### Durable remote tasks
 
-`fwd send` (alias `fwd s`) executes from the running session's remote project directory without taking over the
-terminal:
+`fwd send` (alias `fwd s`) executes from the running session's remote project directory. Every command runs in a
+dedicated window inside a hidden per-session tmux task manager, writes a persistent log, and receives a task ID:
 
 ```sh
 fwd send -- pwd
 fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
+fwd send --detach -- python train.py
 ```
 
-Remote stdout and stderr remain separate and stream normally; `fwd send` exits with the remote command's exit code.
+By default, output streams until the task finishes and `fwd send` returns the remote exit code. If a task lasts two
+seconds in an interactive terminal, fwd prints `(Press Ctrl-C to cancel, Ctrl-B to background)`. Ctrl-C cancels only
+that remote task; Ctrl-B closes the local viewer while the task continues. `--detach` backgrounds immediately.
+
+List, reattach, or cancel tasks from any later terminal:
+
+```sh
+fwd send --ls                         # active tasks; add --all for task history
+fwd send --ls --format json           # stable machine-readable task inventory
+fwd send cmd-a81f                     # replay its log and continue following
+fwd send cmd-a81f --stop              # cancel it; the fwd session remains alive
+```
+
 It never provisions or restarts compute, so stopped, pending, ended, missing, and unknown targets fail with an
 actionable message. Arguments are executed literally. To use shell syntax such as pipes, redirects, or globs, request
 a shell explicitly:
@@ -194,8 +211,29 @@ a shell explicitly:
 fwd send -- bash -lc 'cat outputs/*.json | jq .'
 ```
 
-For Slurm targets, one-shot commands run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
+For Slurm targets, command tasks run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
 when a command must run inside an allocation.
+
+### Sending agent turns
+
+When the session was launched with `fwd up claude` or `fwd up codex`, `agent` resolves to that exact agent:
+
+```sh
+fwd send agent "Run the tests and fix failures"       # stream the turn
+fwd send agent --detach "Run the long benchmark"      # return after it is queued
+fwd send agent --stop                                 # cancel the active turn only
+fwd send agent --stop "Try the smaller implementation"
+fwd send agent --immediate "Try the smaller implementation"  # same cancel-and-send behavior
+```
+
+Normal follow-ups serialize behind an active managed agent turn. `--stop MESSAGE` and `--immediate MESSAGE` interrupt
+the active turn and start the replacement in the same remote conversation. Before any managed send exists,
+`--stop` sends Ctrl-C to the original Claude/Codex pane created by `fwd up`; it does not kill the agent, tmux session,
+pod, VM, or Slurm allocation. Explicit `claude` and `codex` selectors are also accepted and fail clearly if they do
+not match the agent running in the selected fwd session.
+
+Interactive terminals render agent text and tool activity concisely. Pipes, scripts, and recognized agent
+environments receive the agents' original JSONL event stream.
 
 ### Comparing local and remote content
 

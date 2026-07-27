@@ -1,6 +1,6 @@
 ---
 name: fwd
-description: Move a coding project or active Claude Code/Codex workflow to remote compute with fwd. Use for remote development, CPU or GPU VMs, SSH hosts and aliases, RunPod pods, Slurm clusters, extra compute or memory, cluster-local data, persistent remote agents, one-shot remote commands, file synchronization, sync diffs, attaching, stopping, or destroying remote sessions.
+description: Move a coding project or active Claude Code/Codex workflow to remote compute with fwd. Use for remote development, CPU or GPU VMs, SSH hosts and aliases, RunPod pods, Slurm clusters, extra compute or memory, cluster-local data, persistent remote agents, durable remote commands, file synchronization, sync diffs, attaching, stopping, or destroying remote sessions.
 ---
 
 # fwd remote development
@@ -26,7 +26,13 @@ Treat the text following the skill name as the user's intent. Do not require rig
 5. Verify state with `fwd ls --format json` and synchronization with `fwd diff -q [TARGET]`.
 6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
 
-Use `fwd send -- COMMAND` for a one-shot remote command and response without starting or restarting compute.
+Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
+use `--detach` for background work, `fwd send --ls --format json` to discover task IDs, `fwd send TASK_ID` to follow,
+and `fwd send TASK_ID --stop` to cancel only that task.
+
+Use `fwd send agent MESSAGE` to continue the Claude/Codex conversation already running in the selected session.
+Normal messages queue behind an active turn. `--immediate MESSAGE` or `--stop MESSAGE` cancels that turn and sends a
+replacement; `--stop` alone cancels without ending the agent session.
 
 ## Agent safety rules
 
@@ -45,7 +51,10 @@ Use `fwd send -- COMMAND` for a one-shot remote command and response without sta
 fwd up --target runpod                 # CPU RunPod, persistent remote shell, stay local
 fwd up codex --target work             # sync Codex settings/skills and start remote Codex
 fwd up claude --target work            # transfer the Claude transcript and start remote Claude
-fwd send -- pytest -q                  # run once remotely and return its exit status
+fwd send -- pytest -q                  # durable task; stream output and return its exit status
+fwd send --detach -- pytest -q         # start in remote tmux and return immediately
+fwd send --ls --format json            # inspect active command and agent tasks
+fwd send agent --detach "fix tests"    # queue work in the running remote agent
 fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
 fwd pull outputs/                      # retrieve selected remote results

@@ -220,6 +220,23 @@ class SSHEndpoint:
             raise SSHError(f"remote command failed (exit {proc.returncode}) on {self.ssh_target()}: {cmd}{detail}")
         return proc
 
+    def popen(
+        self,
+        cmd: str,
+        *,
+        stdin: int | None = None,
+        stdout: int | None = None,
+        stderr: int | None = None,
+    ) -> subprocess.Popen[bytes]:
+        """Start a remote command without waiting for it.
+
+        Durable task viewers use this lower-level counterpart to :meth:`run` so they can multiplex remote output with
+        local control keys. The remote work itself must live outside this SSH process; terminating the returned
+        process is therefore a viewer detach, not task cancellation.
+        """
+        _ensure_control_dir()
+        return subprocess.Popen([*self.ssh_argv(), cmd], stdin=stdin, stdout=stdout, stderr=stderr)
+
     def run_script(
         self,
         script: str | Path,

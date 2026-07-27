@@ -16,6 +16,7 @@ from fwd.agents import AGENTS
 from fwd.backends import backend_names
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, load_config, ssh_config_host_aliases
 from fwd.output import OutputFormat
+from fwd.send_tasks import SendTaskStore
 from fwd.state import SessionState, StateStore
 
 Completion = tuple[str, str]
@@ -79,6 +80,22 @@ def complete_diff_target(ctx: _click.Context, args: list[str], incomplete: str) 
         if target:
             candidates.setdefault(target, f"configured target · most recent session: {session.name}")
         candidates.setdefault(session.backend, f"{session.backend} backend · most recent session: {session.name}")
+    return _matches(candidates.items(), incomplete)
+
+
+def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete durable task IDs and agent selectors for attach/stop/send operations."""
+    del ctx
+    if len(args) > 1:
+        return []
+    candidates: dict[str, str] = {"agent": "agent running in this fwd session"}
+    candidates.update({name: f"explicit {name} agent selector" for name in AGENTS})
+    try:
+        for task in SendTaskStore().all():
+            if task.active:
+                candidates[task.id] = f"{task.agent or task.kind} · {task.status} · session={task.session} · {task.label}"
+    except Exception:
+        pass
     return _matches(candidates.items(), incomplete)
 
 

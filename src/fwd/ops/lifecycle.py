@@ -19,15 +19,21 @@ from __future__ import annotations
 
 import typer
 
-from fwd import remote, ui
+from fwd import remote, remote_tasks, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.output import OutputFormat
+from fwd.send_tasks import SendTaskStore
 from fwd.state import SessionState
 
 # Rendered when a backend cannot be reached or has not implemented status yet. Distinct from every real status so the
 # table never implies knowledge fwd does not have.
 UNKNOWN_STATUS = "?"
+
+
+def task_store() -> SendTaskStore:
+    """Return the durable send-task store through a replaceable test boundary."""
+    return SendTaskStore()
 
 
 def _short_time(value: str | None) -> str:
@@ -108,7 +114,11 @@ def stop(name: str | None = None) -> None:
         endpoint = session.ssh_endpoint()
     try:
         with ui.step(f"Stopping remote session {session.tmux_session!r}"):
-            remote.tmux_kill(endpoint, session.tmux_session)
+            try:
+                remote.tmux_kill(endpoint, session.tmux_session)
+            finally:
+                remote_tasks.kill_manager(endpoint, session.name)
+                task_store().cancel_session(session.name)
     except KeyboardInterrupt:
         # The provider stop is the billing-critical half. Ctrl-C may cancel a slow SSH/tmux call, but it must not
         # strand running compute; finish the provider action before honoring the interrupt.
@@ -156,6 +166,17 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
 
     backend = launch_ops.backend_for(session)
     status = launch_ops.status_of(backend, session)
+    try:
+        endpoint = backend.endpoint(session)
+    except Exception:
+        endpoint = session.ssh_endpoint()
+    try:
+        with ui.step(f"Closing remote sessions for {session.name!r}"):
+            remote.tmux_kill(endpoint, session.tmux_session)
+            remote_tasks.kill_manager(endpoint, session.name)
+    except Exception as exc:
+        ui.warn(f"could not close every remote tmux session ({exc}); continuing with target destruction")
+    task_store().cancel_session(session.name)
     if status is TargetStatus.GONE:
         ui.info("target is already gone upstream; removing the local state entry only")
     else:

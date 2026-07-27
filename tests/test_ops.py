@@ -172,6 +172,8 @@ def stub_world(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(remote, "tmux_exists", record("tmux_exists", False))
     monkeypatch.setattr(remote, "tmux_new", record("tmux_new", capture="tmux_new"))
     monkeypatch.setattr(remote, "tmux_kill", record("tmux_kill"))
+    monkeypatch.setattr(lifecycle.remote_tasks, "kill_manager", record("task_manager_kill"))
+    monkeypatch.setattr(lifecycle, "task_store", lambda: SimpleNamespace(cancel_session=record("tasks_cancel")))
     monkeypatch.setattr(claude_state, "upload_user_config", record("upload_user_config"))
     monkeypatch.setattr(claude_state, "read_keychain_creds", record("read_keychain_creds", "{}"))
     monkeypatch.setattr(claude_state, "upload_creds", record("upload_creds"))
@@ -803,6 +805,8 @@ def test_stop_kills_tmux_then_backend(project, state_store, config, fake_backend
     _seed(state_store, project)
     lifecycle.stop()
     assert calls.index("tmux_kill") < calls.index("stop")
+    assert calls.index("task_manager_kill") < calls.index("stop")
+    assert calls.index("tasks_cancel") < calls.index("stop")
     # Stopping preserves the session so it can be restarted later.
     assert state_store.get("myproject-abc123") is not None
 

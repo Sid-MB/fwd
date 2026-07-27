@@ -203,16 +203,18 @@ def test_tmux_helpers_issue_the_expected_remote_commands(monkeypatch) -> None:
 
     remote_mod.tmux_new(endpoint, "fwd-demo", "/home/dev/proj", "claude", env={"FOO": "bar baz"})
     remote_mod.tmux_kill(endpoint, "fwd-demo")
+    remote_mod.tmux_interrupt(endpoint, "fwd-demo")
     assert remote_mod.tmux_exists(endpoint, "fwd-demo") is True
 
     # tmux_new issues two commands: the create, then the liveness re-check.
-    new_cmd, verify_cmd, kill_cmd, exists_cmd = (cmd for cmd, _ in issued)
+    new_cmd, verify_cmd, kill_cmd, interrupt_cmd, exists_cmd = (cmd for cmd, _ in issued)
     assert "tmux new-session -d -s fwd-demo -c /home/dev/proj bash -lc" in new_cmd
     assert f"sleep {remote_mod.TMUX_SETTLE_SECONDS}" in verify_cmd
     assert "has-session -t '=fwd-demo'" in verify_cmd
     # The inner shell snippet is shlex-quoted into the tmux argv, so the export survives one level of nesting.
     assert "bar baz" in new_cmd
     assert "kill-session -t '=fwd-demo'" in kill_cmd
+    assert "send-keys -t '=fwd-demo' C-c" in interrupt_cmd
     assert "has-session -t '=fwd-demo'" in exists_cmd
     # Killing something that is already gone must not raise.
     assert issued[2][1]["check"] is False

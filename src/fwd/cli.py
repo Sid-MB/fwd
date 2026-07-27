@@ -30,7 +30,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
-from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
+from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
@@ -168,18 +168,41 @@ app.command("a", hidden=True)(_attach)
 
 
 def _send(
-    command: Annotated[list[str] | None, typer.Argument(help="Command and arguments to execute after '--'.")] = None,
+    arguments: Annotated[list[str] | None, typer.Argument(help="Remote command after '--', agent plus message, or an existing task id.", autocompletion=complete_send_subject)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
-    timeout: Annotated[float | None, typer.Option("--timeout", help="Abort locally if the remote command exceeds this many seconds.")] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout", help="Cancel the remote task if it exceeds this many seconds.")] = None,
+    detach: Annotated[bool, typer.Option("--detach", "-d", help="Start the task in the background and return immediately.")] = False,
+    wait: Annotated[bool, typer.Option("--wait", help="Stream until completion; this is the default unless --detach is passed.")] = False,
+    stop: Annotated[bool, typer.Option("--stop", help="Cancel the selected task; with an agent message, cancel the active turn and send the replacement.")] = False,
+    immediate: Annotated[bool, typer.Option("--immediate", help="Agent shorthand for --stop MESSAGE: cancel the active turn and immediately send this message.")] = False,
+    list_only: Annotated[bool, typer.Option("--ls", help="List send tasks instead of starting one.")] = False,
+    include_all: Annotated[bool, typer.Option("--all", help="With --ls, include completed, failed, and canceled tasks.")] = False,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="With --ls, choose Rich, Markdown, or JSON output.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
-    """Execute one command in the running session's remote project directory.
+    """Start, follow, background, list, or cancel durable remote tasks.
 
-    Streams remote stdout/stderr and returns its exit code. Never starts or restarts compute. Use '--' before the
-    command so remote flags are not parsed by fwd, for example: fwd send -- python train.py --epochs 10
+    Every command and agent turn runs in remote tmux and receives a task id. During streams, Ctrl-C cancels and Ctrl-B
+    backgrounds. Reattach with 'fwd send TASK_ID', cancel with 'fwd send TASK_ID --stop', and list with 'fwd send --ls'.
+    Never starts or restarts compute. Use '--' before raw commands: fwd send -- python train.py --epochs 10
     """
     from fwd.ops import send as send_ops
 
-    send_ops.send(tuple(command or ()), name=name, timeout=timeout)
+    if wait and detach:
+        ui.die("--wait and --detach are mutually exclusive")
+    if include_all and not list_only:
+        ui.die("--all is only valid with --ls")
+    code = send_ops.dispatch(
+        tuple(arguments or ()),
+        name=name,
+        timeout=timeout,
+        detach=detach,
+        stop=stop,
+        immediate=immediate,
+        list_only=list_only,
+        include_all=include_all,
+        output_format=output_format,
+    )
+    raise typer.Exit(code)
 
 
 # Registered from one callback so the short alias cannot diverge from the primary command.

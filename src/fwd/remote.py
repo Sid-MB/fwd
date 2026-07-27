@@ -247,6 +247,16 @@ def tmux_kill(endpoint: SSHEndpoint, session: str) -> None:
     endpoint.run(remote, check=False)
 
 
+def tmux_interrupt(endpoint: SSHEndpoint, session: str) -> None:
+    """Send Ctrl-C to a session's active pane without killing its agent or conversation.
+
+    This handles ``fwd send agent --stop`` before any managed send task exists: the original agent launched by
+    ``fwd up`` owns the main pane, so interrupting that pane cancels its current turn while keeping it available.
+    """
+    command = f"{_source_env()}tmux send-keys -t {_tmux_exact_target(session)} C-c"
+    endpoint.run(command, check=False)
+
+
 def tmux_exists(endpoint: SSHEndpoint, session: str) -> bool:
     """Return whether a remote tmux session is alive (``tmux has-session``)."""
     remote = f"{_source_env()}tmux has-session -t {_tmux_exact_target(session)} 2>/dev/null"
