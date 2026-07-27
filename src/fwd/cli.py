@@ -30,6 +30,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
+from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
@@ -38,6 +39,7 @@ PANEL_CLAUDE = "Claude context"
 CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 
 app = typer.Typer(
+    cls=AliasHelpGroup,
     name="fwd",
     help="Forward your Claude Code session to a remote machine: provision, sync, carry the transcript, attach.",
     epilog=f"Bare 'fwd' attaches to this directory's session, launches its saved default, or starts setup on first use. For a zero-config launch, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'.",
@@ -145,7 +147,7 @@ def _attach(
 
 # Registered from one callback so the tmux-style `a` alias and `attach` always accept identical arguments.
 app.command("attach")(_attach)
-app.command("a", help="Alias for 'attach'.")(_attach)
+app.command("a", hidden=True)(_attach)
 
 
 def _send(
@@ -165,7 +167,7 @@ def _send(
 
 # Registered from one callback so the short alias cannot diverge from the primary command.
 app.command("send", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
-app.command("s", help="Alias for 'send'.", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
+app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
 
 
 @app.command("ls")

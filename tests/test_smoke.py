@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 MODULES = [
     "fwd",
     "fwd.cli",
+    "fwd.cli_help",
     "fwd.config",
     "fwd.state",
     "fwd.sshexec",
@@ -73,6 +74,20 @@ def test_help_lists_commands() -> None:
     assert result.exit_code == 0
     for name in ("up", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor"):
         assert name in result.output
+
+
+def test_help_groups_short_aliases_with_canonical_commands() -> None:
+    """Aliases remain callable but occupy no standalone help rows."""
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "attach (a)" in result.output
+    assert "send (s)" in result.output
+    assert "\n│ a " not in result.output
+    assert "\n│ s " not in result.output
+    assert CliRunner().invoke(app, ["a", "--help"]).exit_code == 0
+    assert CliRunner().invoke(app, ["s", "--help"]).exit_code == 0
 
 
 def test_version_command() -> None:
