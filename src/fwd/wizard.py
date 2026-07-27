@@ -139,7 +139,11 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
         if parameter.advanced and not edit_advanced:
             continue
         effective_compute_type = str(answers.get("compute_type", provided.get("compute_type") or defaults.get("compute_type", ""))).lower()
-        if backend == "runpod" and field_name == "gpu" and effective_compute_type == "cpu":
+        known_values = {**defaults, **provided, **answers}
+        conditions_match = all(str(known_values.get(dependency, "")).lower() == expected.lower() for dependency, expected in parameter.prompt_when)
+        # An explicit flag is never discarded in partial-interactive setup, but irrelevant default-only questions stay
+        # hidden. This keeps one metadata contract usable by the wizard, non-interactive flags, help, and schema.
+        if parameter.prompt_when and not conditions_match and provided.get(field_name) is None:
             continue
         if backend == "runpod" and field_name == "image":
             defaults["image"] = DEFAULT_RUNPOD_CPU_IMAGE if effective_compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE

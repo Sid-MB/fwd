@@ -26,6 +26,7 @@ def test_runpod_setup_prompts_for_compute_type_first_and_skips_gpu_for_cpu(monke
     assert answers == {}
     assert prompted[0] == ("compute_type", "cpu")
     assert ("gpu", "NVIDIA GeForce RTX 4090") not in prompted
+    assert ("volume_gb", 50) not in prompted
     assert ("image", DEFAULT_RUNPOD_CPU_IMAGE) in prompted
 
 
@@ -42,6 +43,7 @@ def test_runpod_setup_switches_to_gpu_defaults_when_gpu_compute_is_selected(monk
 
     assert answers == {"compute_type": "gpu"}
     assert ("gpu", "NVIDIA GeForce RTX 4090") in prompted
+    assert ("volume_gb", 50) in prompted
     assert ("image", DEFAULT_RUNPOD_GPU_IMAGE) in prompted
 
 

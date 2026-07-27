@@ -120,7 +120,9 @@ class ConfigParameter:
     """Standard setup metadata owned by a backend.
 
     ``choices`` contains cheap static suggestions. Backends override :meth:`Backend.config_choices` for provider or
-    machine-derived values such as SSH aliases, RunPod GPU identifiers, or cloud machine types.
+    machine-derived values such as SSH aliases, RunPod GPU identifiers, or cloud machine types. ``prompt_when`` keeps
+    conditional setup knowledge in the backend rather than teaching the generic wizard about provider fields; flags
+    and schema discovery remain available even when a field is irrelevant to the current interactive choices.
     """
 
     name: str
@@ -131,6 +133,7 @@ class ConfigParameter:
     advanced: bool = False
     choices: tuple[ConfigChoice, ...] = ()
     allow_free_text: bool = True
+    prompt_when: tuple[tuple[str, str], ...] = ()
 
 
 class Backend(ABC):

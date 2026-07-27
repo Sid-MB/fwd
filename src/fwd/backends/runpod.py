@@ -336,9 +336,9 @@ class RunpodBackend(Backend):
         return (
             ConfigParameter("compute_type", "--compute-type", "compute kind; CPU-only is the default", choices=(ConfigChoice("cpu", "CPU only"), ConfigChoice("gpu", "GPU")), allow_free_text=False),
             ConfigParameter("cloud_type", "--cloud-type", "RunPod cloud pool", choices=(ConfigChoice("secure"), ConfigChoice("community")), allow_free_text=False),
-            ConfigParameter("gpu", "--gpu", "GPU identifier; used only for GPU compute"),
+            ConfigParameter("gpu", "--gpu", "GPU identifier; used only for GPU compute", prompt_when=(("compute_type", "gpu"),)),
             ConfigParameter("image", "--image", "container image", choices=(ConfigChoice(DEFAULT_RUNPOD_CPU_IMAGE, "CPU base"), ConfigChoice(DEFAULT_RUNPOD_GPU_IMAGE, "GPU/PyTorch")), allow_free_text=True),
-            ConfigParameter("volume_gb", "--volume-gb", "persistent volume size in GB; GPU pods only"),
+            ConfigParameter("volume_gb", "--volume-gb", "persistent volume size in GB; GPU pods only", prompt_when=(("compute_type", "gpu"),)),
             ConfigParameter("volume_mount_path", "--volume-mount-path", "persistent volume mount path", prompt=False),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
             ConfigParameter("tool_prefix", "--tool-prefix", "path for installed tooling and caches"),
