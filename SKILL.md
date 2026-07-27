@@ -5,8 +5,9 @@ description: Move a coding project or active Claude Code/Codex workflow to remot
 
 # fwd remote development
 
-Use `fwd` to provision or reuse a remote machine, synchronize the current project, bootstrap its tools, and run a persistent shell, command, Claude Code, or Codex session in tmux.
+Use `fwd` to provision or reuse a remote machine, synchronize the current project, bootstrap its tools, and run a persistent shell, command, Claude Code, or Codex session in tmux. The invocation of this skill indicates that the user wants `fwd` to be used.
 
+## Installation
 If `fwd` is not on `PATH`, install the GitHub version with `uv tool install git+https://github.com/Sid-MB/fwd`. If `uv` is unavailable, tell the user that Python 3.12+, `uv`, `ssh`, and `rsync` are the local prerequisites instead of improvising another installer.
 
 ## Invocation
@@ -19,24 +20,24 @@ Treat the text following the skill name as the user's intent. Do not require rig
 
 ## Core workflow
 
-1. Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
-2. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
-3. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
-4. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
-5. Let fwd detect Python, JavaScript, and Swift Package Manager projects, reuse working remote project/agent tools, and install only missing declared requirements. For an unsupported or private toolchain, add an idempotent project-owned `.fwd/setup.sh`; it runs after built-in dependency setup.
-6. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
-7. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
+1. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
+2. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
+3. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
+4. Let fwd detect Python, JavaScript, and Swift Package Manager projects, reuse working remote project/agent tools, and install only missing declared requirements. For an unsupported or private toolchain, add an idempotent project-owned `.fwd/setup.sh`; it runs after built-in dependency setup.
+5. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
+6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
 
 Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
 use `--detach` for background work, `fwd send --ls --json` to discover task IDs, `fwd send TASK_ID` to follow,
 and `fwd send TASK_ID --stop` to cancel only that task.
 
 Use `fwd send agent MESSAGE` to continue the Claude/Codex conversation already running in the selected session.
-Normal messages queue behind an active turn. `--immediate MESSAGE` or `--stop MESSAGE` cancels that turn and sends a
-replacement; `--stop` alone cancels without ending the agent session.
+Normal messages queue behind an active turn. `--immediate MESSAGE` cancels that turn and sends a
+replacement; `--stop` cancels without ending the agent session.
 
 ## Agent safety rules
 
+Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Prefer `--json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
 - Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --reuse`, or `fwd up --attach` as a tool call because reuse/attach forms take over a human terminal. In non-interactive mode `--reuse` deliberately errors instead of provisioning.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
@@ -47,13 +48,50 @@ replacement; `--stop` alone cancels without ending the agent session.
 - In non-interactive environments, use explicit flags. Never invoke a setup wizard or invent a missing target.
 - Missing `npx`, the optional `skills` CLI, or an unsuccessful skill refresh must not block normal fwd commands.
 
+## Primitives
+
+### Backends
+
+A backend implements one kind of remote compute: `runpod` provisions RunPod pods, `ssh` connects to an existing SSH host, and `slurm` submits work through a Slurm cluster. Backends define their configuration fields, defaults, setup choices, provisioning behavior, and lifecycle operations.
+
+### Targets
+
+A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect all valid fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup --backend BACKEND` plus the required flags shown by `fwd setup --help`.
+
+Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSSH host alias can work without a saved target. Prefer CPU compute unless the user explicitly requests a GPU.
+
+### Sessions
+
+A session is one locally tracked remote project runtime created by `fwd up`. It binds a local project directory to a target, provider resource or SSH endpoint, synchronized remote directory, and primary tmux session. Its session name identifies that concrete runtime; pass `--name NAME` to choose one or `--new` to create another instead of reusing the current project's saved session.
+
+Use `fwd ls --json` to discover session names and live state. Use exact session names for lifecycle or task commands when ambiguity is possible. Stopping a session ends its primary process and suspends supported compute; removing it destroys its remote resource and local tracking.
+
+### Startup processes and agents
+
+Every session has one primary persistent process started by `fwd up`. It may be a shell, an arbitrary command, the layered `default_command`, or a registered agent. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
+
+Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running.
+
+### Send tasks
+
+A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Canceling a task stops only that work, while `fwd stop` affects the entire session and target.
+
+### Synchronization
+
+The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Launch and `fwd push` mirror local content to the remote project; `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side.
+
+### Toolchains and requirements
+
+A toolchain detects a project ecosystem such as Python, JavaScript, or Swift Package Manager and declares its remote setup steps and tool requirements. Requirements reuse compatible tools already present on the remote and install only missing dependencies, including prerequisite tools. Use an idempotent `.fwd/setup.sh` for project-specific setup that no built-in toolchain covers.
+
+
 ## Common operations
 
 ```sh
 fwd up --target runpod                 # CPU RunPod, layered default command, stay local
 fwd up --new --target runpod           # provision a separate session instead of reusing this project
-fwd up --target work --agent codex     # sync Codex settings/skills and start remote Codex
-fwd up work claude                     # positional target + agent; transfer the Claude transcript
+fwd up --target work_cluster --agent codex     # sync Codex settings/skills and start remote Codex
+fwd up work_cluster claude                     # positional target + agent; transfer the Claude transcript
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks
@@ -64,6 +102,7 @@ fwd pull outputs/                      # retrieve selected remote results
 fwd ls --json                          # inspect live sessions
 fwd ls --all-projects --json           # inspect sessions across every local project
 fwd stop                               # stop the session and suspend supported compute
+fwd --help
 ```
 
 After a successful background launch, hand back `fwd attach NAME` (or `fwd a NAME`) for the human to run.
