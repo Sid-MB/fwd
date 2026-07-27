@@ -20,12 +20,10 @@ Treat the text following the skill name as the user's intent. Do not require rig
 
 ## Core workflow
 
-1. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
-2. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
-3. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
-4. Let fwd detect Python, JavaScript, and Swift Package Manager projects, reuse working remote project/agent tools, and install only missing declared requirements. For an unsupported or private toolchain, add an idempotent project-owned `.fwd/setup.sh`; it runs after built-in dependency setup.
-5. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
-6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
+1. Turn the request into one launch command: `fwd up TARGET AGENT` or `fwd up TARGET -- COMMAND...`. CPU is the default; exact `claude` and `codex` agent names enable their agent-specific synchronization.
+2. Run it. Let fwd provision or connect, synchronize the project, bootstrap tools, detect the project toolchains, install missing requirements, and start the persistent session.
+3. Configure only when fwd says the selected backend needs it. Follow the error's exact `fwd setup` flags; use `fwd config --schema` or `fwd config --example BACKEND` only to discover fields, never to guess them.
+4. Confirm the result with `fwd ls --json`, then tell the user the exact `fwd attach NAME`, `fwd send --name NAME -- COMMAND`, or retrieval command they need. Do not take over the agent's terminal.
 
 Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
 use `--detach` for background work, `fwd send --ls --json` to discover task IDs, `fwd send TASK_ID` to follow,
