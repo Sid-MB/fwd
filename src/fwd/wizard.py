@@ -24,6 +24,7 @@ work before the backends are finished.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
@@ -106,6 +107,11 @@ def _advanced_options_enabled(parameters: list[ConfigParameter], values: dict[st
     generic_defaults = [f"{parameter.name} = {values.get(parameter.name)}" for parameter in applicable if parameter.prompt and parameter.name in values]
     detail = "; ".join(provider_summary or tuple(generic_defaults))
     return ui.confirm(f"Set advanced options? (Defaults: {detail})", default=False)
+
+
+def _launch_command(target_name: str) -> str:
+    """Return a copy-paste-safe launch command pinned to the target setup just wrote."""
+    return shlex.join(("fwd", "up", "--target", target_name))
 
 
 def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -308,7 +314,7 @@ def run_wizard(
         _test_connection(target, existing)
     elif test_connection:
         _test_connection(target, existing, ask=False)
-    ui.info("run 'fwd up' in a project directory to launch a session")
+    ui.info(f"run {_launch_command(resolved_name)!r} in a project directory to launch a session on target {resolved_name!r}")
     # The wizard only asks about the fields it needs; point at the rest of the schema rather than pretending it is all.
     # ui.info("'fwd config' shows the effective config and which file each value came from")
     # ui.info("'fwd config --example' lists every available field, with defaults and comments")

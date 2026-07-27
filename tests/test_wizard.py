@@ -12,6 +12,10 @@ from fwd.backends.ssh import SshHostBackend
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE
 
 
+def test_setup_launch_hint_pins_and_shell_quotes_the_new_target() -> None:
+    assert wizard._launch_command("gpu work") == "fwd up --target 'gpu work'"
+
+
 def test_runpod_setup_prompts_for_compute_type_first_and_skips_gpu_for_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     """Accepting every default produces a CPU target without asking a nonsensical GPU-model question."""
     prompted: list[tuple[str, Any]] = []
