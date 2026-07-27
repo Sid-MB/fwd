@@ -36,6 +36,8 @@ from fwd.ops import launch as launch_ops
 from fwd.ops import lifecycle, transfer
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState, StateStore, endpoint_to_dict
+from fwd.tooling import ToolchainPlan
+from fwd.tooling.requirements import CODEX, UV
 
 ENDPOINT = SSHEndpoint(host="10.0.0.5", user="root", port=2222)
 
@@ -168,7 +170,8 @@ def stub_world(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(sync, "sync_down", record("sync_down", capture="sync_down"))
     monkeypatch.setattr(sync, "tar_down", record("tar_down", capture="tar_down"))
     monkeypatch.setattr(remote, "run_bootstrap", record("run_bootstrap", capture="run_bootstrap"))
-    monkeypatch.setattr(remote, "detect_dep_commands", record("detect_deps", ["uv sync"]))
+    monkeypatch.setattr(remote, "detect_toolchain_plan", record("detect_tools", ToolchainPlan(names=("python",), requirements=(UV,), commands=("uv sync",))))
+    monkeypatch.setattr(remote, "ensure_tools", record("ensure_tools", capture="ensure_tools"))
     monkeypatch.setattr(remote, "run_dep_install", record("run_dep_install", capture="run_dep_install"))
     monkeypatch.setattr(remote, "tmux_exists", record("tmux_exists", False))
     monkeypatch.setattr(remote, "tmux_new", record("tmux_new", capture="tmux_new"))
@@ -263,7 +266,7 @@ def test_launch_runs_stages_in_order(project, state_store, config, fake_backend,
     """The canonical ordering: provision, wait, local prep, sync, bootstrap, deps, claude state, tmux, attach."""
     launch_ops.launch(attach=True)
 
-    ordered = [c for c in calls if c not in {"detect_deps", "tmux_exists", "status", "endpoint"}]
+    ordered = [c for c in calls if c not in {"detect_tools", "tmux_exists", "status", "endpoint"}]
     assert ordered == [
         "provision",
         "wait_for_ssh",
@@ -271,6 +274,7 @@ def test_launch_runs_stages_in_order(project, state_store, config, fake_backend,
         "export_bundle",
         "sync_up",
         "run_bootstrap",
+        "ensure_tools",
         "run_dep_install",
         "import_bundle",
         "tmux_new",
@@ -487,7 +491,7 @@ def test_launch_skips_secret_bearing_steps_by_default(project, state_store, conf
     assert "upload_creds" not in calls
 
 
-def test_codex_launch_syncs_settings_selects_codex_bootstrap_and_starts_codex(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+def test_codex_launch_syncs_settings_selects_codex_tool_and_starts_codex(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
     """The registry must drive all three integration points without activating Claude transcript or credential work."""
     monkeypatch.setattr(codex_state, "upload_user_config", lambda endpoint: calls.append("upload_codex_config"))
 
@@ -497,9 +501,20 @@ def test_codex_launch_syncs_settings_selects_codex_bootstrap_and_starts_codex(pr
     assert "export_bundle" not in calls
     assert "import_bundle" not in calls
     assert "read_keychain_creds" not in calls
-    assert stub_world["run_bootstrap"][1]["agent"] == "codex"
+    assert stub_world["ensure_tools"][0][1] == (UV, CODEX)
     assert stub_world["tmux_new"][0][3].endswith("exec codex'")
     assert state.flags["initial_command"] == ["codex"]
+
+
+def test_arbitrary_command_without_project_toolchain_bootstraps_no_unrelated_tools(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+    """A Swift, Haskell, shell, or other arbitrary command must not implicitly install Python, JS, or an agent."""
+    monkeypatch.setattr(remote, "detect_toolchain_plan", lambda local_dir: ToolchainPlan())
+
+    launch_ops.launch(initial_command=("echo", "ready"), attach=False)
+
+    assert "ensure_tools" not in calls
+    assert "run_dep_install" not in calls
+    assert "export_bundle" not in calls
 
 
 def test_launch_uses_tar_when_rsync_unsupported(project, state_store, config, calls, stub_world, monkeypatch) -> None:

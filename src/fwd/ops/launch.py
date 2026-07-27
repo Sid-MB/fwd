@@ -46,6 +46,7 @@ from fwd import agents, backends, claude_state, remote, sshexec, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
 from fwd.config import Config, ConfigError, TargetConfig, load_config
 from fwd.state import SessionState, StateStore, endpoint_to_dict
+from fwd.tooling import merge_requirements
 
 # Length of the cwd digest appended to a derived session name. Six hex chars is ~16M values: plenty to separate the
 # handful of checkouts one person has, short enough to stay readable in a tmux session name.
@@ -640,18 +641,24 @@ def _launch(
     if push_only:
         return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
 
-    # 5. Tooling. Idempotent remotely via bootstrap's version-stamped marker, so reruns are nearly free.
+    # 5. Core environment plus only the project/agent tools this launch actually needs.
     tool_prefix = info.tool_prefix or f"{remote_dir.rstrip('/')}/.fwd-tools"
     with ui.step("Bootstrapping remote tooling"):
-        remote.run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=remote_dir, scratch=info.scratch, agent=agent.name if agent else None)
+        remote.run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=remote_dir, scratch=info.scratch)
 
-    # 6. Project dependencies, inferred from lockfiles rather than configured.
-    dep_commands = remote.detect_dep_commands(local_cwd)
+    project_plan = remote.detect_toolchain_plan(local_cwd)
+    requirements = merge_requirements(project_plan.requirements, agent.tools if agent is not None else ())
+    if requirements:
+        with ui.step(f"Preparing remote tools ({len(requirements)} requirement(s))"):
+            remote.ensure_tools(endpoint, requirements)
+
+    # 6. Project dependencies, inferred by class-based toolchains; the project escape hatch remains last.
+    dep_commands = project_plan.commands
     if dep_commands:
         with ui.step(f"Installing project dependencies ({len(dep_commands)} step(s))"):
             remote.run_dep_install(endpoint, remote_dir, dep_commands)
     else:
-        ui.info("no lockfiles detected; skipping dependency install")
+        ui.info("no supported project manifests detected; skipping dependency install")
 
     # 7. Optional Claude state, then the persistent shell/command itself.
     resume_id = _transfer_claude_state(endpoint, remote_dir, flags, bundle) if is_claude else None

@@ -4,6 +4,10 @@ A backend turns provider-specific compute into one normalized, SSH-reachable tar
 module in this directory and one class inheriting `Backend` from `base.py`. Launch, attach, lifecycle, doctor, and setup
 operate only through that class; provider details must not leak into those callers.
 
+Project languages and coding-agent installers are a separate extension axis. They conform to the shared contracts in
+`fwd.tooling` and `fwd.toolchains`; see `docs/adding-toolchains.md`. A backend supplies persistent `tool_prefix` and
+optional `scratch` paths but must not select, install, or special-case a language runtime.
+
 ## Required interface
 
 Implement these lifecycle methods:

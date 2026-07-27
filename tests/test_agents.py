@@ -12,6 +12,7 @@ import typer
 
 from fwd import agents, cli, codex_state
 from fwd.sshexec import SSHEndpoint
+from fwd.tooling.requirements import CLAUDE, CODEX
 
 
 def test_agent_registry_only_resolves_exact_magic_commands() -> None:
@@ -21,6 +22,8 @@ def test_agent_registry_only_resolves_exact_magic_commands() -> None:
     assert agents.resolve(("codex", "exec", "pwd")) is None
     assert agents.resolve(("python",)) is None
     assert agents.resolve(()) is None
+    assert agents.resolve(("claude",)).tools == (CLAUDE,)
+    assert agents.resolve(("codex",)).tools == (CODEX,)
 
 
 @pytest.mark.parametrize("command", [("claude",), ("codex",)])

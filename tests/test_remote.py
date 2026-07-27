@@ -282,7 +282,7 @@ def test_tmux_new_succeeds_when_the_session_stays_alive(monkeypatch) -> None:
 # --------------------------------------------------------------------------------------------------------------
 
 
-def test_run_bootstrap_passes_requested_agent_to_script(monkeypatch, tmp_path: Path) -> None:
+def test_run_bootstrap_passes_only_core_environment_to_script(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
     def fake_run_script(self, script, **kwargs):  # noqa: ANN001 - endpoint-shaped test double
@@ -290,7 +290,7 @@ def test_run_bootstrap_passes_requested_agent_to_script(monkeypatch, tmp_path: P
         captured.update(kwargs)
 
     monkeypatch.setattr(SSHEndpoint, "run_script", fake_run_script)
-    run_bootstrap(_endpoint(), tool_prefix="/tools", remote_dir="/project", scratch="/cache", agent="codex")
+    run_bootstrap(_endpoint(), tool_prefix="/tools", remote_dir="/project", scratch="/cache")
 
     assert captured["script"] == BOOTSTRAP_PATH
     assert captured["env"] == {
@@ -298,7 +298,6 @@ def test_run_bootstrap_passes_requested_agent_to_script(monkeypatch, tmp_path: P
         "FWD_TOOL_PREFIX": "/tools",
         "FWD_REMOTE_DIR": "/project",
         "FWD_SCRATCH": "/cache",
-        "FWD_AGENT": "codex",
     }
     assert captured["check"] is True
     assert captured["stream"] is True
@@ -393,26 +392,13 @@ def _fake_tool(bindir: Path, name: str) -> Path:
     return path
 
 
-def test_bootstrap_marker_is_not_trusted_when_a_tool_is_missing(tmp_path: Path) -> None:
-    """A version marker on persistent storage can outlive binaries on ephemeral disk — RunPod wipes $HOME on stop.
-
-    Regression test for a restarted pod being permanently broken: the marker short-circuited bootstrap, so the wiped
-    claude binary was never reinstalled and every later `fwd up` reported success over a tmux session that died.
-    Runs with FWD_BOOTSTRAP_MINIMAL unset (the path that does the real installs) but with stubs on PATH and no curl,
-    so nothing touches the network.
-    """
+def test_bootstrap_marker_is_not_trusted_when_tmux_is_missing(tmp_path: Path) -> None:
+    """The core marker is valid only while its sole runtime responsibility, tmux, still works."""
     prefix = tmp_path / "tools"
     home = tmp_path / "home"
     home.mkdir()
     fake_bin = tmp_path / "fakebin"
-    for tool in ("uv", "claude", "tmux"):
-        _fake_tool(fake_bin, tool)
-    # Stub the network installers to fail instantly. fake_bin shadows /usr/bin, so the real curl/npm are unreachable
-    # and this test can never touch the network no matter which install branch bootstrap takes.
-    for blocked in ("curl", "npm"):
-        path = fake_bin / blocked
-        path.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        path.chmod(0o755)
+    _fake_tool(fake_bin, "tmux")
 
     env = {
         "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -428,107 +414,11 @@ def test_bootstrap_marker_is_not_trusted_when_a_tool_is_missing(tmp_path: Path) 
     second = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
     assert "already applied" in second.stdout
 
-    # Now simulate the pod restart: the payload is gone, the marker on the volume is not.
-    (fake_bin / "claude").unlink()
+    (fake_bin / "tmux").unlink()
     third = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
-    assert third.returncode == 0, third.stderr
+    assert third.returncode != 0
     assert "already applied" not in third.stdout
-    assert "claude" in third.stderr
-
-
-def test_bootstrap_codex_mode_validates_codex_without_requiring_claude(tmp_path: Path) -> None:
-    """A Codex launch must not install or validate Claude, which may legitimately be absent on a fresh target."""
-    prefix = tmp_path / "tools"
-    home = tmp_path / "home"
-    home.mkdir()
-    fake_bin = tmp_path / "fakebin"
-    for tool in ("uv", "codex", "tmux"):
-        _fake_tool(fake_bin, tool)
-    env = {
-        "PATH": f"{fake_bin}:/usr/bin:/bin",
-        "HOME": str(home),
-        "FWD_TOOL_PREFIX": str(prefix),
-        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
-        "FWD_AGENT": "codex",
-    }
-
-    first = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
-    second = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
-
-    assert first.returncode == 0, first.stderr
-    assert "codex present" in first.stdout
-    assert "claude" not in first.stdout
-    assert "already applied" in second.stdout
-
-
-def test_bootstrap_codex_falls_back_to_bun_when_npm_fails(tmp_path: Path) -> None:
-    """CPU images commonly have neither Node nor npm; the Bun installed by fwd must still produce a runnable Codex."""
-    prefix = tmp_path / "tools"
-    home = tmp_path / "home"
-    home.mkdir()
-    fake_bin = tmp_path / "fakebin"
-    for tool in ("uv", "tmux"):
-        _fake_tool(fake_bin, tool)
-    npm = fake_bin / "npm"
-    npm.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    npm.chmod(0o755)
-    bun = fake_bin / "bun"
-    bun.write_text(
-        "#!/bin/sh\n"
-        'if [ "${1:-}" = "--version" ]; then echo "bun 1.0"; exit 0; fi\n'
-        'if [ -f "${1:-}" ]; then entry="$1"; shift; exec "$entry" "$@"; fi\n'
-        'mkdir -p "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin"\n'
-        'mkdir -p "$BUN_INSTALL/bin"\n'
-        'cp "$0" "$BUN_INSTALL/bin/bun"\n'
-        'cat >"$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js" <<\'EOF\'\n'
-        "#!/bin/sh\n"
-        'echo "codex 1.0"\n'
-        "EOF\n"
-        'chmod +x "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js"\n',
-        encoding="utf-8",
-    )
-    bun.chmod(0o755)
-    env = {
-        "PATH": f"{fake_bin}:/usr/bin:/bin",
-        "HOME": str(home),
-        "FWD_TOOL_PREFIX": str(prefix),
-        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
-        "FWD_AGENT": "codex",
-    }
-
-    result = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
-    assert "npm install of @openai/codex failed; trying Bun" in result.stderr
-    assert "codex installed with Bun: codex 1.0" in result.stdout
-    assert (prefix / "bin" / "codex").is_file()
-
-
-def test_bootstrap_codex_failure_aborts_before_writing_success_marker(tmp_path: Path) -> None:
-    """A requested agent missing after bootstrap is a bootstrap error, not a later mysterious dead tmux."""
-    prefix = tmp_path / "tools"
-    home = tmp_path / "home"
-    home.mkdir()
-    fake_bin = tmp_path / "fakebin"
-    for tool in ("uv", "tmux"):
-        _fake_tool(fake_bin, tool)
-    for tool in ("npm", "bun"):
-        executable = fake_bin / tool
-        executable.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        executable.chmod(0o755)
-    env = {
-        "PATH": f"{fake_bin}:/usr/bin:/bin",
-        "HOME": str(home),
-        "FWD_TOOL_PREFIX": str(prefix),
-        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
-        "FWD_AGENT": "codex",
-    }
-
-    result = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
-
-    assert result.returncode != 0
-    assert "Codex was requested but could not be installed" in result.stderr
-    assert not list(prefix.glob(".fwd-bootstrap-*"))
+    assert "tmux is required" in third.stderr
 
 
 def test_bootstrap_requires_its_contract_vars(tmp_path: Path) -> None:

@@ -31,9 +31,10 @@ from pathlib import Path
 
 from fwd.backends.ssh import SshHostBackend
 from fwd.config import SyncConfig, load_config
-from fwd.remote import detect_dep_commands, run_bootstrap, run_dep_install
+from fwd.remote import detect_toolchain_plan, ensure_tools, run_bootstrap, run_dep_install
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.sync import sync_down, sync_up
+from fwd.tooling.requirements import BUN, UV
 
 _failures: list[str] = []
 
@@ -180,8 +181,9 @@ def run_scenario(endpoint: SSHEndpoint, scenario: Scenario, *, workdir: Path, re
     check(f"{scenario.name}: lockfile pulled back with sync_down", (local_dir / present[0]).is_file(), present[0])
 
     # -- phase 2: detection now sees a locked, in-progress project -----------------------------------------
-    detected = detect_dep_commands(local_dir)
-    check(f"{scenario.name}: detect_dep_commands", detected == [scenario.expect_command], str(detected))
+    plan = detect_toolchain_plan(local_dir)
+    detected = list(plan.commands)
+    check(f"{scenario.name}: toolchain commands", detected == [scenario.expect_command], str(detected))
 
     remote_dir = f"{remote_base}/scenario-{scenario.name}"
     sync_up(endpoint, local_dir, remote_dir, sync_cfg)
@@ -201,6 +203,7 @@ def run_scenario(endpoint: SSHEndpoint, scenario: Scenario, *, workdir: Path, re
 
     # -- phase 3: install from the lockfile and actually use the dependency ---------------------------------
     try:
+        ensure_tools(endpoint, plan.requirements)
         run_dep_install(endpoint, remote_dir, detected)
     except SSHError as exc:
         check(f"{scenario.name}: run_dep_install", False, str(exc))
@@ -223,15 +226,12 @@ def main() -> int:
     endpoint = info.endpoint
     tool_prefix = info.tool_prefix or ""
 
-    # checks.py already ran bootstrap in MINIMAL mode and left its marker, which would short-circuit the real run.
-    # Dropping the marker here doubles as a test that a stale stamp forces a full re-bootstrap.
+    # checks.py already ran bootstrap in MINIMAL mode and left its marker. Drop it so this pass verifies tmux too.
     endpoint.run(f"rm -f {shlex.quote(tool_prefix)}/.fwd-bootstrap-*", check=False)
     run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=info.remote_dir, scratch=info.scratch)
-
-    # Scenarios need the real toolchain, so assert the non-minimal bootstrap actually delivered it.
-    for tool in ("uv", "bun"):
-        found = _remote(endpoint, tool_prefix, "/", f"command -v {tool}", check_=False).returncode == 0
-        check(f"bootstrap installed {tool}", found)
+    # The harness intentionally starts without local lockfiles and generates them remotely, so its fixture-preparation
+    # phase needs these managers before normal lockfile-driven detection can occur.
+    ensure_tools(endpoint, (UV, BUN))
 
     remote_base = info.remote_dir
     for scenario in SCENARIOS:

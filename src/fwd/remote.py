@@ -5,11 +5,9 @@ Design intent (owned by the core/remote teammate)
 Two responsibilities that always run back-to-back during a launch:
 
 1. **Bootstrap + dependencies.** ``bootstrap.sh`` is piped to a remote ``bash -s`` (never copied first, so it cannot
-   drift from the installed package) and installs uv/bun/node/claude/tmux under ``FWD_TOOL_PREFIX``. Project
-   dependencies are then inferred from lockfiles rather than configured, because the lockfile *is* the declaration:
-   ``uv.lock`` → ``uv sync``, ``bun.lock*`` → ``bun install``, ``package-lock.json`` → ``npm ci``, ``pnpm-lock.yaml`` →
-   ``pnpm install --frozen-lockfile``, ``requirements.txt`` → ``uv pip install -r``. A project's own
-   ``.fwd/setup.sh`` runs last so it can build on whatever the detected manager installed.
+   drift from the installed package) and establishes persistent paths plus tmux. Class-based project toolchains and
+   coding-agent specs then feed shared tool requirements to one resolver, which reuses working remote executables
+   before trying persistent user-space installers. A project's own ``.fwd/setup.sh`` runs last.
 
 2. **tmux.** tmux is what makes the session persistent: the ``claude`` process is owned by a detached tmux session, so
    a dropped laptop connection is irrelevant. Note ``tmux_attach_argv`` returns *argv* rather than attaching itself —
@@ -24,61 +22,18 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fwd import ui
+from fwd.remote_env import FWD_ENV_RELPATH, HOME_ENV_RELPATH, source_env as _source_env
 from fwd.sshexec import SSHEndpoint, SSHError
+from fwd.toolchains import PROJECT_SETUP_RELPATH, plan as toolchain_plan
+from fwd.tooling import ToolchainPlan, ensure_tools
 
 # Package-relative so it resolves identically from a wheel install and an editable checkout. Switch to
 # importlib.resources.as_file if fwd is ever shipped as a zipapp, where __file__ is not a real filesystem path.
 BOOTSTRAP_PATH: Path = Path(__file__).parent / "scripts" / "bootstrap.sh"
 
-# Written by bootstrap.sh; sourcing it is what puts uv/bun/node/claude on PATH and redirects caches to scratch.
-FWD_ENV_RELPATH = "fwd-env.sh"
-
-# Fixed-location pointer in $HOME that sources the above. Exists because the tool prefix varies per backend
-# (/workspace on RunPod, scratch on Slurm, ~/.fwd-tools on plain ssh) and a non-login remote shell knows none of them.
-HOME_ENV_RELPATH = ".fwd-env.sh"
-
 # How long to let a freshly created tmux session settle before deciding it is alive. Long enough that a command which
 # dies on a missing binary has exited, short enough to be invisible in a launch that already takes tens of seconds.
 TMUX_SETTLE_SECONDS = 2
-
-# Project escape hatch, run after the detected package manager so it can build on those installs.
-PROJECT_SETUP_RELPATH = ".fwd/setup.sh"
-
-# Python lockfile -> install command. Independent of the JS ecosystem: a repo can legitimately need both.
-PYTHON_DEP_RULES: tuple[tuple[str, str], ...] = (("uv.lock", "uv sync"),)
-
-# JS lockfile -> install command, in priority order. Only the FIRST match runs: two JS package managers installing into
-# the same node_modules fight each other, and a leftover package-lock.json in a repo that migrated to bun is common.
-JS_DEP_RULES: tuple[tuple[str, str], ...] = (
-    ("bun.lockb", "bun install"),
-    ("bun.lock", "bun install"),
-    ("package-lock.json", "npm ci"),
-    ("pnpm-lock.yaml", "pnpm install --frozen-lockfile"),
-    ("yarn.lock", "yarn --frozen-lockfile"),
-)
-
-# Flattened view, kept for callers that only want the lockfile->command mapping.
-DEP_RULES: tuple[tuple[str, str], ...] = PYTHON_DEP_RULES + JS_DEP_RULES
-
-
-def _source_env() -> str:
-    """Return the shell prefix that loads ``fwd-env.sh`` if present.
-
-    Why the pointer file: ``ssh host 'cmd'`` runs a *non-interactive, non-login* bash, which sources neither
-    ``~/.bashrc`` (Ubuntu's even early-returns for non-interactive shells) nor ``~/.profile``. So nothing has exported
-    ``FWD_TOOL_PREFIX`` by the time a dependency install runs, and expanding it here would silently produce
-    ``/fwd-env.sh``. ``run_dep_install``'s signature has no tool_prefix to pass either. bootstrap therefore writes
-    ``~/.fwd-env.sh`` with the resolved prefix baked in, giving every later command one fixed, prefix-independent
-    entry point. The ``FWD_TOOL_PREFIX`` branch is the fallback for callers that do export it.
-
-    Guarded with ``-f`` rather than assumed, so a dependency install still runs (using system tools) on a machine where
-    bootstrap was skipped or partially failed.
-    """
-    return (
-        f'if [ -f "$HOME/{HOME_ENV_RELPATH}" ]; then . "$HOME/{HOME_ENV_RELPATH}"; '
-        f'elif [ -n "${{FWD_TOOL_PREFIX:-}}" ] && [ -f "$FWD_TOOL_PREFIX/{FWD_ENV_RELPATH}" ]; then . "$FWD_TOOL_PREFIX/{FWD_ENV_RELPATH}"; fi; '
-    )
-
 
 def _tmux_exact_target(session: str) -> str:
     """Return tmux's exact-match target with shell quoting forced.
@@ -98,16 +53,14 @@ def run_bootstrap(
     tool_prefix: str,
     remote_dir: str,
     scratch: str | None = None,
-    agent: str | None = None,
 ) -> None:
-    """Pipe ``bootstrap.sh`` to the remote host and run it.
+    """Pipe the provider-independent environment/tmux bootstrap to the remote host and run it.
 
     Args:
         endpoint: Target machine.
         tool_prefix: Exported as ``FWD_TOOL_PREFIX``; must be on persistent storage for the install to survive a stop.
         remote_dir: Exported as ``FWD_REMOTE_DIR``.
         scratch: Exported as ``FWD_SCRATCH`` for caches; defaults to a path under ``tool_prefix`` when ``None``.
-        agent: Magic coding agent requested for this launch; its CLI is installed and validated.
 
     Raises:
         fwd.sshexec.SSHError: If the script exits nonzero.
@@ -117,43 +70,23 @@ def run_bootstrap(
         "FWD_TOOL_PREFIX": tool_prefix,
         "FWD_REMOTE_DIR": remote_dir,
         "FWD_SCRATCH": scratch or f"{tool_prefix.rstrip('/')}/scratch",
-        "FWD_AGENT": agent or "",
     }
     # stream=True: bootstrap can take minutes on a cold machine and silence reads as a hang.
     endpoint.run_script(BOOTSTRAP_PATH, env=env, check=True, stream=True)
 
 
+def detect_toolchain_plan(local_dir: str | Path) -> ToolchainPlan:
+    """Detect project ecosystems locally and return their complete shared-tool setup plan."""
+    return toolchain_plan(local_dir)
+
+
 def detect_dep_commands(local_dir: str | Path) -> list[str]:
-    """Infer dependency-install commands from lockfiles present in the project.
+    """Return dependency commands from every detected class-based toolchain.
 
-    Detection reads the *local* tree, not the remote one: local is the source of truth and this runs before (or
-    independently of) the sync, so it must not require a connection.
-
-    Returns:
-        Shell commands in execution order, with ``.fwd/setup.sh`` last if it exists. Empty when nothing is detected.
+    Kept as a compatibility helper for callers that only need commands; launch consumes the full plan so its agent and
+    project requirements can share one deduplicated resolver pass.
     """
-    root = Path(local_dir).expanduser()
-    commands: list[str] = []
-    for filename, command in PYTHON_DEP_RULES:
-        if (root / filename).is_file() and command not in commands:
-            commands.append(command)
-    for filename, command in JS_DEP_RULES:
-        if (root / filename).is_file():
-            commands.append(command)
-            break  # One JS manager only; see JS_DEP_RULES.
-
-    if not commands:
-        # No lockfile: fall back to the declaration files. pyproject implies uv can resolve it; a bare requirements.txt
-        # has no project to sync, so we make an explicit venv first.
-        if (root / "pyproject.toml").is_file():
-            commands.append("uv sync")
-        elif (root / "requirements.txt").is_file():
-            commands.append("uv venv && uv pip install -r requirements.txt")
-
-    if (root / PROJECT_SETUP_RELPATH).is_file():
-        # Always last: it exists to build on whatever the package manager just installed.
-        commands.append(f"bash {PROJECT_SETUP_RELPATH}")
-    return commands
+    return list(detect_toolchain_plan(local_dir).commands)
 
 
 def run_dep_install(endpoint: SSHEndpoint, remote_dir: str, commands: Sequence[str]) -> None:

@@ -366,6 +366,20 @@ Two extras, both opt-in because they touch files you may not want leaving your l
 
 Set defaults for any of these under `[claude]` in your config.
 
+## Project toolchains
+
+fwd detects Python and JavaScript projects from their manifests and lockfiles, then prepares only the tools required by
+that project and the selected coding agent. Every requirement first probes the remote command and version, so an
+existing `uv`, Bun, npm, pnpm, Yarn, Claude Code, or Codex installation is reused when it is visible to non-interactive
+SSH commands. Missing tools use ordered user-space fallbacks under the target's persistent fwd tool directory; fwd
+verifies the command again before running dependency setup.
+
+Repositories can commit `.fwd/setup.sh` for an unsupported language, private build system, or extra setup. It runs
+after detected toolchain dependency commands. Contributors adding first-class Swift, Haskell, Rust, or another
+ecosystem should read [Adding a project toolchain](docs/adding-toolchains.md): integrations conform to one
+`Toolchain` class, return shared `ToolRequirement` values, and add one explicit registry entry. Coding agents use the
+same resolver, so agent and project requirements are deduplicated.
+
 ## Configuration
 
 **Run `fwd config --example` for an always-up-to-date commented reference** — it is generated from `fwd`'s own
@@ -374,7 +388,7 @@ narrows it to one backend, and the output is valid TOML you can redirect straigh
 own files currently resolve to, and which file set each value, run `fwd config`. For agents, editors, and validators,
 `fwd config --schema` emits the same contract as JSON Schema Draft 2020-12.
 
-Provider authors should read [Adding a target backend](docs/adding-target-backends.md), which covers the SSH compatibility boundary, backend contract, config/schema registration, lifecycle safety, state, documentation, and verification.
+Provider authors should read [Adding a target backend](docs/adding-target-backends.md), which covers the SSH compatibility boundary, backend contract, config/schema registration, lifecycle safety, state, documentation, and verification. Language and build-system contributors should read [Adding a project toolchain](docs/adding-toolchains.md).
 
 `~/.fwd/config.toml` is the global config; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can
 override a single field of a globally-declared target without restating the rest.

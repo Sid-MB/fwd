@@ -11,14 +11,17 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from fwd.sshexec import SSHEndpoint
+from fwd.tooling import ToolRequirement
+from fwd.tooling.requirements import CLAUDE, CODEX
 
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """Describe one supported remote coding agent."""
+    """Describe one supported remote coding agent, including tools resolved by the shared remote installer."""
 
     name: str
     command: tuple[str, ...]
+    tools: tuple[ToolRequirement, ...]
     sync_settings: Callable[[SSHEndpoint], None] | None = None
     send_command: Callable[[str, Mapping[str, object]], tuple[str, ...]] | None = None
 
@@ -49,8 +52,8 @@ def _codex_send_command(message: str, flags: Mapping[str, object]) -> tuple[str,
 
 
 AGENTS: dict[str, AgentSpec] = {
-    "claude": AgentSpec(name="claude", command=("claude",), send_command=_claude_send_command),
-    "codex": AgentSpec(name="codex", command=("codex",), sync_settings=_sync_codex, send_command=_codex_send_command),
+    "claude": AgentSpec(name="claude", command=("claude",), tools=(CLAUDE,), send_command=_claude_send_command),
+    "codex": AgentSpec(name="codex", command=("codex",), tools=(CODEX,), sync_settings=_sync_codex, send_command=_codex_send_command),
 }
 
 

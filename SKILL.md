@@ -23,8 +23,9 @@ Treat the text following the skill name as the user's intent. Do not require rig
 2. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
 3. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
 4. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
-5. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
-6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
+5. Let fwd reuse working remote project/agent tools and install only missing declared requirements. For an unsupported or private toolchain, add an idempotent project-owned `.fwd/setup.sh`; it runs after built-in dependency setup.
+6. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
+7. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
 
 Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
 use `--detach` for background work, `fwd send --ls --json` to discover task IDs, `fwd send TASK_ID` to follow,

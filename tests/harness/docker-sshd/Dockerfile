@@ -4,8 +4,8 @@
 # Deliberately close to the worst realistic case: an unprivileged user with no sudo, so anything the bootstrap does
 # must work user-space. curl/unzip are present because that is what the real installers need; tmux and rsync are
 # preinstalled because fwd expects to find (or apt-install) them rather than build them. node/npm stand in for a
-# machine that already has a JS runtime, which is what lets the pnpm scenario install pnpm the way a user would —
-# fwd itself never installs pnpm, it only detects that a project needs it.
+# machine that already has a JS runtime, which lets the shared resolver install pnpm persistently when that scenario
+# declares it.
 FROM ubuntu:24.04
 
 ARG PUBKEY

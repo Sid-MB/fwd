@@ -7,9 +7,8 @@
 # localhost:2299, writes a temporary ~/.fwd/config.toml with an `ssh` target pointing at it, then runs two drivers:
 #
 #   checks.py     plumbing — sshexec run/run_script, sync_up/sync_down/tar roundtrips, minimal bootstrap, tmux
-#   scenarios.py  the real use case — forwarding an in-progress uv / bun / pnpm project, with the full bootstrap
-#                 (live uv + bun installs), lockfile-driven dep install, and a "can the remote actually import the
-#                 dependency" assertion
+#   scenarios.py  the real use case — forwarding an in-progress uv / bun / pnpm project, resolving only each detected
+#                 toolchain's requirements, installing from its lockfile, and proving the dependency is importable
 #
 # Exits 0 with a SKIP message when docker is unavailable, so it is safe to wire into a broader test run; the unit
 # tests in tests/test_sync.py and tests/test_remote.py cover the same logic without docker.

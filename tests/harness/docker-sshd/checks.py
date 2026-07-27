@@ -128,9 +128,7 @@ def main() -> int:
         info.tool_prefix in endpoint.run(f". {env_file}; printf %s \"$PATH\"").stdout,
     )
     if minimal != "1":
-        for tool in ("uv", "claude"):
-            found = endpoint.run(f". {env_file}; command -v {tool}", check=False).returncode == 0
-            check(f"bootstrap installed {tool}", found)
+        check("bootstrap retained tmux", endpoint.run(f". {env_file}; tmux -V", check=False).returncode == 0)
 
     # -- dependency detection (local inspection, asserted against the fixture) -------------------------------
     check("detect_dep_commands sees the fixture lockfile", detect_dep_commands(local_dir) == ["uv sync", "bash .fwd/setup.sh"], str(detect_dep_commands(local_dir)))
