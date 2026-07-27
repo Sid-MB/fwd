@@ -96,6 +96,7 @@ fwd send -- pytest -q                  # durable task; stream output and return 
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
+fwd diff                               # show local/remote project differences
 fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
 fwd pull outputs/                      # retrieve selected remote results
