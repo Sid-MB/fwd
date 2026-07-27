@@ -120,6 +120,11 @@ Shells with descriptive completion support (including Fish and appropriately con
 tooltip/menu description; other shells still complete the session name. Install scripts with
 `fwd --install-completion` or print one for manual setup with `fwd --show-completion`.
 
+On the first interactive invocation, fwd offers to install completion for the detected shell using Typer's standard
+installer. Accepting may update the Bash/Zsh startup file; declining is remembered in
+`~/.fwd/completion-prompted`. Agents, redirected commands, help/version output, and shell-completion subprocesses
+never prompt. The explicit `fwd --install-completion` command remains available after a decline.
+
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |
