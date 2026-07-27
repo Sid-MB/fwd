@@ -74,6 +74,10 @@ class SessionState:
 
     ``flags`` records the launch-time choices (``session``/``handoff``/``user_config``/``creds``) so a later
     ``fwd attach`` after a pod restart can reproduce the same environment without the user retyping flags.
+
+    ``created_at`` is the durable identity timestamp and survives every restart. ``started_at`` is the local estimate
+    for the current run and resets only when launch creates a new tmux session; separating them keeps ``fwd ls``
+    uptime meaningful without requiring every backend to expose provider-specific creation metadata.
     """
 
     name: str
@@ -84,6 +88,7 @@ class SessionState:
     endpoint: dict[str, Any]
     backend_ids: dict[str, str] = field(default_factory=dict)
     created_at: str = field(default_factory=_now)
+    started_at: str = field(default_factory=_now)
     last_attached: str | None = None
     flags: dict[str, Any] = field(default_factory=dict)
 
@@ -98,6 +103,7 @@ class SessionState:
             "endpoint": dict(self.endpoint),
             "backend_ids": dict(self.backend_ids),
             "created_at": self.created_at,
+            "started_at": self.started_at,
             "last_attached": self.last_attached,
             "flags": dict(self.flags),
         }
@@ -110,6 +116,10 @@ class SessionState:
         for required in ("name", "backend", "local_cwd", "remote_dir", "tmux_session"):
             kwargs.setdefault(required, "")
         kwargs.setdefault("endpoint", {})
+        # State version 1 predates ``started_at``. Its closest honest fallback is initial creation, not deserialization
+        # time, which would make every legacy session appear to have started whenever `fwd ls` happened to run.
+        created_at = kwargs.setdefault("created_at", _now())
+        kwargs.setdefault("started_at", created_at)
         return cls(**kwargs)
 
     def ssh_endpoint(self) -> SSHEndpoint:

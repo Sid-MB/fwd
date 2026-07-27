@@ -18,6 +18,7 @@ container disk on stop. ``remove`` is not reversible, so it confirms and names e
 from __future__ import annotations
 
 import shlex
+from datetime import UTC, datetime
 
 import typer
 
@@ -38,11 +39,41 @@ def task_store() -> SendTaskStore:
     return SendTaskStore()
 
 
-def _short_time(value: str | None) -> str:
-    """Render an ISO timestamp as ``YYYY-MM-DD HH:MM`` for table display, or ``-`` when never set."""
+def _parse_time(value: str) -> datetime | None:
+    """Parse a persisted ISO timestamp as UTC, tolerating malformed and older timezone-naive state."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def _compact_duration(timestamp: str, now: datetime) -> str:
+    """Render elapsed local time as compact days, hours, and minutes, retaining seconds only below one minute."""
+    parsed = _parse_time(timestamp)
+    if parsed is None:
+        return "?"
+    seconds = max(0, int((now - parsed).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    days, remaining_minutes = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(remaining_minutes, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return "".join(parts)
+
+
+def _short_time(value: str | None, now: datetime) -> str:
+    """Render an ISO timestamp as ``YYYY-MM-DD HH:MM (age)``, or ``-`` when the session was never attached."""
     if not value:
         return "-"
-    return value.replace("T", " ")[:16]
+    return f"{value.replace('T', ' ')[:16]} ({_compact_duration(value, now)})"
 
 
 def _ids_summary(session: SessionState) -> str:
@@ -57,7 +88,7 @@ def _example_command(action: str, session_name: str | None) -> str:
     return shlex.join([ui.COMMAND_NAME, action, session_name]) if session_name else ui.command(f"{action} <name>")
 
 
-def _live_status(session: SessionState) -> str:
+def _live_status(session: SessionState) -> TargetStatus | str:
     """Return a session's live status, isolating every failure mode to this one cell.
 
     Constructing the backend can fail on its own (target deleted from config, backend module unimportable), which is
@@ -71,7 +102,7 @@ def _live_status(session: SessionState) -> str:
     except Exception:
         return UNKNOWN_STATUS
     try:
-        return str(backend.status(session))
+        return backend.status(session)
     except NotImplementedError:
         return UNKNOWN_STATUS
     except Exception:
@@ -81,22 +112,25 @@ def _live_status(session: SessionState) -> str:
 def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
     """List all sessions with live, backend-reconciled status."""
     sessions = launch_ops.store().all()
+    now = datetime.now(UTC)
     rows = []
     for session in sessions:
+        status = _live_status(session)
         rows.append(
             [
                 session.name,
                 session.backend,
-                _live_status(session),
+                status,
+                _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
                 session.tmux_session,
                 session.local_cwd,
-                _short_time(session.last_attached),
+                _short_time(session.last_attached, now),
                 _ids_summary(session),
             ]
         )
     ui.table(
         f"{ui.command()} sessions ({len(rows)} active)",
-        ["name", "backend", "status", "tmux", "local dir", "last attached", "ids"],
+        ["name", "backend", "status", "running", "tmux", "local dir", "last attached", "ids"],
         rows,
         output_format=output_format,
     )

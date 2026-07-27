@@ -560,7 +560,7 @@ def _launch(
     # sync, bootstrap, dependency install, agent startup); delaying state until tmux succeeds would orphan a billable
     # pod that neither `fwd ls` nor `fwd stop` can see. The final persist below refreshes flags and late backend ids.
     flags["gpu"] = gpu
-    _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
+    _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
     ui.info(f"tracking provisioned instance as session {session_name!r}; stop it with {ui.command(f'stop {session_name}')!r} even if launch setup fails")
 
     # 2. Wait for sshd, then multiplex every later stage over a single connection.
@@ -603,7 +603,7 @@ def _launch(
         _sync_project(endpoint, local_cwd, remote_dir, cfg)
 
     if push_only:
-        return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
+        return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
 
     # 5. Tooling. Idempotent remotely via bootstrap's version-stamped marker, so reruns are nearly free.
     tool_prefix = info.tool_prefix or f"{remote_dir.rstrip('/')}/.fwd-tools"
@@ -641,7 +641,8 @@ def _launch(
     flags["gpu"] = gpu
     flags["tool_prefix"] = tool_prefix
     tmux_name = tmux_session_name(session_name)
-    if remote.tmux_exists(endpoint, tmux_name):
+    tmux_was_running = remote.tmux_exists(endpoint, tmux_name)
+    if tmux_was_running:
         ui.info(f"remote tmux session {tmux_name!r} is already running; leaving it as is")
     else:
         tmux_cmd = build_tmux_command(backend, endpoint, session_name, remote_dir, tool_prefix, startup_cmd, gpu=gpu)
@@ -652,7 +653,7 @@ def _launch(
     backend_ids.update(track_job_id(backend, endpoint, session_name))
     info.backend_ids = backend_ids
 
-    state = _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
+    state = _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=tmux_was_running)
     if not attach:
         ui.ok(f"session {session_name!r} ready; attach with {ui.command(f'attach {session_name}')!r}")
         return state
@@ -671,11 +672,14 @@ def _persist(
     endpoint: sshexec.SSHEndpoint,
     info: TargetInfo,
     flags: dict[str, Any],
+    *,
+    preserve_started_at: bool,
 ) -> SessionState:
     """Write (or refresh) the session's state entry and return it.
 
-    ``created_at`` and ``last_attached`` are preserved across reruns so a repaired session keeps its history, while
-    the endpoint and backend ids are always overwritten — those are exactly the fields that churn on a pod restart.
+    ``created_at`` and ``last_attached`` are preserved across reruns so a repaired session keeps its history.
+    ``started_at`` is preserved only if the same tmux session was already alive; creating a new tmux session begins a
+    new locally tracked run. The endpoint and backend ids are always overwritten because those churn on pod restarts.
     """
     previous = st.get(session_name)
     state = SessionState(
@@ -691,6 +695,8 @@ def _persist(
     if previous is not None:
         state.created_at = previous.created_at
         state.last_attached = previous.last_attached
+        if preserve_started_at:
+            state.started_at = previous.started_at
     st.upsert(state)
     return state
 

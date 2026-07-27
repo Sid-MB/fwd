@@ -275,6 +275,24 @@ def test_state_roundtrip(tmp_path: Path) -> None:
     assert store.remove("demo") is False
 
 
+def test_legacy_state_uses_creation_time_as_running_time() -> None:
+    """Sessions written before ``started_at`` existed retain a meaningful local duration after upgrade."""
+    from fwd.state import SessionState
+
+    session = SessionState.from_dict(
+        {
+            "name": "legacy",
+            "backend": "ssh",
+            "local_cwd": "/tmp/project",
+            "remote_dir": "/tmp/remote",
+            "tmux_session": "fwd-legacy",
+            "endpoint": {},
+            "created_at": "2026-01-02T03:04:05+00:00",
+        }
+    )
+    assert session.started_at == session.created_at
+
+
 def test_corrupt_state_degrades_to_empty(tmp_path: Path) -> None:
     """A truncated or garbage state file must not break the CLI."""
     from fwd.state import StateStore

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -496,13 +497,22 @@ def test_launch_skips_tmux_creation_when_session_alive(project, state_store, con
     assert "run_bootstrap" in calls
 
 
-def test_launch_reuses_existing_session_for_cwd(project, state_store, config, fake_backend, stub_world) -> None:
-    """A second launch in the same directory keeps the original name and created_at."""
+def test_launch_reuses_existing_session_for_cwd_and_starts_a_new_run(project, state_store, config, fake_backend, stub_world) -> None:
+    """A recreated tmux session keeps its durable identity while resetting its locally tracked running clock."""
     first = launch_ops.launch(attach=False)
     second = launch_ops.launch(attach=False)
     assert second.name == first.name
     assert second.created_at == first.created_at
+    assert second.started_at > first.started_at
     assert len(state_store.all()) == 1
+
+
+def test_launch_preserves_running_clock_when_tmux_is_already_alive(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
+    """Repairing files around an existing tmux session must not make that session appear newly started."""
+    first = launch_ops.launch(attach=False)
+    monkeypatch.setattr(remote, "tmux_exists", lambda *args, **kwargs: True)
+    second = launch_ops.launch(attach=False)
+    assert second.started_at == first.started_at
 
 
 def test_launch_dies_when_ssh_never_comes_up(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
@@ -797,13 +807,18 @@ def test_ls_shows_live_status(project, state_store, config, calls, monkeypatch, 
 
 def test_ls_json_exposes_named_rows(project, state_store, config, calls, monkeypatch, capsys) -> None:
     monkeypatch.setattr(launch_ops.backends, "make_backend", lambda target, config: FakeBackend(calls, status=TargetStatus.RUNNING))
-    _seed(state_store, project)
+    now = datetime.now(UTC)
+    started_at = now - timedelta(hours=1, minutes=2, seconds=10)
+    last_attached = now - timedelta(days=4, hours=3, minutes=2, seconds=10)
+    _seed(state_store, project, started_at=started_at.isoformat(), last_attached=last_attached.isoformat())
     lifecycle.ls(output_format="json")
     payload = json.loads(capsys.readouterr().out)
     assert payload["type"] == "table"
     assert payload["title"] == "fwd sessions (1 active)"
     assert payload["rows"][0]["name"] == "myproject-abc123"
     assert payload["rows"][0]["status"] == "running"
+    assert payload["rows"][0]["running"] == "1h2m"
+    assert payload["rows"][0]["last attached"] == f"{last_attached.isoformat().replace('T', ' ')[:16]} (4d3h2m)"
 
 
 def test_stop_kills_tmux_then_backend(project, state_store, config, fake_backend, stub_world, calls) -> None:
