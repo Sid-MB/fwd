@@ -11,8 +11,8 @@ session. A single unreachable cluster must not take the whole table down, so eve
 wrapped and degrades to a ``?`` cell. The rule here is that ``fwd ls`` always renders something, whatever else is
 broken — it is the command users reach for precisely when things are broken.
 
-``stop`` is the reversible one (kill tmux, suspend the target, keep the volume and the state entry); ``remove`` is
-not, so it confirms and names exactly what will be destroyed.
+``stop`` keeps the state entry and persistent storage, but RunPod CPU pods have no persistent volume and lose their
+container disk on stop. ``remove`` is not reversible, so it confirms and names exactly what will be destroyed.
 """
 
 from __future__ import annotations
@@ -113,7 +113,11 @@ def stop(name: str | None = None) -> None:
 
     with ui.step(f"Stopping {session.backend} target for {session.name!r}"):
         backend.stop(session)
-    ui.ok(f"stopped {session.name!r}; data is preserved, restart with 'fwd attach {session.name}'")
+    target = getattr(backend, "target", None)
+    if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu":
+        ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with 'fwd attach {session.name}'")
+    else:
+        ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with 'fwd attach {session.name}'")
 
 
 def remove(name: str | None = None, *, force: bool = False) -> None:

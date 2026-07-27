@@ -486,6 +486,12 @@ def launch(
     remote_dir = info.remote_dir
     provider_identity = " ".join(f"{key}={value}" for key, value in sorted(info.backend_ids.items()))
     ui.info(f"resolved target {target_cfg.name!r} to {target_cfg.backend} instance {endpoint.ssh_target()}:{endpoint.port}" + (f" ({provider_identity})" if provider_identity else ""))
+    # Persist as soon as a provider resource exists. Every remaining stage can fail independently (SSH readiness,
+    # sync, bootstrap, dependency install, agent startup); delaying state until tmux succeeds would orphan a billable
+    # pod that neither `fwd ls` nor `fwd stop` can see. The final persist below refreshes flags and late backend ids.
+    flags["gpu"] = gpu
+    _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
+    ui.info(f"tracking provisioned instance as session {session_name!r}; stop it with 'fwd stop {session_name}' even if launch setup fails")
 
     # 2. Wait for sshd, then multiplex every later stage over a single connection.
     with ui.step(f"Waiting for SSH on {endpoint.host}:{endpoint.port}"):

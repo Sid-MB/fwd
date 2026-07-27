@@ -29,7 +29,7 @@ import typer
 
 from fwd import claude_state, codex_state, remote, sshexec, sync, ui
 from fwd.backends.base import TargetInfo, TargetStatus
-from fwd.config import Config, SshTargetConfig, SyncConfig
+from fwd.config import Config, RunpodTargetConfig, SshTargetConfig, SyncConfig
 from fwd.ops import attach as attach_ops
 from fwd.ops import launch as launch_ops
 from fwd.ops import lifecycle, transfer
@@ -322,6 +322,21 @@ def test_launch_plumbs_gpu_and_name(project, state_store, config, fake_backend, 
 def test_launch_no_attach_skips_exec(project, state_store, config, fake_backend, stub_world, calls) -> None:
     launch_ops.launch(attach=False)
     assert "exec_attach" not in calls
+
+
+def test_launch_failure_after_provision_remains_listable_and_stoppable(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+    """A billable provider resource must enter state before any remote setup stage can orphan it."""
+    monkeypatch.setattr(remote, "run_bootstrap", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("bootstrap failed")))
+
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        launch_ops.launch(initial_command=("codex",), attach=False)
+
+    saved = state_store.get_for_cwd(project)
+    assert saved is not None
+    assert saved.backend_ids == {"pod_id": "abc123"}
+    assert saved.flags["target"] == "dev"
+    lifecycle.stop(saved.name)
+    assert "stop" in calls
 
 
 def test_launch_transfers_transcript_by_default(project, state_store, config, fake_backend, stub_world, calls) -> None:
@@ -764,6 +779,18 @@ def test_stop_still_stops_target_when_tmux_kill_fails(project, state_store, conf
     _seed(state_store, project)
     lifecycle.stop()
     assert "stop" in calls
+
+
+def test_stop_warns_that_cpu_runpod_data_was_wiped(project, state_store, config, fake_backend, stub_world, capsys) -> None:
+    config.targets["dev"] = RunpodTargetConfig(name="dev", compute_type="cpu")
+    fake_backend.target = config.targets["dev"]
+    _seed(state_store, project, backend="runpod")
+
+    lifecycle.stop()
+
+    output = capsys.readouterr().err
+    assert "RunPod wiped its CPU container disk" in output
+    assert "fwd attach myproject-abc123" in output
 
 
 def test_remove_confirms_then_destroys(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
