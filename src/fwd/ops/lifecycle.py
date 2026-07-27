@@ -82,7 +82,7 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
             ]
         )
     ui.table(
-        "fwd sessions",
+        f"fwd sessions ({len(rows)} active)",
         ["name", "backend", "status", "tmux", "local dir", "last attached", "ids"],
         rows,
         output_format=output_format,

@@ -705,12 +705,14 @@ def test_ls_renders_and_survives_backend_failure(project, state_store, config, m
     _seed(state_store, project)
     lifecycle.ls()
     out = capsys.readouterr().out
+    assert "fwd sessions (1 active)" in out
     assert "myproject-abc123" in out
     assert lifecycle.UNKNOWN_STATUS in out
 
 
-def test_ls_empty_is_not_an_error(project, state_store, config) -> None:
+def test_ls_empty_is_not_an_error(project, state_store, config, capsys, wide_console) -> None:
     lifecycle.ls()
+    assert "fwd sessions (0 active)" in capsys.readouterr().out
 
 
 def test_ls_shows_live_status(project, state_store, config, calls, monkeypatch, capsys, wide_console) -> None:
@@ -726,6 +728,7 @@ def test_ls_json_exposes_named_rows(project, state_store, config, calls, monkeyp
     lifecycle.ls(output_format="json")
     payload = json.loads(capsys.readouterr().out)
     assert payload["type"] == "table"
+    assert payload["title"] == "fwd sessions (1 active)"
     assert payload["rows"][0]["name"] == "myproject-abc123"
     assert payload["rows"][0]["status"] == "running"
 
