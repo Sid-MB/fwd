@@ -260,7 +260,7 @@ def setup_cmd(
     user: Annotated[str | None, typer.Option("--user", help="Remote username; optional for SSH aliases.")] = None,
     port: Annotated[int | None, typer.Option("--port", help="SSH port.")] = None,
     key_path: Annotated[str | None, typer.Option("--key-path", help="SSH identity file; omit to use your SSH agent/config.")] = None,
-    proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="SSH bastion hop, as user@host.")] = None,
+    proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="External SSH host used to reach a non-public target, as user@host.")] = None,
     extra_ssh_option: Annotated[list[str] | None, typer.Option("--extra-ssh-option", help="Additional raw SSH argv entry; repeat to preserve argument boundaries.")] = None,
     remote_base: Annotated[str | None, typer.Option("--remote-base", help="Remote parent directory for project checkouts.")] = None,
     compute_type: Annotated[str | None, typer.Option("--compute-type", help="RunPod compute type: cpu (default) or gpu.")] = None,

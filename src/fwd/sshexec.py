@@ -109,7 +109,7 @@ class SSHEndpoint:
         user: Remote login user.
         port: TCP port for sshd (RunPod direct-IP pods expose 22/tcp on a high random port).
         key_path: Optional explicit identity file; ``None`` defers to the user's ssh config/agent.
-        proxy_jump: Optional ``-J`` value for bastion/login hops.
+        proxy_jump: Optional ``-J`` value for an external host used to reach a non-public target.
         supports_rsync: ``False`` when the transport cannot run a remote rsync binary (RunPod proxy). Callers must
             fall back to tar-over-ssh (:func:`fwd.sync.tar_up`) and warn loudly.
         extra_opts: Raw extra ``-o`` style options appended last so user config can override our defaults.

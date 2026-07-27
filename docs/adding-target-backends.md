@@ -12,7 +12,7 @@ This guide explains how to extend `fwd` with another compute provider such as Go
 
 A provider is therefore a straightforward fit when it offers a durable VM or container with:
 
-- inbound SSH, including a provider proxy or bastion;
+- inbound SSH, including a provider proxy or an external host that can reach a private target;
 - a writable filesystem that survives for the intended session lifetime;
 - enough shell compatibility to run the bootstrap script and `tmux`;
 - stable provider identifiers that can be saved locally and queried later.

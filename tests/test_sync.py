@@ -55,12 +55,12 @@ def test_ssh_argv_control_options_only_when_requested() -> None:
 
 
 def test_ssh_argv_includes_key_port_proxy_and_extra_opts() -> None:
-    endpoint = _endpoint(port=2299, key_path="/tmp/id_test", proxy_jump="bastion.example", extra_opts=["-o", "ServerAliveInterval=30"])
+    endpoint = _endpoint(port=2299, key_path="/tmp/id_test", proxy_jump="external.example", extra_opts=["-o", "ServerAliveInterval=30"])
     argv = endpoint.ssh_argv(tty=True, control=False)
 
     assert argv[argv.index("-p") + 1] == "2299"
     assert argv[argv.index("-i") + 1] == "/tmp/id_test"
-    assert argv[argv.index("-J") + 1] == "bastion.example"
+    assert argv[argv.index("-J") + 1] == "external.example"
     assert "-t" in argv
     # extra_opts land immediately before the target so user options are the last thing ssh sees.
     assert argv[-3:] == ["-o", "ServerAliveInterval=30", "dev@example.com"]

@@ -233,10 +233,10 @@ def test_provision_falls_back_to_alias_when_pinned_host_unreachable() -> None:
 
 def test_provision_keeps_proxy_jump_and_auth_fields() -> None:
     """Pinning changes which node we land on, never how we reach the cluster."""
-    backend = make_backend(proxy_jump="bastion.example", key_path="~/.ssh/hpc", port=2222)
+    backend = make_backend(proxy_jump="external.example", key_path="~/.ssh/hpc", port=2222)
     backend._gpu = None
     info_ep = backend._endpoint_for("login7.hpc.example")
-    assert (info_ep.proxy_jump, info_ep.key_path, info_ep.port, info_ep.user) == ("bastion.example", "~/.ssh/hpc", 2222, "sid")
+    assert (info_ep.proxy_jump, info_ep.key_path, info_ep.port, info_ep.user) == ("external.example", "~/.ssh/hpc", 2222, "sid")
 
 
 def test_provision_requires_remote_base_and_login_host() -> None:

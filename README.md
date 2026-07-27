@@ -225,7 +225,7 @@ backend = "ssh"
 host = "gpu.example.com"
 user = "sid"
 key_path = "~/.ssh/id_ed25519"       # optional; defaults to your ssh config/agent
-proxy_jump = "sid@bastion.example"   # optional
+proxy_jump = "sid@external.example"  # optional; publicly accessible host used to reach a private target
 remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 ```
 

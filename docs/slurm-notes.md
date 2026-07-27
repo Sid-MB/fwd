@@ -174,14 +174,14 @@ If `FWD_SCRATCH` is unset (ssh/RunPod backends), the file should still exist and
 
 ## Config examples
 
-Typical university cluster, GPU partition, bastion hop:
+Typical university cluster, GPU partition, external SSH host:
 
 ```toml
 [targets.hpc]
 backend = "slurm"
 login_host = "login.hpc.example.edu"
 user = "sid"
-proxy_jump = "sid@bastion.example.edu"     # omit if the login node is directly reachable
+proxy_jump = "sid@external.example.edu"    # omit if the login node is publicly accessible
 key_path = "~/.ssh/id_ed25519_hpc"
 remote_base = "/scratch/sid/fwd"           # MUST be scratch, never $HOME
 tool_prefix = "/scratch/sid/fwd/.fwd-tools"  # optional; this is the default

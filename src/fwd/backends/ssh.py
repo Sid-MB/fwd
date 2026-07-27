@@ -42,7 +42,7 @@ class SshHostBackend(Backend):
             ConfigParameter("user", "--user", "remote username; blank defers to OpenSSH"),
             ConfigParameter("port", "--port", "SSH port"),
             ConfigParameter("key_path", "--key-path", "explicit identity file; blank uses SSH config/agent"),
-            ConfigParameter("proxy_jump", "--proxy-jump", "bastion host to jump through, if any"),
+            ConfigParameter("proxy_jump", "--proxy-jump", "external SSH host to jump through, if the target is not publicly accessible"),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
             ConfigParameter("extra_opts", "--extra-ssh-option", "additional raw SSH argv entries", prompt=False),
         )

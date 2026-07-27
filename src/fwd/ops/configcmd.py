@@ -59,7 +59,7 @@ FIELD_DOCS: dict[str, str] = {
     "user": "remote username; leave unset to let ~/.ssh/config decide",
     "port": "ssh port",
     "key_path": "identity file; unset means your ssh agent/config supplies it",
-    "proxy_jump": "ssh -J bastion hop, as user@host",
+    "proxy_jump": "external ssh -J host used to reach a non-public target, as user@host",
     "remote_base": "parent dir for checkouts; the project name is appended to form remote_dir",
     "extra_opts": "extra raw ssh options, e.g. [\"-o\", \"ServerAliveInterval=30\"]",
     "compute_type": f"one of: {' | '.join(sorted(RUNPOD_COMPUTE_TYPES))} — cpu pods get NO persistent volume",
@@ -107,7 +107,7 @@ REQUIRED_PLACEHOLDERS: dict[str, dict[str, Any]] = {
 # default is impossible (TOML has no null) and an empty string would look like a setting rather than an absence.
 OPTIONAL_PLACEHOLDERS: dict[str, Any] = {
     "key_path": "~/.ssh/id_ed25519",
-    "proxy_jump": "you@bastion.example.com",
+    "proxy_jump": "you@external.example.com",
     "partition": "gpu",
     "account": "your-account",
     "tool_prefix": "/scratch/you/.fwd-tools",

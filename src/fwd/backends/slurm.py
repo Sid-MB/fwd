@@ -153,7 +153,7 @@ class SlurmBackend(Backend):
             ConfigParameter("user", "--user", "remote username", required=True),
             ConfigParameter("port", "--port", "SSH port", prompt=False),
             ConfigParameter("key_path", "--key-path", "explicit SSH identity file", prompt=False),
-            ConfigParameter("proxy_jump", "--proxy-jump", "SSH bastion hop", prompt=False),
+            ConfigParameter("proxy_jump", "--proxy-jump", "external SSH host used to reach a non-public login node", prompt=False),
             ConfigParameter("remote_base", "--remote-base", "scratch parent for project checkouts", required=True),
             ConfigParameter("alloc", "--alloc", "flags passed to salloc"),
             ConfigParameter("tool_prefix", "--tool-prefix", "scratch-backed tooling and cache root"),
