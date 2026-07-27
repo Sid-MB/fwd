@@ -139,6 +139,7 @@ def _up(
     target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", autocompletion=complete_target, rich_help_panel=PANEL_TARGET)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", autocompletion=complete_gpu, rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
+    new: Annotated[bool, typer.Option("--new", help="Create a fresh session instead of reusing this directory's existing session. Cannot be combined with --name.", rich_help_panel=PANEL_TARGET)] = False,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
@@ -161,6 +162,7 @@ def _up(
         target=target,
         gpu=gpu,
         name=name,
+        new=new,
         initial_command=initial_command,
         session=session,
         handoff=handoff,
@@ -315,18 +317,24 @@ def stop_cmd(
     lifecycle.stop(name)
 
 
-@app.command("rm", help=f"Destroy a session's target and forget the session. Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
+@app.command("rm", help=f"Destroy one session target, or every tracked target with --all, and forget their state. Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
 def rm_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with a session name.")] = False,
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
 ) -> None:
-    """Destroy a session's target and forget the session. Irreversible — remote data is gone.
+    """Destroy one or all session targets and forget their state. Irreversible — remote data is gone.
 
     The confirmation defaults to no, so a scripted 'fwd rm' without --force safely does nothing.
     """
     from fwd.ops import lifecycle
 
-    lifecycle.remove(name, force=force)
+    if all_sessions and name is not None:
+        ui.die(f"{ui.command('rm')} accepts either a session name or --all, not both")
+    if all_sessions:
+        lifecycle.remove_all(force=force)
+    else:
+        lifecycle.remove(name, force=force)
 
 
 class ExampleBackend(str, Enum):

@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import secrets
 import shlex
 import sys
 import tempfile
@@ -121,6 +122,24 @@ def derive_session_name(local_cwd: str | Path) -> str:
     slug = re.sub(r"[^A-Za-z0-9_-]+", "-", path.name).strip("-").lower() or "project"
     digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:SESSION_HASH_LEN]
     return f"{slug}-{digest}"
+
+
+def derive_new_session_name(local_cwd: str | Path, reserved: set[str]) -> str:
+    """Derive a fresh readable session name that cannot collide with locally tracked state.
+
+    The stable directory-derived name remains the prefix so tables and provider consoles still identify the project.
+    A random suffix is required rather than a numeric counter because local state may have been deleted while an old
+    provider resource still exists; reusing that provider name would violate ``--new`` by silently adopting it.
+
+    Args:
+        local_cwd: Project directory used for the stable readable prefix.
+        reserved: Session names already present in local state.
+    """
+    base = derive_session_name(local_cwd)
+    while True:
+        candidate = f"{base}-{secrets.token_hex(3)}"
+        if candidate not in reserved:
+            return candidate
 
 
 def tmux_session_name(session_name: str) -> str:
@@ -448,6 +467,7 @@ def launch(
     gpu: str | None = None,
     name: str | None = None,
     *,
+    new: bool = False,
     initial_command: tuple[str, ...] | None = MAGIC_CLAUDE_COMMAND,
     session: bool = False,
     handoff: bool = False,
@@ -463,6 +483,7 @@ def launch(
             target=target,
             gpu=gpu,
             name=name,
+            new=new,
             initial_command=initial_command,
             session=session,
             handoff=handoff,
@@ -482,6 +503,7 @@ def _launch(
     gpu: str | None = None,
     name: str | None = None,
     *,
+    new: bool = False,
     initial_command: tuple[str, ...] | None = MAGIC_CLAUDE_COMMAND,
     session: bool = False,
     handoff: bool = False,
@@ -497,6 +519,7 @@ def _launch(
         target: Target name from config; ``None`` resolves via the existing session, then ``default_target``.
         gpu: GPU override passed to the backend.
         name: Session name; defaults to :func:`derive_session_name` of the cwd.
+        new: Create a fresh randomly suffixed session instead of reusing the current directory's session.
         initial_command: Remote argv to start inside tmux. ``None`` resolves the configured default for the selected
             target, empty starts a login shell, and exactly ``("claude",)`` enables fwd's transcript-aware Claude
             workflow. The public ``fwd up`` command explicitly passes an empty tuple when no command is given.
@@ -518,15 +541,24 @@ def _launch(
         ui.die(str(exc))
 
     st = interrupt_cleanup.store
-    session_name = name or derive_session_name(local_cwd)
-    # An explicit --name looks up exactly that name; otherwise a session already registered for this directory wins,
-    # even if it was created under an older naming scheme.
-    existing = st.get(session_name) if name else (st.get_for_cwd(local_cwd) or st.get(session_name))
-    if existing is not None:
-        session_name = existing.name
+    if new and name is not None:
+        ui.die(f"{ui.command('up')} accepts either --new or --name, not both")
+    directory_session = st.get_for_cwd(local_cwd)
+    if new:
+        session_name = derive_new_session_name(local_cwd, {session.name for session in st.all()})
+        existing = None
+        target_hint = directory_session
+    else:
+        session_name = name or derive_session_name(local_cwd)
+        # An explicit --name looks up exactly that name; otherwise a session already registered for this directory wins,
+        # even if it was created under an older naming scheme.
+        existing = st.get(session_name) if name else (directory_session or st.get(session_name))
+        if existing is not None:
+            session_name = existing.name
+        target_hint = existing
     interrupt_cleanup.session_name = session_name
 
-    target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
+    target_cfg = _resolve_target_or_setup(cfg, target, target_hint, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
     interrupt_cleanup.backend = backend
     if initial_command is None:
@@ -543,7 +575,10 @@ def _launch(
     }
     flags["initial_command"] = list(initial_command)
 
-    if existing is not None:
+    if new:
+        replaced = f" instead of reusing {directory_session.name!r}" if directory_session is not None else ""
+        ui.info(f"creating new session {session_name!r}{replaced}")
+    elif existing is not None:
         ui.info(f"reusing session {session_name!r} on target {target_cfg.name!r}")
 
     # 1. Provision. Contractually reuse-or-create per session name, including starting a stopped target, so this is

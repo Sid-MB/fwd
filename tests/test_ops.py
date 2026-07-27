@@ -327,6 +327,28 @@ def test_launch_plumbs_gpu_and_name(project, state_store, config, fake_backend, 
     assert state_store.get("custom") is not None
 
 
+def test_launch_new_creates_unique_session_and_inherits_existing_target(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
+    first = launch_ops.launch(attach=False)
+    config.targets["other"] = SshTargetConfig(name="other", host="other.example")
+    config.default_target = "other"
+    monkeypatch.setattr(launch_ops.secrets, "token_hex", lambda length: "beef01")
+
+    second = launch_ops.launch(new=True, attach=False)
+
+    assert second.name == f"{launch_ops.derive_session_name(project)}-beef01"
+    assert second.name != first.name
+    assert second.flags["target"] == "dev"
+    assert fake_backend.provision_args == (second.name, "myproject", None)
+    assert {session.name for session in state_store.all()} == {first.name, second.name}
+
+
+def test_launch_new_rejects_explicit_name(project, state_store, config, fake_backend, stub_world) -> None:
+    with pytest.raises(typer.Exit):
+        launch_ops.launch(name="custom", new=True, attach=False)
+
+    assert state_store.all() == []
+
+
 def test_launch_no_attach_skips_exec(project, state_store, config, fake_backend, stub_world, calls) -> None:
     launch_ops.launch(attach=False)
     assert "exec_attach" not in calls
@@ -899,6 +921,19 @@ def test_remove_prunes_state_even_when_destroy_fails(project, state_store, confi
     _seed(state_store, project)
     lifecycle.remove(force=True)
     assert state_store.get("myproject-abc123") is None
+
+
+def test_remove_all_confirms_once_and_destroys_every_session(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+    prompts = []
+    monkeypatch.setattr(ui, "confirm", lambda prompt, **kwargs: prompts.append(prompt) or True)
+    _seed(state_store, project)
+    _seed(state_store, project, name="other-session", local_cwd="/tmp/other")
+
+    lifecycle.remove_all()
+
+    assert prompts == ["destroy all 2 sessions, their targets, and their remote data?"]
+    assert calls.count("destroy") == 2
+    assert state_store.all() == []
 
 
 # --- transfer ----------------------------------------------------------------------------------------------------

@@ -240,3 +240,51 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
 
     launch_ops.store().remove(session.name)
     ui.ok(f"removed session {session.name!r}")
+
+
+def remove_all(*, force: bool = False) -> None:
+    """Destroy every tracked target and delete every session state entry.
+
+    The session snapshot is taken before confirmation so the prompt names the exact count the user authorized. Once
+    confirmed, each session delegates to :func:`remove` with its individual prompt suppressed, preserving the same
+    backend cleanup and stale-target behavior as a normal removal. Failures are isolated so one broken target does not
+    prevent later targets from being destroyed; a nonzero exit reports anything that remains locally tracked.
+
+    Args:
+        force: Skip the single bulk confirmation prompt.
+    """
+    store = launch_ops.store()
+    sessions = store.all()
+    if not sessions:
+        ui.info("no sessions to remove")
+        return
+
+    count = len(sessions)
+    noun = "session" if count == 1 else "sessions"
+    if not force and not ui.confirm(f"destroy all {count} {noun}, their targets, and their remote data?", default=False):
+        ui.info("aborted")
+        return
+
+    failures = 0
+    try:
+        for session in sessions:
+            try:
+                remove(session.name, force=True)
+            except typer.Exit:
+                failures += 1
+            except Exception as exc:
+                failures += 1
+                ui.error(f"could not remove session {session.name!r}: {exc}")
+    except KeyboardInterrupt:
+        remaining = len(store.all())
+        remaining_noun = "session" if remaining == 1 else "sessions"
+        ui.warn(f"bulk removal canceled; {remaining} {remaining_noun} remain")
+        raise
+
+    remaining = len(store.all())
+    removed = count - remaining
+    if failures or remaining:
+        remaining_noun = "session" if remaining == 1 else "sessions"
+        ui.error(f"removed {removed} of {count} sessions; {remaining} {remaining_noun} remain")
+        raise typer.Exit(1)
+    ui.ok(f"removed all {count} {noun}")

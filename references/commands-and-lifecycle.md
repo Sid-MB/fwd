@@ -16,11 +16,12 @@
 fwd up                                  # persistent remote shell; stay local
 fwd up codex                            # remote Codex with portable settings and skills
 fwd up claude                           # remote Claude with transcript transfer
+fwd up --new codex                     # separate session/resource for the same project and target
 fwd up -- python train.py --epochs 10   # arbitrary persistent command
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 ```
 
-`fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
+`fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. `--new` opts out of reuse, generates a unique session/provider name, and retains the existing session's target unless `--target` overrides it; it cannot be combined with `--name`. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
 
 ## Durable send tasks
 
@@ -88,9 +89,10 @@ Detach with tmux `ctrl-b d`.
 ```sh
 fwd stop SESSION
 fwd rm --force SESSION
+fwd rm --all --force
 ```
 
-Stopping kills tmux and suspends supported compute. A CPU RunPod's container-disk data is wiped. Destroying is irreversible and requires explicit user authorization. Restarting stopped billable compute requires `--restart` and explicit user authorization.
+Stopping kills tmux and suspends supported compute. A CPU RunPod's container-disk data is wiped. Destroying is irreversible and requires explicit user authorization; `fwd rm --all` applies the same cleanup to every tracked session after one bulk confirmation. Restarting stopped billable compute requires `--restart` and explicit user authorization.
 
 ## Interruptions and recovery
 

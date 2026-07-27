@@ -98,6 +98,24 @@ def test_stop_help_explains_backend_dependent_persistence() -> None:
     assert "CPU pod work is wiped" in normalized
 
 
+def test_up_help_documents_fresh_session_flag() -> None:
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["up", "--help"])
+    assert result.exit_code == 0
+    assert "--new" in result.output
+    assert "fresh session" in result.output
+
+
+def test_rm_help_documents_bulk_removal() -> None:
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["rm", "--help"])
+    assert result.exit_code == 0
+    assert "--all" in result.output
+    assert "Destroy every tracked session" in result.output
+
+
 def test_help_groups_short_aliases_with_canonical_commands() -> None:
     """Aliases remain callable but occupy no standalone help rows."""
     from fwd.cli import app

@@ -175,7 +175,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
 | `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
-| `fwd rm [name]` | Destroy the target and forget the session (confirms first) | `fwd rm demo` |
+| `fwd rm [name]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm --all` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --format json` |
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
@@ -271,6 +271,7 @@ nor the remote project is modified.
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
 | `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
+| `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
@@ -278,7 +279,9 @@ nor the remote project is modified.
 | `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --no-attach codex` |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
-it again and it picks up where it left off rather than starting over or duplicating anything.
+it again and it picks up where it left off rather than starting over or duplicating anything. Pass `--new` when the
+duplication is intentional: fwd adds a unique suffix, provisions a separate provider resource, and keeps the existing
+session available. `--new` inherits the current directory session's target unless `--target` chooses another one.
 
 The startup forms are:
 
@@ -544,8 +547,8 @@ excluded: the remote session needs history to diff, blame and commit.
   completes the provider stop before exiting so compute is not left billing.
 - **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
   additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet.
-- **Destructive and billable actions never happen on a default.** `fwd rm` needs `--force` when non-interactive: its
-  prompt defaults to `no`, so a scripted `fwd rm` safely does nothing. Likewise `fwd attach` will **refuse to restart
+- **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, needs `--force`
+  when non-interactive: its prompt defaults to `no`, so a scripted removal safely does nothing. Likewise `fwd attach` will **refuse to restart
   stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning
   hardware again. Pass `--restart` (`-y`) to authorize it explicitly:
 
