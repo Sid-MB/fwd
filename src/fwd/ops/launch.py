@@ -522,7 +522,7 @@ def _launch(
         new: Create a fresh randomly suffixed session instead of reusing the current directory's session.
         initial_command: Remote argv to start inside tmux. ``None`` resolves the configured default for the selected
             target, empty starts a login shell, and exactly ``("claude",)`` enables fwd's transcript-aware Claude
-            workflow. The public ``fwd up`` command explicitly passes an empty tuple when no command is given.
+            workflow. The public ``fwd up`` command passes ``None`` when no command or agent is given.
         session: Transfer the live transcript for ``claude --resume`` (best-effort).
         handoff: Generate and use ``HANDOFF.md`` instead of a transcript.
         user_config: Upload the user's Claude config bundle.

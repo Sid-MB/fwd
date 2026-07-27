@@ -68,20 +68,26 @@ repository-only installation path for people who have not installed the Python p
 
 ```sh
 cd ~/code/my-project
-fwd runpod                # configure RunPod if needed, launch its saved default, and attach
-fwd ssh                   # most recently used SSH target, or offer SSH setup when none exists
-fwd work                  # configured target named "work": launch its saved default and attach
-fwd                       # current-directory session: attach, launch its saved default, or start first-time setup
+fwd                       # connect to this project's session; create and attach if none exists
+fwd runpod                # connect to this project's RunPod session; otherwise create one interactively
+fwd codex                 # connect to this project's Codex session; otherwise launch Codex interactively
+fwd --name demo           # connect to the exact session; otherwise create that name interactively
 ```
 
-These shorthand forms are for a human terminal: they may prompt, and they attach by replacing the local process with
-`ssh -t`. Inside the session, detach with `ctrl-b d` (tmux); the command keeps running. Type `fwd` again from the same
-directory to reattach. Agents and scripts should use the explicit, non-attaching `fwd up --target NAME` form instead.
+Bare `fwd` is exactly `fwd up --connect`; root selectors such as `fwd runpod` and `fwd codex` are the corresponding
+`fwd up --connect …` forms. They are intended for a human terminal: when all selectors match an existing session they
+attach, and when none matches they create and attach. Inside the session, detach with `ctrl-b d` (tmux); the command
+keeps running. Type the same connect form later to reattach.
+
+`--connect` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
+Instead it prints the exact `fwd up` command without `--connect` that an agent or script can use to create the session.
+Agents should launch explicitly, for example `fwd up runpod codex` or `fwd up --target work --agent codex`, then hand
+an exact `fwd attach NAME` command back to the human.
 
 You do **not** need to run `fwd setup` before `fwd`. Setup only creates or updates saved target configuration; it never
-provisions, syncs, launches, or attaches. Bare `fwd` is the complete smart workflow: it attaches to this project's
-existing session, otherwise launches its saved target and default command, and runs first-time setup automatically
-when no target exists. Use `fwd setup` by itself when you want to add or edit a target without launching it yet.
+provisions, syncs, launches, or attaches. Bare `fwd` is the complete connect workflow: it finds a matching session or
+launches the layered default command, and runs first-time setup automatically when no target exists. Use `fwd setup`
+by itself when you want to add or edit a target without launching it yet.
 
 ```sh
 fwd ls                    # what is running, and what it is costing you
@@ -132,8 +138,9 @@ Shell completion for every session-selecting command is state-aware:
 
 ```sh
 fwd attach <TAB>
-fwd up <TAB>                 # claude/codex magic commands
+fwd up <TAB>                 # sessions, targets/backends, and coding agents
 fwd up --target <TAB>        # configured targets, RunPod, and SSH aliases
+fwd up --agent <TAB>         # registered coding agents
 fwd up --gpu <TAB>           # locally configured GPU identifiers
 fwd rm <TAB>
 fwd stop <TAB>
@@ -160,11 +167,11 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 
 | Command | What it does | Example |
 | --- | --- | --- |
-| `fwd` | Smart default: attach to this directory's session, else launch one | `fwd` |
-| `fwd TARGET` | Launch that configured target's saved default command and attach | `fwd work` |
-| `fwd BACKEND` | Use the most recently used configured target of that backend and attach; offer setup interactively if none exists | `fwd runpod` |
-| `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching | `fwd up codex` |
-| `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first | `fwd a demo` |
+| `fwd [selector flags]` | Alias for `fwd up --connect`: attach to a match, or create interactively | `fwd --agent codex` |
+| `fwd TARGET/BACKEND/AGENT` | Connect by positional selector using the same grammar | `fwd runpod` |
+| `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
+| `fwd up -c [selectors...]` | Attach when all selectors match; otherwise create only in a human terminal | `fwd up -c work codex` |
+| `fwd attach` / `fwd a [selectors...]` | Attach to the newest session matching every selector | `fwd a work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
@@ -267,11 +274,14 @@ nor the remote project is modified.
 
 | Flag | Effect | Example |
 | --- | --- | --- |
-| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude`/`codex` for a synced coding-agent workflow | `fwd up codex` |
+| `[TARGET] [AGENT\|COMMAND...]` | Optional target/backend, then a registered agent or arbitrary startup command; omit the command to use layered `default_command` | `fwd up pod codex` |
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
+| `--agent NAME` | Select a registered coding agent without positional ambiguity | `fwd up --agent codex` |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
 | `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
 | `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
+| `--connect/-c` | Attach to a conjunctive match; create only interactively when none exists | `fwd up -c pod codex` |
+| `--restart/-y` | With `--connect`, authorize restarting stopped billable compute | `fwd up -c -y demo` |
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
@@ -286,26 +296,34 @@ session available. `--new` inherits the current directory session's target unles
 The startup forms are:
 
 ```sh
-fwd runpod                         # configure/select RunPod, run its saved default, and attach
-fwd ssh                            # select the most recently used SSH target and attach
-fwd work                           # select the configured target named "work" and attach
-fwd up                              # provision, sync, bootstrap, start a persistent remote shell; stay local
+fwd                               # equivalent to: fwd up --connect
+fwd runpod                        # equivalent to: fwd up --connect runpod
+fwd --agent codex                 # connect to this project's Codex session, or create it interactively
+fwd --name demo                   # connect to exact name, or create it interactively
+fwd up                            # launch layered default_command and use default_target
+fwd up runpod                     # launch layered default_command on RunPod
+fwd up runpod codex               # launch Codex on RunPod
+fwd up --target work --agent codex  # the fully explicit spelling
 fwd up claude                       # transfer this conversation and auto-attach in a human terminal
 fwd up codex                        # sync Codex settings/skills and auto-attach in a human terminal
 fwd up --no-attach codex            # start Codex persistently but stay in the local terminal
-fwd up -a python train.py           # start an arbitrary command and attach
+fwd up -a work python train.py      # choose a target, start an arbitrary command, and attach
 fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
 ```
 
-Bare `fwd` retains the current-directory workflow: it attaches to that directory's existing session; otherwise it
-launches the layered `default_command` and attaches. The built-in default is Claude, but `fwd default` can change it.
+Selectors are conjunctive: `fwd up -c --name demo --target work --agent codex` attaches only when one session matches
+all three values. Without an exact name, matching is scoped to the current project and the most recently used match
+wins. `fwd attach` and `fwd a` use this identical parser and precedence.
 
-`fwd TARGET` and `fwd BACKEND` are human-terminal shortcuts, not aliases for `fwd up --target`. They run the selected
-target's layered `default_command` and attach. Exact configured target names win; otherwise a recognized backend name
-such as `ssh`, `runpod`, or `slurm` selects its most recently used configured target. When that backend has no target,
-an interactive invocation offers backend-specific setup. Unknown names never create config, and non-interactive
-invocations never prompt or provision through these shortcuts; agents should use `fwd up --target NAME`. If several
-targets share a backend and none has usage history yet, fwd reports the ambiguity and asks for an exact target name.
+An exact stored session name is recognized first. Otherwise a configured target or backend consumes the first
+positional, followed by an agent or arbitrary command. If a target and agent have the same name, the target wins and
+fwd warns with `--agent NAME` plus the config location needed to rename the target. Registered top-level commands
+always have higher priority, so a target called `stop` cannot shadow `fwd stop`. Unknown root words remain errors.
+
+Backend selectors such as `ssh`, `runpod`, and `slurm` use the most recently used configured target of that type; a
+sole target is unambiguous before it has history. If several targets share a backend and history cannot choose, fwd
+asks for an exact target. In non-interactive mode, `--connect` always errors with either an exact attach instruction or
+the corresponding creation command without `--connect`.
 
 `fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
 profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.
@@ -388,9 +406,9 @@ default_command = ["codex"]
 default_command = ["python", "-m", "agent"]
 ```
 
-`fwd up` remains explicit: plain `fwd up` starts a background shell, while `fwd up claude`, `fwd up codex`, and
-`fwd up -- <command>` select a command for that launch. Use `--user`, `--project`, or `--target NAME` with
-`fwd default`/`fwd config set`; omitting all three means `--user`.
+`fwd up` without an explicit agent or command uses this layered default. `fwd up claude`, `fwd up codex`, and
+`fwd up -- <command>` override it for one launch. Use `--user`, `--project`, or `--target NAME` with `fwd default` /
+`fwd config set`; omitting all three means `--user`.
 
 `fwd config rm` uses the same scope flags. It reports when the selected scope has no such value and leaves the file
 unchanged. Existing values require confirmation in an interactive terminal; scripts and agents must pass `--force`.
@@ -398,18 +416,18 @@ Removing an override reveals the next value in the precedence chain rather than 
 
 ### Target shortcuts and zero-config launches
 
-For a human who wants a saved target and an attached coding environment, use the backend shortcut:
+For a human who wants to connect to a saved target and coding environment, use a root selector:
 
 ```sh
-fwd runpod                          # offer CPU-first RunPod setup if needed, then launch the saved default and attach
-fwd ssh                             # use recent SSH config, or offer SSH setup
-fwd pod                             # exact configured target name; run its saved default and attach
+fwd runpod                          # attach to a matching RunPod session, or create one interactively
+fwd ssh                             # attach through the recent SSH target, or create/setup interactively
+fwd pod                             # exact configured target; attach a match or create interactively
 ```
 
-For a background launch without writing config, pass an inferable target explicitly:
+For a background launch without writing config, omit `--connect` and pass an inferable target:
 
 ```sh
-fwd up --target runpod              # unsaved CPU pod using built-in defaults; start a remote shell and stay local
+fwd up runpod                       # unsaved CPU pod using built-in defaults; run default_command
 fwd up --target sid@vm.example.com  # a machine you already have
 fwd up --target my-box              # any Host alias in your ~/.ssh/config
 ```

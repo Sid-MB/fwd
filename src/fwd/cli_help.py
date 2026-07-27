@@ -1,8 +1,12 @@
-"""CLI help customization for compact alias display.
+"""CLI help customization for compact alias display and root selector rewriting.
 
 Typer models aliases as separate commands, which normally renders duplicate rows (``attach`` and ``a``). fwd keeps
 the alias commands hidden and teaches the root group to annotate the canonical row as ``attach (a)``. Invocation and
 completion still use the real command names; only help presentation changes.
+
+Unknown root tokens that are valid sessions, targets, backends, or agents are rewritten to ``up --connect`` before
+Click dispatch. This makes ``fwd runpod`` and ``fwd codex`` use the exact same parser and matching logic as explicit
+``fwd up --connect runpod`` rather than maintaining dynamic one-off command callbacks.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from typer import _click as click
-from typer.core import TyperCommand, TyperGroup
+from typer.core import TyperGroup
 from typer._click.shell_completion import CompletionItem
 
 
@@ -20,36 +24,39 @@ class AliasHelpGroup(TyperGroup):
     aliases: ClassVar[dict[str, tuple[str, ...]]] = {"attach": ("a",), "send": ("s",)}
 
     def resolve_command(self, ctx: click.Context, args: list[str]) -> tuple[str | None, click.Command | None, list[str]]:
-        """Retain the user's original subcommand argv so alias announcements can preserve every argument and flag."""
+        """Retain original argv and rewrite root selectors to the canonical connect command."""
         original = tuple(args)
+        if args and super().get_command(ctx, args[0]) is None:
+            from fwd.ops.session_select import recognized_root_selector
+
+            if recognized_root_selector(args[0]):
+                rewritten = ["up", "--connect", *args]
+                ctx.meta["fwd_selector_rewrite"] = original
+                ctx.meta["fwd_canonical_argv"] = tuple(rewritten)
+                args = rewritten
         resolved = super().resolve_command(ctx, args)
         ctx.meta["fwd_invocation_argv"] = original
         return resolved
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        """Resolve registered commands first, then configured target/backend shorthand commands."""
-        command = super().get_command(ctx, cmd_name)
-        if command is not None:
-            return command
-        from fwd.ops import target_alias
-
-        if not target_alias.recognized(cmd_name):
-            return None
-        # Typer vendors a Click API whose base Command is abstract; dynamic commands must use its concrete command
-        # implementation just like commands registered through ``app.command`` do.
-        return TyperCommand(
-            name=cmd_name,
-            help=f"Launch the default command on target/backend {cmd_name!r} and attach.",
-            callback=lambda: target_alias.forward(cmd_name),
-        )
+        """Resolve registered commands; root selectors are normalized in :meth:`resolve_command`."""
+        return super().get_command(ctx, cmd_name)
 
     def shell_complete(self, ctx: click.Context, incomplete: str) -> list[CompletionItem]:
         """Add dynamic target/backend commands to Click's normal root command completion."""
         results = super().shell_complete(ctx, incomplete)
         existing = {item.value for item in results}
+        from fwd import agents
         from fwd.ops import target_alias
+        from fwd.state import StateStore
 
-        results.extend(CompletionItem(value, help=help_text) for value, help_text in target_alias.completion_candidates() if value.startswith(incomplete) and value not in existing)
+        candidates = dict(target_alias.completion_candidates())
+        candidates.update({name: f"{name} coding agent · connect or launch for this project" for name in agents.AGENTS})
+        try:
+            candidates.update({session.name: f"{session.backend} session · {session.flags.get('target', 'unknown target')}" for session in StateStore().all()})
+        except Exception:
+            pass
+        results.extend(CompletionItem(value, help=help_text) for value, help_text in sorted(candidates.items()) if value.startswith(incomplete) and value not in existing)
         return results
 
     @classmethod

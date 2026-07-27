@@ -13,8 +13,8 @@
 Both magic commands synchronize the project, bootstrap remote tooling, start a persistent tmux session, and auto-attach only from a human terminal:
 
 ```sh
-fwd up claude --target TARGET
-fwd up codex --target TARGET
+fwd up --target TARGET --agent claude
+fwd up --target TARGET --agent codex
 ```
 
 Agents should run them without `--attach`. Non-interactive detection keeps the launch in the background.

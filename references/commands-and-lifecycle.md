@@ -13,13 +13,20 @@
 ## Launching
 
 ```sh
-fwd up                                  # persistent remote shell; stay local
+fwd up                                  # layered default command on the default target; stay local
+fwd up runpod                           # layered default command on RunPod
+fwd up runpod codex                     # target then registered coding agent
+fwd up --target pod --agent codex       # equivalent explicit flags
 fwd up codex                            # remote Codex with portable settings and skills
 fwd up claude                           # remote Claude with transcript transfer
 fwd up --new codex                     # separate session/resource for the same project and target
 fwd up -- python train.py --epochs 10   # arbitrary persistent command
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 ```
+
+Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--name` provide unambiguous flag forms. Exact session names win, then target/backend names, then registered agents or arbitrary command argv. Target names win target-agent collisions with an actionable warning. All supplied selectors match conjunctively and unnamed searches stay in the current project.
+
+`fwd up -c/--connect` attaches to the most recently used matching session. A human terminal creates and attaches when no match exists; non-interactive mode does neither and prints the exact creation command without `--connect`. Bare `fwd` is `fwd up --connect`, while root selectors such as `fwd runpod` rewrite to `fwd up --connect runpod`. `fwd attach` uses the same parser and matching rules.
 
 `fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. `--new` opts out of reuse, generates a unique session/provider name, and retains the existing session's target unless `--target` overrides it; it cannot be combined with `--name`. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
 
@@ -76,10 +83,11 @@ Machine-readable stdout is stable; progress and errors use stderr.
 
 ## Attachment
 
-Bare `fwd`, `fwd attach`, and `fwd a` exec into interactive SSH/tmux. Never run them through an agent tool. Tell the human to run:
+Bare `fwd`, root-selector forms, `fwd up --connect`, `fwd attach`, and `fwd a` connect through interactive SSH/tmux. Never run them through an agent tool. Tell the human to run:
 
 ```sh
 fwd attach SESSION
+fwd attach --target work --agent codex
 ```
 
 Detach with tmux `ctrl-b d`.

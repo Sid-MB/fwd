@@ -48,6 +48,7 @@ MODULES = [
     "fwd.ops.attach",
     "fwd.ops.lifecycle",
     "fwd.ops.diff",
+    "fwd.ops.session_select",
     "fwd.ops.target_alias",
     "fwd.ops.transfer",
 ]
@@ -132,9 +133,16 @@ def test_help_groups_short_aliases_with_canonical_commands() -> None:
 
 def test_short_alias_prints_exact_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
     """Alias discovery must precede operation output and retain the user's arguments and flags."""
+    from fwd import cli
     from fwd.cli import app
-    from fwd.ops import attach
+    from fwd.config import Config
+    from fwd.ops import attach, session_select
+    from fwd.state import SessionState
 
+    session = SessionState(name="demo", backend="ssh", local_cwd=str(Path.cwd()), remote_dir="/tmp/demo", tmux_session="fwd-demo", endpoint={})
+    monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
+    selection = session_select.CurrentSelection(selector=session_select.SessionSelector(name="demo"), config=Config(), sessions=(session,), cwd=Path.cwd(), matches=(session,))
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
     monkeypatch.setattr(attach, "attach", lambda *args, **kwargs: None)
     result = CliRunner().invoke(app, ["a", "demo", "--restart"])
 
@@ -144,15 +152,14 @@ def test_short_alias_prints_exact_canonical_invocation_first(monkeypatch: pytest
 
 def test_bare_command_prints_resolved_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bare fwd is itself an alias whose resolved operation should be visible before dispatch."""
+    from fwd import cli
     from fwd.cli import app
-    from fwd.ops import attach
 
-    monkeypatch.setattr(attach, "smart_default_command", lambda **kwargs: "fwd attach demo")
-    monkeypatch.setattr(attach, "smart_default", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "_run_up", lambda *args, **kwargs: None)
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == "info: fwd → fwd attach demo"
+    assert result.output.splitlines()[0] == "info: fwd → fwd up --connect"
 
 
 def test_up_help_explains_how_to_add_a_target() -> None:

@@ -22,7 +22,7 @@ Treat the text following the skill name as the user's intent. Do not require rig
 1. Run `fwd doctor --format json` when diagnosing prerequisites or a failed target.
 2. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
 3. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
-4. Launch non-interactively with `fwd up [COMMAND] --target TARGET`. Exact `claude` and `codex` commands enable their agent-specific synchronization.
+4. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
 5. Verify state with `fwd ls --format json` and synchronization with `fwd diff -q [TARGET]`.
 6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
 
@@ -37,7 +37,7 @@ replacement; `--stop` alone cancels without ending the agent session.
 ## Agent safety rules
 
 - Prefer `--format json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
-- Never run bare `fwd`, `fwd attach`, `fwd a`, or `fwd up --attach` as a tool call because they take over the terminal.
+- Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --connect`, or `fwd up --attach` as a tool call because connect/attach forms take over a human terminal. In non-interactive mode `--connect` deliberately errors instead of provisioning.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
@@ -48,10 +48,10 @@ replacement; `--stop` alone cancels without ending the agent session.
 ## Common operations
 
 ```sh
-fwd up --target runpod                 # CPU RunPod, persistent remote shell, stay local
+fwd up --target runpod                 # CPU RunPod, layered default command, stay local
 fwd up --new --target runpod           # provision a separate session instead of reusing this project
-fwd up codex --target work             # sync Codex settings/skills and start remote Codex
-fwd up claude --target work            # transfer the Claude transcript and start remote Claude
+fwd up --target work --agent codex     # sync Codex settings/skills and start remote Codex
+fwd up work claude                     # positional target + agent; transfer the Claude transcript
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --format json            # inspect active command and agent tasks

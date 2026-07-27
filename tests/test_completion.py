@@ -100,10 +100,10 @@ def test_every_session_selecting_command_uses_completion(command_name: str, para
 @pytest.mark.parametrize(
     ("command_name", "parameter_name"),
     (
-        ("up", "command"),
+        ("up", "selectors"),
         ("up", "target"),
         ("up", "gpu"),
-        ("launch", "command"),
+        ("launch", "selectors"),
         ("launch", "target"),
         ("launch", "gpu"),
         ("default", "command"),

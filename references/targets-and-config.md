@@ -34,7 +34,7 @@ fwd up --target my-box                  # Host alias from ~/.ssh/config
 
 Configured target names win over inferred forms. Slurm is not inferred because its login host, allocation, and scratch paths are site-specific.
 
-In a human terminal, `fwd TARGET` launches that target's configured default and attaches. `fwd BACKEND` chooses the most recently used target of that backend or offers setup. Do not use these attaching shorthands from an agent tool call; use `fwd up --target NAME`.
+In a human terminal, `fwd TARGET` means `fwd up --connect TARGET`: attach to a matching project session or create and attach when none exists. `fwd BACKEND` matches the most recently used target of that backend or offers setup when creation needs configuration. Do not use connect forms from an agent tool call; use `fwd up --target NAME` without `--connect`.
 
 ## First-time setup
 
@@ -89,7 +89,7 @@ env_setup = ["module purge"]
 
 ## Defaults and command precedence
 
-Bare `fwd` launches Claude for a new session unless changed:
+Bare `fwd` connects to an existing current-project session when possible. If it creates a session, and every `fwd up` launch without an explicit agent or command, uses Claude unless changed:
 
 ```sh
 fwd default codex

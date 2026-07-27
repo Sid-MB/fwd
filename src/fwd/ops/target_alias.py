@@ -1,9 +1,9 @@
-"""Resolve ``fwd <target-or-backend>`` without weakening the explicit command grammar.
+"""Legacy target/backend selection helpers plus root completion metadata.
 
-The root Click group consults this module only after its registered commands have failed to match, so a target named
-``stop`` can never shadow ``fwd stop``. Exact configured target names win over backend shorthands. A backend shorthand
-selects the target of that type used by the most recently attached/launched saved session; a sole configured target is
-unambiguous even before it has history.
+Root invocation now rewrites selectors to ``fwd up --connect`` and delegates parsing to :mod:`fwd.ops.session_select`;
+the compatibility functions here remain for callers and focused backend setup tests. Root completion still consumes
+``completion_candidates``. Registered commands always win before dynamic selectors, so a target named ``stop`` cannot
+shadow ``fwd stop``.
 
 These aliases deliberately mean the interactive bare-fwd workflow: launch the target's configured default command and
 attach. Agent and redirected invocations fail before provisioning and point to the explicit, non-attaching

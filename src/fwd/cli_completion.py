@@ -67,6 +67,18 @@ def complete_session(ctx: _click.Context, args: list[str], incomplete: str) -> l
     return _matches(((session.name, _session_help(session)) for session in sessions), incomplete)
 
 
+def complete_session_selector(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete the shared session/target/backend/agent positional grammar used by ``up`` and ``attach``."""
+    candidates: dict[str, str] = {}
+    try:
+        candidates.update({session.name: _session_help(session) for session in _session_store().all()})
+    except Exception:
+        pass
+    candidates.update(dict(complete_target(ctx, args, incomplete)))
+    candidates.update(dict(complete_agent(ctx, args, incomplete)))
+    return _matches(candidates.items(), incomplete)
+
+
 def complete_diff_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
     """Complete diff selectors: exact sessions plus their target labels and backend shorthands."""
     del ctx, args
