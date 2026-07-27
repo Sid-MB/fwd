@@ -155,7 +155,7 @@ def test_static_command_has_priority_over_same_named_target(monkeypatch: pytest.
     root = get_command(app)
     resolved = root.get_command(Context(root), "stop")
     assert resolved is not None
-    assert "suspend its target" in (resolved.help or "")
+    assert "suspend billable compute" in (resolved.help or "")
 
 
 def test_root_completion_includes_targets_and_backend_shorthands(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,4 +1,4 @@
-"""fwd — forward your local Claude Code working session to a remote machine.
+"""fwd — move local coding work and agent sessions to remote compute.
 
 The package is layered deliberately so that each layer can be developed and tested in isolation:
 

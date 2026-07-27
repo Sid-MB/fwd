@@ -10,9 +10,9 @@ ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "SKILL.md"
 
 
-def _frontmatter() -> dict[str, str]:
+def _frontmatter(path: Path = SKILL) -> dict[str, str]:
     """Parse the deliberately simple string-only skill frontmatter without adding a runtime YAML dependency."""
-    lines = SKILL.read_text(encoding="utf-8").splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "---"
     end = lines.index("---", 1)
     return dict(line.split(": ", 1) for line in lines[1:end])
@@ -47,14 +47,17 @@ def test_skill_core_is_concise_and_links_every_reference() -> None:
     assert "/fwd continue this project" in text
     assert "fwd diff -q" in text
     assert "Never run bare `fwd`" in text
+    assert "uv tool install git+https://github.com/Sid-MB/fwd" in text
 
 
 def test_openai_metadata_enables_implicit_invocation_and_has_a_codex_prompt() -> None:
-    metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    metadata_path = ROOT / "agents" / "openai.yaml"
+    metadata = metadata_path.read_text(encoding="utf-8")
     assert 'display_name: "fwd Remote Development"' in metadata
     assert 'short_description: "Move coding work to remote compute"' in metadata
     assert 'default_prompt: "Use $fwd to continue this project on a remote machine."' in metadata
     assert "allow_implicit_invocation: true" in metadata
+    assert (ROOT / "skills" / "fwd" / "agents" / "openai.yaml").read_text(encoding="utf-8") == metadata
 
 
 def test_plugin_manifest_packages_the_root_skill_with_matching_version() -> None:
@@ -67,6 +70,7 @@ def test_plugin_manifest_packages_the_root_skill_with_matching_version() -> None
     assert len(manifest["interface"]["defaultPrompt"]) == 3
     plugin_skill = (ROOT / "skills" / "fwd" / "SKILL.md").read_text(encoding="utf-8")
     assert "../../SKILL.md" in plugin_skill
+    assert _frontmatter(ROOT / "skills" / "fwd" / "SKILL.md") == _frontmatter()
 
 
 def test_readme_documents_explicit_invocation_on_claude_and_codex() -> None:
@@ -74,3 +78,4 @@ def test_readme_documents_explicit_invocation_on_claude_and_codex() -> None:
     assert "/fwd natural-language instructions" in readme
     assert "$fwd natural-language instructions" in readme
     assert ".codex-plugin/plugin.json" in readme
+    assert "never blocks the requested fwd command" in readme

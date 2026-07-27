@@ -42,7 +42,7 @@ CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 app = typer.Typer(
     cls=AliasHelpGroup,
     name="fwd",
-    help="Forward your Claude Code session to a remote machine: provision, sync, carry the transcript, attach.",
+    help="Move coding work to remote compute: provision or reuse a target, sync the project, and run a persistent shell, command, Claude Code, or Codex.",
     epilog=f"Bare 'fwd' attaches to this directory's session, launches its saved default, or starts setup on first use. 'fwd <target>' launches that target's saved default and attaches; 'fwd <backend>' uses its most recently used configured target. For a zero-config background launch, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'.",
     add_completion=True,
     no_args_is_help=False,
@@ -241,9 +241,9 @@ def diff_cmd(
 def stop_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
 ) -> None:
-    """Kill a session's remote tmux and suspend its target to stop billing; synced data is preserved.
+    """Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.
 
-    Restart it later with 'fwd attach --restart' or another 'fwd up'. RunPod caveat: only the volume survives a stop, so anything outside remote_base on a container disk is lost.
+    Restart with 'fwd attach --restart' or another 'fwd up'. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.
     """
     from fwd.ops import lifecycle
 

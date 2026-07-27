@@ -1,7 +1,7 @@
 [project]
 name = "fwd"
 version = "0.1.0"
-description = "Forward your Claude Code session to a remote machine"
+description = "Move coding work and agent sessions to remote compute"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

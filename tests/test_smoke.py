@@ -80,6 +80,19 @@ def test_help_lists_commands() -> None:
     assert result.exit_code == 0
     for name in ("up", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor"):
         assert name in result.output
+    assert "shell, command, Claude Code, or Codex" in result.output
+    assert "Forward your Claude Code session" not in result.output
+
+
+def test_stop_help_explains_backend_dependent_persistence() -> None:
+    """Stop documentation must not promise persistence for volume-less CPU RunPod sessions."""
+    from fwd.cli import app
+
+    result = CliRunner().invoke(app, ["stop", "--help"])
+    assert result.exit_code == 0
+    normalized = " ".join(result.output.split())
+    assert "storage preservation depends on the target" in normalized
+    assert "CPU pod work is wiped" in normalized
 
 
 def test_help_groups_short_aliases_with_canonical_commands() -> None:

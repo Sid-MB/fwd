@@ -7,6 +7,8 @@ description: Move a coding project or active Claude Code/Codex workflow to remot
 
 Use `fwd` to provision or reuse a remote machine, synchronize the current project, bootstrap its tools, and run a persistent shell, command, Claude Code, or Codex session in tmux.
 
+If `fwd` is not on `PATH`, install the GitHub version with `uv tool install git+https://github.com/Sid-MB/fwd`. If `uv` is unavailable, tell the user that Python 3.12+, `uv`, `ssh`, and `rsync` are the local prerequisites instead of improvising another installer.
+
 ## Invocation
 
 - Codex CLI/IDE: `$fwd continue this project on my RunPod CPU target`
