@@ -61,6 +61,11 @@ These shorthand forms are for a human terminal: they may prompt, and they attach
 `ssh -t`. Inside the session, detach with `ctrl-b d` (tmux); the command keeps running. Type `fwd` again from the same
 directory to reattach. Agents and scripts should use the explicit, non-attaching `fwd up --target NAME` form instead.
 
+You do **not** need to run `fwd setup` before `fwd`. Setup only creates or updates saved target configuration; it never
+provisions, syncs, launches, or attaches. Bare `fwd` is the complete smart workflow: it attaches to this project's
+existing session, otherwise launches its saved target and default command, and runs first-time setup automatically
+when no target exists. Use `fwd setup` by itself when you want to add or edit a target without launching it yet.
+
 ```sh
 fwd ls                    # what is running, and what it is costing you
 fwd pull outputs/         # bring results back down
@@ -146,7 +151,7 @@ never prompt. The explicit `fwd --install-completion` command remains available 
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
 | `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) | `fwd rm demo` |
-| `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
+| `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --format json` |
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
 | `fwd config` | Print the effective merged config, annotated with where each value came from | `fwd config` |
