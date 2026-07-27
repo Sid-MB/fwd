@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from typer import _click as click
-from typer.core import TyperGroup
+from typer.core import TyperCommand, TyperGroup
 from typer._click.shell_completion import CompletionItem
 
 
@@ -28,7 +28,9 @@ class AliasHelpGroup(TyperGroup):
 
         if not target_alias.recognized(cmd_name):
             return None
-        return click.Command(
+        # Typer vendors a Click API whose base Command is abstract; dynamic commands must use its concrete command
+        # implementation just like commands registered through ``app.command`` do.
+        return TyperCommand(
             name=cmd_name,
             help=f"Launch the default command on target/backend {cmd_name!r} and attach.",
             callback=lambda: target_alias.forward(cmd_name),

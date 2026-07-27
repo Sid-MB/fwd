@@ -171,6 +171,21 @@ def test_root_completion_includes_targets_and_backend_shorthands(monkeypatch: py
     assert {"ssh", "runpod", "slurm", "work"} <= values
 
 
+def test_recognized_dynamic_alias_is_invocable_through_root_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise command construction itself so Typer/Click abstract-class incompatibilities cannot hide behind unit seams."""
+    from fwd.cli import app
+    from fwd.ops import target_alias
+
+    forwarded: list[str] = []
+    monkeypatch.setattr(target_alias, "recognized", lambda selector: selector == "work")
+    monkeypatch.setattr(target_alias, "forward", forwarded.append)
+
+    result = CliRunner().invoke(app, ["work"])
+
+    assert result.exit_code == 0, result.output
+    assert forwarded == ["work"]
+
+
 def test_unknown_name_remains_a_normal_click_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from fwd.cli import app
     from fwd.ops import target_alias
