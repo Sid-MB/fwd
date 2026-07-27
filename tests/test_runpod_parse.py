@@ -21,8 +21,10 @@ import pytest
 from fwd.backends.base import TargetStatus
 from fwd.backends.runpod import (
     CONTAINER_DISK_BASE,
+    RunpodBackend,
     RunpodError,
     create_pod_args,
+    create_summary,
     error_message,
     find_pod_by_name,
     is_missing_pod_error,
@@ -35,7 +37,8 @@ from fwd.backends.runpod import (
     port_is_open,
     resolve_paths,
 )
-from fwd.config import ConfigError, RunpodTargetConfig, parse_target
+from fwd.config import Config, ConfigError, RunpodTargetConfig, parse_target
+from fwd.state import SessionState
 
 FIXTURES = Path(__file__).parent / "fixtures" / "runpod"
 
@@ -246,6 +249,11 @@ class TestResolvePaths:
         assert scratch == f"{CONTAINER_DISK_BASE}/workspace/.fwd-cache"
         assert len(notes) == 1
         assert "WIPED" in notes[0] and "no persistent volume" in notes[0]
+        # R2-3: the mount usually *does* exist as a writable container-disk directory, so the note must say the
+        # volume is missing rather than the path. A user who checks and finds the directory there would otherwise
+        # reasonably conclude fwd is confused.
+        assert "does not exist" not in notes[0]
+        assert "not backed by one" in notes[0]
 
     def test_paths_already_off_the_volume_are_left_alone(self) -> None:
         # The user never relied on the volume here, so relocating them would be the surprising behaviour.
@@ -284,6 +292,95 @@ class TestRunpodConfigFields:
     def test_invalid_cloud_type_is_rejected(self) -> None:
         with pytest.raises(ConfigError, match="cloud_type"):
             parse_target("pod", {"backend": "runpod", "cloud_type": "hybrid"})
+
+
+class TestCreateSummary:
+    """The progress label must describe only what is actually sent (docs/live-e2e-report.md, R2-4)."""
+
+    def test_gpu_pod_names_the_gpu_and_volume(self) -> None:
+        summary = create_summary(runpod_target(gpu="NVIDIA RTX A4000", volume_gb=20))
+        assert "NVIDIA RTX A4000" in summary
+        assert "20 GB volume" in summary
+        assert "secure cloud" in summary
+
+    def test_cpu_pod_mentions_neither_a_gpu_nor_a_volume(self) -> None:
+        summary = create_summary(runpod_target(compute_type="cpu", volume_gb=20))
+        assert "CPU" in summary
+        assert "RTX" not in summary and "NVIDIA" not in summary
+        assert "GB volume" not in summary
+        assert "container disk only" in summary
+
+    def test_gpu_override_is_reflected(self) -> None:
+        assert "NVIDIA A40" in create_summary(runpod_target(gpu="NVIDIA RTX A4000"), "NVIDIA A40")
+
+    def test_community_cloud_is_reflected(self) -> None:
+        assert "community cloud" in create_summary(runpod_target(cloud_type="community"))
+
+
+class TestStatusNeverConfusesUnreachableWithGone:
+    """R2-1: only a confirmed 404 may become ``GONE``, because ``GONE`` unlocks deleting the user's session entry.
+
+    A transient provider failure reported as ``GONE`` invites the user to prune the state of a pod that is still
+    running and still billing — the exact hazard seen live right after a ``pod stop``.
+    """
+
+    def make_backend(self, stdout: str, *, returncode: int = 0) -> RunpodBackend:
+        """Build a backend whose ``runpodctl`` calls always return the given canned output."""
+        cfg = runpod_target()
+        backend = RunpodBackend(cfg, Config(targets={"pod": cfg}))
+
+        def fake_run_ctl(args: list[str], *, check: bool = True, timeout: float = 120.0) -> str:
+            if returncode != 0 and check:
+                raise RunpodError(f"runpodctl {' '.join(args)} failed: {stdout}")
+            return stdout
+
+        backend._run_ctl = fake_run_ctl  # type: ignore[method-assign]
+        return backend
+
+    def session(self) -> SessionState:
+        return SessionState(
+            name="s",
+            backend="runpod",
+            local_cwd="/tmp/p",
+            remote_dir="/workspace/p",
+            tmux_session="fwd-s",
+            endpoint={},
+            backend_ids={"pod_id": "nlom3h0kpps2y8"},
+        )
+
+    def test_confirmed_404_is_gone(self) -> None:
+        # The real "pod was deleted" response, verbatim from the CLI.
+        backend = self.make_backend(fixture("pod-get-missing.json"))
+        assert backend.status(self.session()) is TargetStatus.GONE
+
+    def test_transient_api_error_is_unknown_not_gone(self) -> None:
+        backend = self.make_backend('{"error":"api error: 502 Bad Gateway (status 502)"}', returncode=1)
+        assert backend.status(self.session()) is TargetStatus.UNKNOWN
+
+    def test_network_failure_is_unknown_not_gone(self) -> None:
+        backend = self.make_backend('{"error":"dial tcp: lookup api.runpod.io: no such host"}', returncode=1)
+        assert backend.status(self.session()) is TargetStatus.UNKNOWN
+
+    def test_unauthorized_is_unknown_not_gone(self) -> None:
+        # A revoked key must not read as "your pod is gone" — the pod is very much alive and billing.
+        backend = self.make_backend('{"error":"unauthorized"}', returncode=1)
+        assert backend.status(self.session()) is TargetStatus.UNKNOWN
+
+    def test_garbage_output_is_unknown_not_gone(self) -> None:
+        backend = self.make_backend("<html>502 Bad Gateway</html>")
+        assert backend.status(self.session()) is TargetStatus.UNKNOWN
+
+    def test_missing_pod_id_in_state_is_unknown_not_gone(self) -> None:
+        backend = self.make_backend(fixture("pod-get-running.json"))
+        session = self.session()
+        session.backend_ids = {}
+        assert backend.status(session) is TargetStatus.UNKNOWN
+
+    def test_healthy_pod_still_reports_its_real_state(self) -> None:
+        running = self.make_backend(fixture("pod-get-running.json"))
+        assert running.status(self.session()) is TargetStatus.RUNNING
+        stopped = self.make_backend(fixture("pod-get-stopped.json"))
+        assert stopped.status(self.session()) is TargetStatus.STOPPED
 
 
 class TestPortProbe:

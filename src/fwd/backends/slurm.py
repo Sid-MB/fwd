@@ -277,14 +277,17 @@ class SlurmBackend:
         with ``--no-attach`` before the job appeared — reports ``RUNNING`` after one best-effort rescan, because the
         login node *is* up and there is nothing to relaunch yet.
         """
+        # An unreachable login node is never ``GONE``: a dropped VPN or a cluster in maintenance is far more likely
+        # than a deleted account, and the job itself may still be queued or running. ``GONE`` would invite the user to
+        # prune a session whose allocation is alive and consuming budget (same hazard class as R2-1).
         try:
             endpoint = self.endpoint(session)
         except ProvisionError:
-            return TargetStatus.GONE
+            return TargetStatus.UNKNOWN
         try:
             endpoint.run("true", timeout=PROBE_TIMEOUT)
         except SSHError:
-            return TargetStatus.GONE
+            return TargetStatus.UNKNOWN
 
         job_id = session.backend_ids.get("job_id") or self.find_job_id(endpoint, session.name)
         if not job_id:
@@ -293,7 +296,8 @@ class SlurmBackend:
         try:
             proc = endpoint.run(f"squeue -j {shlex.quote(job_id)} -h -o %T", check=False, timeout=QUERY_TIMEOUT)
         except SSHError:
-            return TargetStatus.GONE
+            # squeue itself failed to run — we still cannot tell whether the allocation is alive.
+            return TargetStatus.UNKNOWN
         output = (proc.stdout or "").strip()
         # A completed job is purged from squeue: nonzero exit ("Invalid job id specified") and empty output both mean
         # the allocation is over, which is JOB_ENDED — the login node is fine, attach should offer a relaunch.

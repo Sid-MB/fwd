@@ -133,13 +133,21 @@ Since fwd's whole persistence model rests on `/workspace`, `provision()` checks 
 and, when it is zero, `resolve_paths()` relocates `remote_dir`, `tool_prefix` and `scratch` from the missing volume
 onto the container disk under `/root/fwd/`, appending a loud note to `TargetInfo.notes`:
 
-> pod has no persistent volume — /workspace does not exist on this pod, so files live on the container disk at
-> /root/fwd/workspace and will be WIPED on stop (CPU pods silently ignore volume_gb; use a GPU pod to persist)
+> pod has no persistent volume — /workspace is not backed by one on this pod, so anything written there would be
+> WIPED on stop; using the container disk at /root/fwd/workspace instead (CPU pods silently ignore volume_gb; use a
+> GPU pod to persist)
 
-Relocating matters as much as warning: `/workspace` is genuinely absent on a CPU pod, so leaving `remote_dir`
-pointing at it would fail the very first rsync. The check keys on what the pod *reports* rather than on
-`compute_type` alone, which also catches a GPU pod whose volume request was rejected for capacity. Paths the user has
-already pointed outside `volume_mount_path` are left untouched — they never relied on the volume.
+Relocating matters as much as warning, and the precise reason is worth stating: on a CPU pod `/workspace` is usually
+*still there* as an ordinary writable directory on the container-disk overlay. That is what makes it dangerous —
+writing to it succeeds and then silently loses everything on the next stop. An earlier version of this note claimed
+the path "does not exist", which the Round-2 live run flagged as false (R2-3): a user who checks and finds the
+directory sitting there would reasonably conclude fwd was confused. The check keys on what the pod *reports* rather
+than on `compute_type` alone, which also catches a GPU pod whose volume request was rejected for capacity. Paths the
+user has already pointed outside `volume_mount_path` are left untouched — they never relied on the volume.
+
+The `ui.step` label for pod creation is likewise derived from the real `create_pod_args` argv rather than from the
+config (`create_summary`), after the live run saw a CPU pod announce itself as
+`(NVIDIA GeForce RTX 4090, 20 GB volume)` — a GPU never requested and a volume RunPod ignores (R2-4).
 
 ## Implementation notes
 
@@ -151,8 +159,12 @@ already pointed outside `volume_mount_path` are left untouched — they never re
   `volume_mount_path` by config default, plus `scratch = <remote_base>/.fwd-cache`. All three survive a restart.
 - `stop()`/`destroy()` pass `check=False`: an already-stopped or already-deleted pod is the caller's desired end
   state, not an error.
-- `status()` never raises; any provider failure degrades to `GONE` so one bad row cannot blank the whole `fwd ls`
-  table.
+- `status()` never raises, so one bad row cannot blank the whole `fwd ls` table — but it is careful about *which*
+  failure means what. Only a **confirmed 404** becomes `GONE`; every other failure becomes `TargetStatus.UNKNOWN`
+  plus a warning carrying the provider's own error text. This is not pedantry: `GONE` is the value that unlocks
+  `attach`'s offer to **delete the user's session entry**, and the Round-2 live run caught a transient `runpodctl`
+  error one second after a successful `fwd stop` presenting a healthy, *billing* pod as gone (R2-1). Collapsing
+  "cannot ask" into "does not exist" is how a paid-for pod gets orphaned with no state entry pointing at it.
 - `endpoint()` refuses on a stopped pod rather than returning the stale cached address, so `attach` gets an
   actionable "run `fwd up` to restart it" instead of a connection timeout.
 

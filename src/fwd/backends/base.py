@@ -37,6 +37,11 @@ class TargetStatus(StrEnum):
         PENDING: Coming up — provisioning, booting, or queued in Slurm.
         GONE: No longer exists upstream; the local state entry is stale and should be pruned.
         JOB_ENDED: Slurm-specific — login node fine, allocation finished/cancelled; needs relaunch.
+        UNKNOWN: The provider could not be reached or gave an unusable answer. Deliberately distinct from ``GONE``:
+            the live e2e run (docs/live-e2e-report.md, R2-1) caught a transient ``runpodctl`` failure right after a
+            stop being reported as ``GONE``, which invites the user to prune the state entry of a pod that is still
+            running and still billing. "Cannot ask" must never be collapsed into "does not exist", so callers treat
+            this as retry-able and never destructive.
     """
 
     RUNNING = "running"
@@ -44,6 +49,7 @@ class TargetStatus(StrEnum):
     PENDING = "pending"
     GONE = "gone"
     JOB_ENDED = "job_ended"
+    UNKNOWN = "unknown"
 
 
 @dataclass(slots=True)
@@ -139,7 +145,12 @@ class Provisioner(Protocol):
         ...
 
     def status(self, session: SessionState) -> TargetStatus:
-        """Query current liveness. Must never raise for a missing resource — return ``GONE`` instead."""
+        """Query current liveness. Must never raise.
+
+        A *confirmed* missing resource is ``GONE``; anything else that prevents an answer (API error, timeout, CLI
+        failure) is ``UNKNOWN``. That distinction is load-bearing — ``GONE`` authorizes callers to offer deleting the
+        session entry, so reporting it on a mere provider hiccup can strand a running, billing target.
+        """
         ...
 
     def stop(self, session: SessionState) -> None:

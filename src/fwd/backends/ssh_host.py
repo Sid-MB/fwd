@@ -112,7 +112,9 @@ class SshHostBackend:
         try:
             endpoint = self._build_endpoint()
         except ProvisionError:
-            return TargetStatus.GONE
+            # An unbuildable endpoint means the *target config* is broken (no host), which says nothing about whether
+            # the machine exists. ``UNKNOWN`` keeps this off the offer-to-prune path, matching the promise above.
+            return TargetStatus.UNKNOWN
         return TargetStatus.RUNNING if wait_for_ssh(endpoint, timeout=8.0, interval=2.0) else TargetStatus.STOPPED
 
     def stop(self, session: SessionState) -> None:

@@ -365,10 +365,15 @@ def test_status_from_recorded_job_id(squeue: tuple[int, str], expected: TargetSt
     assert ep.saw("squeue -j 1234 -h -o %T")
 
 
-def test_status_unreachable_login_is_gone() -> None:
+def test_status_unreachable_login_is_unknown_not_gone() -> None:
+    """A dropped VPN or a cluster in maintenance must not look like a deleted resource.
+
+    ``GONE`` is what lets ``attach`` offer to delete the session entry, and the job may still be queued or running
+    (and consuming budget) behind an unreachable login node — the same hazard class as R2-1 on RunPod.
+    """
     backend = make_backend()
     pin(backend, {"login1.hpc.example": FakeEndpoint("login1.hpc.example", unreachable=True)})
-    assert backend.status(make_session()) is TargetStatus.GONE
+    assert backend.status(make_session()) is TargetStatus.UNKNOWN
 
 
 def test_status_without_job_id_rescans_then_reports_running() -> None:

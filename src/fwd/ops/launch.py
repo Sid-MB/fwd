@@ -34,6 +34,7 @@ import hashlib
 import os
 import re
 import shlex
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -139,7 +140,14 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str) -> NoReturn:
     Prefers :func:`fwd.remote.tmux_attach_argv` so remote-command construction stays in one place, falling back to
     :meth:`~fwd.sshexec.SSHEndpoint.exec_interactive` when that helper is unavailable. Either way the Python process
     is *replaced*: attach I/O is never proxied through Python, which is what keeps resize, mouse and ctrl-C native.
+
+    Refuses up front without a tty. ``tmux attach`` cannot work on a pipe, so this is guaranteed to fail either way —
+    but exec'ing into ssh to find out leaks two confusing lines from other tools (``Pseudo-terminal will not be
+    allocated...`` / ``open terminal failed: not a terminal``) that say nothing about what the user should do
+    instead. See docs/live-e2e-report.md, R2-2.
     """
+    if not sys.stdin.isatty():
+        ui.die("attach needs an interactive terminal; in scripts use 'fwd up --no-attach' to launch without attaching")
     try:
         argv = remote.tmux_attach_argv(endpoint, tmux_session)
     except NotImplementedError:
@@ -541,16 +549,20 @@ def _persist(
 
 
 def status_of(backend: Provisioner, session: SessionState) -> TargetStatus:
-    """Query a backend's status, mapping a failing backend onto ``GONE`` and an unimplemented one onto ``RUNNING``.
+    """Query a backend's status, mapping a failing backend onto ``UNKNOWN`` and an unimplemented one onto ``RUNNING``.
 
     Shared by ``attach`` and ``ls`` so both reconcile identically. A backend that raises is treated as "cannot
-    confirm this exists" rather than propagating, because status is advisory — the user still needs the command they
-    typed to do something sensible. ``NotImplementedError`` is distinguished on purpose: during development that
-    means "this backend cannot answer yet", and assuming ``GONE`` would make fwd offer to delete healthy sessions.
+    determine" rather than propagating, because status is advisory — the user still needs the command they typed to do
+    something sensible. ``NotImplementedError`` is distinguished on purpose: during development that means "this
+    backend cannot answer yet", and assuming anything worse would make fwd nag about healthy sessions.
+
+    An unexpected exception maps to ``UNKNOWN``, never ``GONE`` (docs/live-e2e-report.md, R2-1). Only a backend that
+    *affirmatively* confirms the resource is missing may return ``GONE``, because that is the value which unlocks the
+    offer to delete the user's session entry.
     """
     try:
         return backend.status(session)
     except NotImplementedError:
         return TargetStatus.RUNNING
     except Exception:
-        return TargetStatus.GONE
+        return TargetStatus.UNKNOWN

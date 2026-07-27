@@ -247,13 +247,34 @@ def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = No
     return args
 
 
+def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None) -> str:
+    """Describe the pod about to be created, mentioning only values actually sent to ``runpodctl``.
+
+    Derived from :func:`create_pod_args` rather than from the config so the progress line cannot drift from the real
+    request. The live e2e run (docs/live-e2e-report.md, R2-4) saw a CPU pod announce itself as
+    ``(NVIDIA GeForce RTX 4090, 20 GB volume)`` — a GPU that was never requested and a volume RunPod ignores — which
+    is exactly the sort of label that sends someone debugging in the wrong direction.
+    """
+    args = create_pod_args(cfg, "-", gpu)
+    parts: list[str] = []
+    if "--gpu-id" in args:
+        parts.append(args[args.index("--gpu-id") + 1])
+    else:
+        parts.append("CPU")
+    parts.append(f"{args[args.index('--cloud-type') + 1].lower()} cloud")
+    # volume_gb is silently dropped for CPU pods, so promising a volume there would be the same lie in a new place.
+    parts.append(f"{cfg.volume_gb} GB volume" if cfg.compute_type != "cpu" else "container disk only")
+    return ", ".join(parts)
+
+
 def resolve_paths(cfg: RunpodTargetConfig, project_name: str, *, has_volume: bool) -> tuple[str, str, str, list[str]]:
     """Return ``(remote_dir, tool_prefix, scratch, notes)`` for a pod, relocating off the volume when there isn't one.
 
-    The RunPod spike showed CPU pods silently ignore ``--volume-in-gb``: ``volumeInGb`` comes back ``0`` and the
-    configured ``volume_mount_path`` does not exist on the machine at all. Pointing ``remote_dir`` at a path that is
-    not there would fail the very first rsync, so when the created pod reports no volume we fall back to a
-    container-disk root and say so loudly — the pod is still perfectly usable, it just cannot survive a stop.
+    The RunPod spike showed CPU pods silently ignore ``--volume-in-gb``: ``volumeInGb`` comes back ``0`` and nothing
+    persistent is mounted at ``volume_mount_path``. The path itself is typically still there as an ordinary directory
+    on the container-disk overlay — writable, and therefore dangerous, because everything written to it disappears on
+    the next stop. So when the created pod reports no volume we relocate to an explicit container-disk root and say so
+    loudly: the pod stays perfectly usable, it just cannot survive a stop.
 
     Paths that the user has already pointed *outside* ``volume_mount_path`` are left alone; they were never relying
     on the volume, so silently moving them would be the surprising behaviour.
@@ -265,9 +286,13 @@ def resolve_paths(cfg: RunpodTargetConfig, project_name: str, *, has_volume: boo
 
     if not has_volume and (base == mount or base.startswith(f"{mount}/")):
         fallback = f"{CONTAINER_DISK_BASE}/{Path(mount).name or 'fwd'}"
+        # Wording matters here: on a CPU pod ``mount`` usually *does* exist as an ordinary writable directory on the
+        # container-disk overlay. What is missing is the persistent volume behind it, and a user who checks and finds
+        # the directory sitting there would reasonably conclude fwd is confused (docs/live-e2e-report.md, R2-3).
         notes.append(
-            f"pod has no persistent volume — {mount} does not exist on this pod, so files live on the container disk "
-            f"at {fallback} and will be WIPED on stop (CPU pods silently ignore volume_gb; use a GPU pod to persist)"
+            f"pod has no persistent volume — {mount} is not backed by one on this pod, so anything written there "
+            f"would be WIPED on stop; using the container disk at {fallback} instead "
+            f"(CPU pods silently ignore volume_gb; use a GPU pod to persist)"
         )
         if tool_prefix == mount or tool_prefix.startswith(f"{mount}/"):
             tool_prefix = f"{fallback}{tool_prefix[len(mount):]}"
@@ -450,7 +475,7 @@ class RunpodBackend:
             existing = find_pod_by_name(self._list_pods(), pod_name)
 
         if existing is None:
-            with ui.step(f"Creating pod {pod_name} ({gpu or cfg.gpu}, {cfg.volume_gb} GB volume)"):
+            with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu)})"):
                 pod = self._create_pod(pod_name, gpu)
         else:
             pod = existing
@@ -500,14 +525,30 @@ class RunpodBackend:
         return endpoint
 
     def status(self, session: SessionState) -> TargetStatus:
-        """Map RunPod pod state to :class:`~fwd.backends.base.TargetStatus`; deleted pods report ``GONE``.
+        """Map RunPod pod state to :class:`~fwd.backends.base.TargetStatus`.
 
         Never raises — ``fwd ls`` renders one row per session and a single provider hiccup must not blank the table.
+
+        Only a **confirmed** 404 yields ``GONE``; every other failure yields ``UNKNOWN``. The live e2e run
+        (docs/live-e2e-report.md, R2-1) hit exactly this: RunPod's API is briefly flaky right after ``pod stop``, the
+        transient error was reported as ``GONE``, and ``fwd attach`` then offered to delete the state entry of a pod
+        that still existed. Since ``GONE`` is what unlocks that destructive prompt, "cannot ask" must stay distinct
+        from "does not exist" — a wrong ``GONE`` is how a paid-for pod gets orphaned.
         """
         try:
             pod = self._get_pod(self._pod_id(session))
-        except (RunpodError, KeyError):
-            return TargetStatus.GONE
+        except RunpodError as exc:
+            # _get_pod already converted a 404 into None, so reaching here means a transport/API/CLI failure. The
+            # is_missing_pod_error check is belt-and-braces for a 404 surfacing from a different call.
+            if is_missing_pod_error(str(exc)):
+                return TargetStatus.GONE
+            # The only place the provider's actual error text reaches the user: callers see a bare UNKNOWN, and in a
+            # `fwd ls` table an unexplained "unknown" row is impossible to act on.
+            ui.warn(f"could not determine RunPod status for session {session.name!r}: {exc}")
+            return TargetStatus.UNKNOWN
+        except KeyError:
+            # State written by a different backend, or a truncated entry — not evidence that the pod is gone.
+            return TargetStatus.UNKNOWN
         return TargetStatus.GONE if pod is None else pod_status(pod)
 
     def stop(self, session: SessionState) -> None:

@@ -143,6 +143,14 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
     backend = launch_ops.backend_for(session)
     status = launch_ops.status_of(backend, session)
 
+    if status is TargetStatus.UNKNOWN:
+        # Deliberately before the GONE branch and deliberately non-destructive: an inconclusive answer must never
+        # reach the offer-to-prune path below (docs/live-e2e-report.md, R2-1).
+        ui.die(
+            f"could not determine the status of session {session.name!r} — the {session.backend} provider did not "
+            f"answer. This is usually transient; try again in a moment. Run 'fwd ls' to see what fwd knows."
+        )
+
     if status is TargetStatus.GONE:
         ui.warn(f"the {session.backend} target behind session {session.name!r} no longer exists")
         if ui.confirm(f"remove the stale session entry for {session.name!r}?", default=False):
