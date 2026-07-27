@@ -27,6 +27,7 @@ Each backend owns setup through `config_parameters() -> tuple[ConfigParameter, .
 - the non-interactive CLI flag for the same value;
 - user-facing help;
 - whether it is required and whether setup should prompt for it;
+- whether it belongs behind one optional advanced-settings confirmation;
 - cheap static choices;
 - whether free text outside those choices is valid.
 
@@ -36,7 +37,11 @@ answers collected so far, so discovery can depend on earlier choices. Examples:
 - SSH and Slurm return `Host` aliases from `~/.ssh/config` for machine fields and permit arbitrary hostnames/IPs.
 - RunPod makes `cpu|gpu` and `secure|community` closed lists.
 - RunPod queries `runpodctl gpu list` for GPU identifiers but permits a custom identifier because provider inventory
-  evolves faster than fwd.
+evolves faster than fwd.
+
+Override `advanced_config(values)` when provider-native configuration can resolve defaults before advanced prompts.
+SSH uses `ssh -G <host>` to show the effective user, port, identity files, and proxy jump, then asks once whether the
+user wants to override them. Skipping that group leaves the values out of fwd config so OpenSSH remains authoritative.
 
 Choice discovery is guidance, not a launch prerequisite. Catch provider, network, parsing, and missing-CLI failures and
 return static or empty choices. Setup must still accept free text where the parameter allows it.

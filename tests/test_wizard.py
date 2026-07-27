@@ -8,6 +8,7 @@ import pytest
 
 from fwd import wizard
 from fwd.backends import ConfigChoice, ConfigChoices
+from fwd.backends.ssh import SshHostBackend
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE
 
 
@@ -76,3 +77,56 @@ def test_open_choices_accept_custom_provider_values(monkeypatch: pytest.MonkeyPa
         choices=ConfigChoices((ConfigChoice("NVIDIA GeForce RTX 4090"),), allow_free_text=True),
     )
     assert value == "future-gpu-v9"
+
+
+def test_ssh_advanced_fields_are_skipped_after_showing_resolved_openssh_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompted: list[tuple[str, Any]] = []
+    confirmations: list[tuple[str, bool]] = []
+
+    def answer(field_name: str, current: Any, **kwargs: Any) -> Any:
+        prompted.append((field_name, current))
+        return "externjohn17" if field_name == "host" else current
+
+    monkeypatch.setattr(wizard, "_prompt_value", answer)
+    monkeypatch.setattr(
+        SshHostBackend,
+        "advanced_config",
+        classmethod(lambda cls, values: ({"user": "sid", "port": 2222, "key_path": "~/.ssh/id_work"}, ("user=sid", "port=2222", "identity files=~/.ssh/id_work", "proxy jump=none"))),
+    )
+
+    def decline(message: str, *, default: bool) -> bool:
+        confirmations.append((message, default))
+        return False
+
+    monkeypatch.setattr(wizard.ui, "confirm", decline)
+    answers = wizard._prompt_target_values("ssh")
+
+    assert answers == {"host": "externjohn17"}
+    assert [name for name, _ in prompted] == ["host", "remote_base"]
+    assert len(confirmations) == 1
+    assert "Set advanced SSH parameters" in confirmations[0][0]
+    assert "user=sid; port=2222; identity files=~/.ssh/id_work; proxy jump=none" in confirmations[0][0]
+    assert confirmations[0][1] is False
+
+
+def test_ssh_advanced_fields_use_ssh_g_defaults_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompted: list[tuple[str, Any]] = []
+
+    def answer(field_name: str, current: Any, **kwargs: Any) -> Any:
+        prompted.append((field_name, current))
+        return "server" if field_name == "host" else current
+
+    monkeypatch.setattr(wizard, "_prompt_value", answer)
+    monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: True)
+    monkeypatch.setattr(
+        SshHostBackend,
+        "advanced_config",
+        classmethod(lambda cls, values: ({"user": "alice", "port": 2200, "key_path": "~/.ssh/work", "proxy_jump": "external"}, ("resolved",))),
+    )
+
+    wizard._prompt_target_values("ssh")
+
+    assert ("user", "alice") in prompted
+    assert ("port", 2200) in prompted
+    assert ("key_path", "~/.ssh/work") in prompted
+    assert ("proxy_jump", "external") in prompted

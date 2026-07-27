@@ -128,6 +128,7 @@ class ConfigParameter:
     help: str
     required: bool = False
     prompt: bool = True
+    advanced: bool = False
     choices: tuple[ConfigChoice, ...] = ()
     allow_free_text: bool = True
 
@@ -162,6 +163,15 @@ class Backend(ABC):
         best-effort and return the static choices on failure rather than making setup depend on network availability.
         """
         return ConfigChoices(parameter.choices, parameter.allow_free_text)
+
+    @classmethod
+    def advanced_config(cls, values: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+        """Return resolved defaults and summary lines shown before optional advanced prompts.
+
+        The default has no provider inspection. SSH overrides this with ``ssh -G``; future cloud backends can use the
+        same hook for account, region, network, or machine defaults without teaching the wizard provider details.
+        """
+        return {}, ()
 
     @abstractmethod
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:

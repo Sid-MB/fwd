@@ -113,11 +113,30 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
     provided = supplied or {}
 
     answers: dict[str, Any] = {}
+    advanced_decided = False
+    edit_advanced = False
     for parameter in parameters:
         if not parameter.prompt:
             continue
         field_name = parameter.name
         if field_name not in defaults:
+            continue
+        if parameter.advanced and not advanced_decided:
+            advanced_parameters = [candidate for candidate in parameters if candidate.advanced]
+            explicitly_supplied = any(provided.get(candidate.name) is not None for candidate in advanced_parameters)
+            resolved_defaults, summary = backend_class.advanced_config({**defaults, **provided, **answers})
+            defaults.update({key: value for key, value in resolved_defaults.items() if key in defaults})
+            if explicitly_supplied:
+                edit_advanced = True
+            else:
+                detail = "; ".join(summary) if summary else "no provider-specific values detected"
+                if backend == "ssh":
+                    question = f"Set advanced SSH parameters (non-default SSH key path, proxy jump, user, or port)? OpenSSH currently resolves: {detail}"
+                else:
+                    question = f"Set advanced {backend} parameters? Current resolved values: {detail}"
+                edit_advanced = ui.confirm(question, default=False)
+            advanced_decided = True
+        if parameter.advanced and not edit_advanced:
             continue
         effective_compute_type = str(answers.get("compute_type", provided.get("compute_type") or defaults.get("compute_type", ""))).lower()
         if backend == "runpod" and field_name == "gpu" and effective_compute_type == "cpu":

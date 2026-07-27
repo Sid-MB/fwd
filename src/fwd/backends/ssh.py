@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -39,12 +40,12 @@ class SshHostBackend(Backend):
         """Describe SSH setup; only host is required because OpenSSH config can supply every other connection field."""
         return (
             ConfigParameter("host", "--host", "hostname, IP, or Host alias from ~/.ssh/config", required=True),
-            ConfigParameter("user", "--user", "remote username; blank defers to OpenSSH"),
-            ConfigParameter("port", "--port", "SSH port"),
-            ConfigParameter("key_path", "--key-path", "explicit identity file; blank uses SSH config/agent"),
-            ConfigParameter("proxy_jump", "--proxy-jump", "external SSH host to jump through, if the target is not publicly accessible"),
+            ConfigParameter("user", "--user", "remote username; blank defers to OpenSSH", advanced=True),
+            ConfigParameter("port", "--port", "SSH port", advanced=True),
+            ConfigParameter("key_path", "--key-path", "explicit identity file; blank uses SSH config/agent", advanced=True),
+            ConfigParameter("proxy_jump", "--proxy-jump", "external SSH host to jump through, if the target is not publicly accessible", advanced=True),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
-            ConfigParameter("extra_opts", "--extra-ssh-option", "additional raw SSH argv entries", prompt=False),
+            ConfigParameter("extra_opts", "--extra-ssh-option", "additional raw SSH argv entries", prompt=False, advanced=True),
         )
 
     @classmethod
@@ -53,6 +54,53 @@ class SshHostBackend(Backend):
         if parameter.name == "host":
             return ConfigChoices(tuple(ConfigChoice(alias) for alias in sorted(ssh_config_host_aliases())), allow_free_text=True)
         return super().config_choices(parameter, values)
+
+    @classmethod
+    def advanced_config(cls, values: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+        """Resolve OpenSSH's effective connection settings without opening a network connection.
+
+        ``ssh -G`` performs configuration expansion only. It incorporates Host blocks, Includes, Match rules, and
+        command-line defaults, which is more accurate than fwd attempting to parse the user's SSH configuration.
+        Failure is non-fatal: setup can still offer ordinary dataclass defaults.
+        """
+        host = str(values.get("host") or "").strip()
+        if not host:
+            return {}, ()
+        try:
+            process = subprocess.run(["ssh", "-G", host], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return {}, (f"OpenSSH settings for {host}: unavailable",)
+        if process.returncode != 0:
+            return {}, (f"OpenSSH settings for {host}: unavailable",)
+
+        resolved: dict[str, list[str]] = {}
+        for line in process.stdout.splitlines():
+            key, separator, value = line.partition(" ")
+            if separator and value:
+                resolved.setdefault(key.lower(), []).append(value.strip())
+
+        user = (resolved.get("user") or [""])[0]
+        port_text = (resolved.get("port") or ["22"])[0]
+        proxy_jump = (resolved.get("proxyjump") or ["none"])[0]
+        identity_files = tuple(value for value in resolved.get("identityfile", ()) if value.lower() != "none")
+        defaults: dict[str, Any] = {}
+        if user:
+            defaults["user"] = user
+        try:
+            defaults["port"] = int(port_text)
+        except ValueError:
+            pass
+        if identity_files:
+            defaults["key_path"] = identity_files[0]
+        if proxy_jump.lower() != "none":
+            defaults["proxy_jump"] = proxy_jump
+        summary = (
+            f"user={user or '<OpenSSH default>'}",
+            f"port={port_text}",
+            f"identity files={', '.join(identity_files) if identity_files else '<SSH agent/default search>'}",
+            f"proxy jump={proxy_jump}",
+        )
+        return defaults, summary
 
     def _build_endpoint(self) -> SSHEndpoint:
         """Translate the target config into an endpoint, validating the fields ssh cannot do without."""
