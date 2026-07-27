@@ -23,6 +23,8 @@ travels with it — and a single flat list of eight options buries that distinct
 from __future__ import annotations
 
 from enum import Enum
+import os
+import sys
 from typing import Annotated
 
 import typer
@@ -70,11 +72,12 @@ def main(
 
 
 def _up(
-    command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude' for the synced Claude Code workflow.")] = None,
+    command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude'/'codex' for a synced coding-agent workflow.")] = None,
     target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", rich_help_panel=PANEL_TARGET)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override the GPU for this launch only (RunPod GPU id, or a Slurm --gres spec).", rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", rich_help_panel=PANEL_TARGET)] = None,
-    attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; by default fwd stays local.", rich_help_panel=PANEL_TARGET)] = False,
+    attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
+    no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
@@ -82,21 +85,28 @@ def _up(
 ) -> None:
     """Provision/reuse a target, sync and bootstrap it, then start a shell or the requested command.
 
-    The magic command 'claude' transfers this conversation and starts Claude Code. Startup is persistent in tmux and
-    does not attach unless --attach is passed. Put local fwd options before the command and use '--' before remote flags.
+    Magic commands 'claude' and 'codex' sync their agent settings and auto-attach in an interactive terminal. Startup
+    is persistent in tmux. Use --no-attach for a background launch and '--' before remote command flags.
     """
     from fwd.ops import launch as launch_ops
 
+    from fwd import agents
+
+    initial_command = tuple(command or ())
+    if attach and no_attach:
+        ui.die("--attach and --no-attach are mutually exclusive")
+    interactive = sys.stdin.isatty() and sys.stdout.isatty() and not any(os.environ.get(name) for name in ("CLAUDECODE", "CODEX_AGENT"))
+    effective_attach = attach or (agents.resolve(initial_command) is not None and interactive and not no_attach)
     launch_ops.launch(
         target=target,
         gpu=gpu,
         name=name,
-        initial_command=tuple(command or ()),
+        initial_command=initial_command,
         session=session,
         handoff=handoff,
         user_config=user_config,
         creds=creds,
-        attach=attach,
+        attach=effective_attach,
     )
 
 

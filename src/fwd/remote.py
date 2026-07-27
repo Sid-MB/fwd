@@ -85,6 +85,7 @@ def run_bootstrap(
     tool_prefix: str,
     remote_dir: str,
     scratch: str | None = None,
+    agent: str | None = None,
 ) -> None:
     """Pipe ``bootstrap.sh`` to the remote host and run it.
 
@@ -93,6 +94,7 @@ def run_bootstrap(
         tool_prefix: Exported as ``FWD_TOOL_PREFIX``; must be on persistent storage for the install to survive a stop.
         remote_dir: Exported as ``FWD_REMOTE_DIR``.
         scratch: Exported as ``FWD_SCRATCH`` for caches; defaults to a path under ``tool_prefix`` when ``None``.
+        agent: Magic coding agent requested for this launch; its CLI is installed and validated.
 
     Raises:
         fwd.sshexec.SSHError: If the script exits nonzero.
@@ -101,6 +103,7 @@ def run_bootstrap(
         "FWD_TOOL_PREFIX": tool_prefix,
         "FWD_REMOTE_DIR": remote_dir,
         "FWD_SCRATCH": scratch or f"{tool_prefix.rstrip('/')}/scratch",
+        "FWD_AGENT": agent or "",
     }
     # stream=True: bootstrap can take minutes on a cold machine and silence reads as a hang.
     endpoint.run_script(BOOTSTRAP_PATH, env=env, check=True, stream=True)

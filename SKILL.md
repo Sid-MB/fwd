@@ -80,11 +80,13 @@ env_setup = ["module purge", "module load cuda/12.4"]
 ```sh
 fwd up                                  # provision, sync, bootstrap, start a persistent remote shell, stay local
 fwd up claude                           # additionally transfer this conversation and start remote Claude Code
+fwd up codex                            # sync Codex settings/skills and start remote Codex
+fwd up --no-attach codex                # explicitly keep a Codex launch in the background
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" claude   # choose a target/GPU and start the synced Claude workflow
 fwd up -- python train.py --epochs 10   # start an arbitrary persistent command; '--' protects remote flags
 ```
 
-`fwd up` stays local by default and is safe for an agent to run. Never add `--attach` yourself: attaching is an interactive terminal takeover and will hang a tool call. Exact `fwd up claude` is a magic command that enables transcript transfer and other Claude-specific flags; a commandless `fwd up` starts a normal remote shell. `fwd up` is idempotent and doubles as the **repair** command — if a launch dies halfway, run the same command again rather than cleaning up first.
+`fwd up` stays local by default and is safe for an agent to run. Never add `--attach` yourself: attaching is an interactive terminal takeover and will hang a tool call. Exact `fwd up claude` and `fwd up codex` are magic agent commands; they auto-attach only in a human terminal, while `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or explicit `--no-attach` keeps them local. Claude enables transcript transfer; Codex syncs its portable config and skills but never authentication. A commandless `fwd up` starts a normal remote shell. `fwd up` is idempotent and doubles as the **repair** command — if a launch dies halfway, run the same command again rather than cleaning up first.
 
 ### Sending one remote command
 

@@ -40,7 +40,7 @@ import time
 from pathlib import Path
 from typing import Any, NoReturn
 
-from fwd import backends, claude_state, remote, sshexec, sync, ui
+from fwd import agents, backends, claude_state, remote, sshexec, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
 from fwd.config import Config, ConfigError, TargetConfig, load_config
 from fwd.state import SessionState, StateStore, endpoint_to_dict
@@ -55,6 +55,7 @@ HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
 # Exact startup tokens with fwd-specific semantics. Keeping this as a lookup boundary makes future magic commands
 # explicit instead of teaching the general arbitrary-command path to guess based on executable names.
 MAGIC_CLAUDE_COMMAND: tuple[str, ...] = ("claude",)
+MAGIC_CODEX_COMMAND: tuple[str, ...] = ("codex",)
 
 # A commandless `fwd up` still creates a useful persistent tmux session, so a later `fwd attach` opens a normal shell.
 REMOTE_SHELL_COMMAND = 'exec "${SHELL:-bash}" -l'
@@ -458,7 +459,8 @@ def launch(
 
     target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
-    is_claude = initial_command == MAGIC_CLAUDE_COMMAND
+    agent = agents.resolve(initial_command)
+    is_claude = agent is not None and agent.name == "claude"
     if not is_claude and any((session, handoff, user_config, creds)):
         ui.die("--session, --handoff, --user-config, and --creds are only valid with 'fwd up claude'")
     flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds) if is_claude else {
@@ -526,7 +528,7 @@ def launch(
     # 5. Tooling. Idempotent remotely via bootstrap's version-stamped marker, so reruns are nearly free.
     tool_prefix = info.tool_prefix or f"{remote_dir.rstrip('/')}/.fwd-tools"
     with ui.step("Bootstrapping remote tooling"):
-        remote.run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=remote_dir, scratch=info.scratch)
+        remote.run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=remote_dir, scratch=info.scratch, agent=agent.name if agent else None)
 
     # 6. Project dependencies, inferred from lockfiles rather than configured.
     dep_commands = remote.detect_dep_commands(local_cwd)
@@ -538,6 +540,9 @@ def launch(
 
     # 7. Optional Claude state, then the persistent shell/command itself.
     resume_id = _transfer_claude_state(endpoint, remote_dir, flags, bundle) if is_claude else None
+    if agent is not None and agent.sync_settings is not None:
+        with ui.step(f"Uploading {agent.name.title()} settings and skills"):
+            agent.sync_settings(endpoint)
     if is_claude and flags["session"] and not resume_id:
         # Second rung: the import failed remotely and already warned why. HANDOFF.md is only available if it was
         # generated pre-sync, so if handoff was off this degrades to a clean session rather than silently pretending.
@@ -549,7 +554,7 @@ def launch(
     startup_cmd = (
         build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
         if is_claude
-        else (REMOTE_SHELL_COMMAND if not initial_command else shlex.join(initial_command))
+        else (REMOTE_SHELL_COMMAND if not initial_command else shlex.join(agent.command if agent is not None else initial_command))
     )
     # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
     flags["resume_id"] = resume_id

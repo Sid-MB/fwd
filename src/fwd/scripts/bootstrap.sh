@@ -31,12 +31,13 @@
 set -euo pipefail
 
 # Bump when the layout or the contents of fwd-env.sh change; stale markers from other versions force a full re-run.
-FWD_BOOTSTRAP_VERSION=1
+FWD_BOOTSTRAP_VERSION=2
 
 : "${FWD_TOOL_PREFIX:?bootstrap requires FWD_TOOL_PREFIX}"
 : "${FWD_REMOTE_DIR:?bootstrap requires FWD_REMOTE_DIR}"
 FWD_SCRATCH="${FWD_SCRATCH:-$FWD_TOOL_PREFIX/scratch}"
 FWD_BOOTSTRAP_MINIMAL="${FWD_BOOTSTRAP_MINIMAL:-0}"
+FWD_AGENT="${FWD_AGENT:-claude}"
 
 BIN_DIR="$FWD_TOOL_PREFIX/bin"
 BUN_ROOT="$FWD_TOOL_PREFIX/bun"
@@ -63,7 +64,7 @@ export PATH="$BIN_DIR:$BUN_ROOT/bin:$NPM_ROOT/bin:$CLAUDE_ROOT/bin:$HOME/.local/
 
 # Tools this script is responsible for and that a launch cannot proceed without. tmux is excluded: it may legitimately
 # come from the system package manager and live outside the prefix.
-REQUIRED_TOOLS="uv claude"
+REQUIRED_TOOLS="uv $FWD_AGENT"
 
 bootstrap_is_valid() {
     # A marker alone is not proof of a working install. The marker lives under $FWD_TOOL_PREFIX, which backends point
@@ -226,6 +227,21 @@ install_claude() {
     fi
 }
 
+install_codex() {
+    if have codex && codex --version >/dev/null 2>&1; then
+        log "codex present: $(codex --version 2>/dev/null || echo unknown)"
+        return 0
+    fi
+    if have npm; then
+        log "installing Codex CLI into $NPM_ROOT"
+        npm_config_prefix="$NPM_ROOT" npm install -g @openai/codex >/dev/null 2>&1 \
+            || { warn "npm install of @openai/codex failed"; return 0; }
+        have codex && log "codex installed: $(codex --version 2>/dev/null || echo unknown)"
+    else
+        warn "could not install codex because npm is unavailable; launch will fail to start the session"
+    fi
+}
+
 link_claude_binary() {
     # Find whatever the installer produced under the prefix and expose it as $BIN_DIR/claude. Both candidate paths are
     # inside $FWD_TOOL_PREFIX, so the link target persists across a pod stop — unlike a link into $HOME/.local/bin.
@@ -273,7 +289,7 @@ else
     install_uv || true
     install_bun || true
     install_node || true
-    install_claude || true
+    if [ "$FWD_AGENT" = "codex" ]; then install_codex || true; else install_claude || true; fi
     install_tmux
 fi
 

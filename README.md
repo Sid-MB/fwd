@@ -123,14 +123,15 @@ when a command must run inside an allocation.
 
 | Flag | Effect |
 | --- | --- |
-| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude` for the synced Claude Code workflow |
+| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude`/`codex` for a synced coding-agent workflow |
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) |
 | `--name/-n NAME` | Session name (default: derived from the directory) |
 | `--session` / `--handoff` | How to carry conversation context — see below |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) |
 | `--creds` | Copy Claude credentials to the remote machine |
-| `--attach/-a` | Attach after startup; omitted by default so terminals, agents, and scripts stay local |
+| `--attach/-a` | Attach after startup |
+| `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
 it again and it picks up where it left off rather than starting over or duplicating anything.
@@ -139,13 +140,21 @@ The startup forms are:
 
 ```sh
 fwd up                              # provision, sync, bootstrap, start a persistent remote shell; stay local
-fwd up claude                       # also transfer this conversation and start Claude Code; stay local
-fwd up --attach claude              # same Claude workflow, then take over the terminal (--attach is also -a)
+fwd up claude                       # transfer this conversation and auto-attach in a human terminal
+fwd up codex                        # sync Codex settings/skills and auto-attach in a human terminal
+fwd up --no-attach codex            # start Codex persistently but stay in the local terminal
+fwd up -a python train.py           # start an arbitrary command and attach
 fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
 ```
 
 Bare `fwd` retains the original ergonomic workflow: on first launch it is equivalent to `fwd up --attach claude`;
 later it attaches to the existing session.
+
+`fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
+profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.
+Authentication is deliberately not copied: `~/.codex/auth.json` contains credentials, so run `codex login` remotely
+when needed. Agent launches auto-attach only when stdin and stdout are terminals and neither `CLAUDECODE` nor
+`CODEX_AGENT` marks an agent environment; scripts and agents remain non-attaching automatically.
 
 ## Carrying your Claude session across
 
