@@ -60,6 +60,7 @@ fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
 fwd pull outputs/                      # retrieve selected remote results
 fwd ls --format json                   # inspect live sessions
+fwd ls --all-projects --format json    # inspect sessions across every local project
 fwd stop                               # stop the session and suspend supported compute
 ```
 

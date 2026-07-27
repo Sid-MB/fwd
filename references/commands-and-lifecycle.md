@@ -74,12 +74,14 @@ fwd pull outputs/ logs/   # additive path-scoped download
 ## Session inspection
 
 ```sh
-fwd ls --format json
+fwd ls --format json                 # current project
+fwd ls --all-projects --format json  # every locally tracked project
 fwd doctor --format json
 fwd info --format json
 ```
 
-Machine-readable stdout is stable; progress and errors use stderr.
+Machine-readable stdout is stable; progress and errors use stderr. In a human terminal, current-project `fwd ls`
+reports when other projects have tracked sessions and points to `--all-projects`; non-interactive and agent runs have no hint.
 
 ## Attachment
 

@@ -120,6 +120,7 @@ tables or records, then select a renderer:
 
 ```sh
 fwd ls                         # Rich table in a terminal; Markdown when piped or run by an agent
+fwd ls --all-projects          # include sessions belonging to every local project
 fwd ls --format markdown       # stable GitHub-flavored Markdown table
 fwd ls --format json           # JSON object with title, columns, and named row objects
 fwd doctor --format json
@@ -177,7 +178,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
 | `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
 | `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls` |
-| `fwd ls` | List sessions with live status queried from each backend | `fwd ls --format json` |
+| `fwd ls [--all-projects]` | List this project's sessions, or every locally tracked project, with live backend status | `fwd ls --all-projects` |
 | `fwd push` | Re-sync local changes up | `fwd push` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |

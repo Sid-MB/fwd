@@ -432,12 +432,13 @@ app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignor
 
 @app.command("ls")
 def ls_cmd(
+    all_projects: Annotated[bool, typer.Option("--all-projects", help="Show sessions from every locally tracked project instead of only the current project.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
-    """List every managed session with live status and cost queried from each backend."""
+    """List this project's managed sessions with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
 
-    lifecycle.ls(output_format=output_format)
+    lifecycle.ls(output_format=output_format, all_projects=all_projects)
 
 
 @app.command("push")

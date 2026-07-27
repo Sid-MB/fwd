@@ -35,7 +35,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.text import Text
 
-from fwd.output import OutputFormat, RecordElement, TableElement, render
+from fwd.output import OutputFormat, RecordElement, TableElement, is_machine_environment, render
 
 console = Console()
 err_console = Console(stderr=True)
@@ -48,6 +48,11 @@ COMMAND_NAME = os.environ.get("FWD_COMMAND_NAME", "fwd")
 def _tty() -> bool:
     """Return whether stderr is an interactive terminal (gates spinner animation)."""
     return err_console.is_terminal
+
+
+def interactive_terminal() -> bool:
+    """Return whether a human terminal may receive prompts, attachment, and optional discovery hints."""
+    return sys.stdin.isatty() and console.is_terminal and not is_machine_environment()
 
 
 @contextmanager
@@ -91,6 +96,19 @@ def info(message: str) -> None:
     """Print a neutral status line to stderr."""
     safe = escape(message)
     err_console.print(f"[dim]·[/] {safe}" if _tty() else f"info: {safe}")
+
+
+def info_with_code(before: str, command_text: str, after: str = "") -> None:
+    """Print an informational sentence containing one safely styled command without treating user text as Rich markup."""
+    if not _tty():
+        info(f"{before}{code(command_text)}{after}")
+        return
+    line = Text()
+    line.append("· ", style="dim")
+    line.append(before)
+    line.append(command_text, style="bold cyan")
+    line.append(after)
+    err_console.print(line)
 
 
 def ok(message: str) -> None:

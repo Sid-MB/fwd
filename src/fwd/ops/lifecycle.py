@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shlex
 from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
 
@@ -109,9 +110,13 @@ def _live_status(session: SessionState) -> TargetStatus | str:
         return UNKNOWN_STATUS
 
 
-def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
-    """List all sessions with live, backend-reconciled status."""
-    sessions = launch_ops.store().all()
+def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: bool = False) -> None:
+    """List current-project sessions by default, or every local session with ``all_projects``, using live status."""
+    tracked_sessions = launch_ops.store().all()
+    current_project = Path.cwd().resolve()
+    current_sessions = [session for session in tracked_sessions if Path(session.local_cwd).expanduser().resolve() == current_project]
+    other_sessions = [session for session in tracked_sessions if Path(session.local_cwd).expanduser().resolve() != current_project]
+    sessions = tracked_sessions if all_projects else current_sessions
     now = datetime.now(UTC)
     rows = []
     for session in sessions:
@@ -143,6 +148,15 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
         ),
         heading="Manage a session:",
     )
+    if not all_projects and other_sessions and ui.interactive_terminal():
+        session_count = len(other_sessions)
+        if session_count == 1:
+            prefix = "There is 1 session open in another project. Run "
+        else:
+            project_count = len({Path(session.local_cwd).expanduser().resolve() for session in other_sessions})
+            project_noun = "project" if project_count == 1 else "projects"
+            prefix = f"There are {session_count} sessions open in {project_count} other {project_noun}. Run "
+        ui.info_with_code(prefix, ui.command("ls --all-projects"), " to show.")
 
 
 def stop(name: str | None = None) -> None:
