@@ -31,7 +31,7 @@ MODULES = [
     "fwd.ui",
     "fwd.backends",
     "fwd.backends.base",
-    "fwd.backends.ssh_host",
+    "fwd.backends.ssh",
     "fwd.backends.runpod",
     "fwd.backends.slurm",
     "fwd.ops",
@@ -84,15 +84,37 @@ def test_version_command() -> None:
 
 
 def test_backend_registry_resolves_all_backends() -> None:
-    """get_backend lazily imports each registered backend and the classes satisfy the Provisioner protocol shape."""
-    from fwd.backends import BACKENDS, backend_names, get_backend
+    """get_backend lazily imports concrete Backend subclasses with runtime and setup contracts."""
+    from dataclasses import fields
+
+    from fwd.backends import BACKENDS, Backend, backend_names, get_backend
+    from fwd.config import TARGET_TYPES
 
     assert backend_names() == ["runpod", "slurm", "ssh"]
     for name in BACKENDS:
         cls = get_backend(name)
+        assert issubclass(cls, Backend)
         assert cls.name == name
+        parameters = cls.config_parameters()
+        assert parameters
+        assert len({parameter.name for parameter in parameters}) == len(parameters)
+        assert all(parameter.flag.startswith("--") and parameter.help for parameter in parameters)
+        config_fields = {field.name for field in fields(TARGET_TYPES[name])} - {"name", "backend"}
+        assert {parameter.name for parameter in parameters} == config_fields
         for method in ("provision", "endpoint", "status", "stop", "destroy", "doctor"):
             assert callable(getattr(cls, method))
+
+
+def test_every_backend_config_parameter_has_a_setup_flag() -> None:
+    """Backend metadata and the agent-safe non-interactive CLI must never drift apart."""
+    from fwd.backends import BACKENDS, get_backend
+    from fwd.cli import app
+
+    help_result = CliRunner().invoke(app, ["setup", "--help"])
+    assert help_result.exit_code == 0
+    for name in BACKENDS:
+        for parameter in get_backend(name).config_parameters():
+            assert parameter.flag in help_result.output
 
 
 def test_unknown_backend_raises_provision_error() -> None:

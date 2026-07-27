@@ -295,6 +295,15 @@ class TestRunpodConfigFields:
         with pytest.raises(ConfigError, match="cloud_type"):
             parse_target("pod", {"backend": "runpod", "cloud_type": "hybrid"})
 
+    def test_backend_metadata_closes_enums_but_keeps_gpu_and_image_extensible(self) -> None:
+        parameters = {parameter.name: parameter for parameter in RunpodBackend.config_parameters()}
+        assert [choice.value for choice in parameters["compute_type"].choices] == ["cpu", "gpu"]
+        assert parameters["compute_type"].allow_free_text is False
+        assert [choice.value for choice in parameters["cloud_type"].choices] == ["secure", "community"]
+        assert parameters["cloud_type"].allow_free_text is False
+        assert parameters["gpu"].allow_free_text is True
+        assert parameters["image"].allow_free_text is True
+
 
 class TestCreateSummary:
     """The progress label must describe only what is actually sent (docs/live-e2e-report.md, R2-4)."""

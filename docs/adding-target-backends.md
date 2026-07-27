@@ -17,7 +17,7 @@ A provider is therefore a straightforward fit when it offers a durable VM or con
 - enough shell compatibility to run the bootstrap script and `tmux`;
 - stable provider identifiers that can be saved locally and queried later.
 
-Serverless jobs without SSH or a durable interactive filesystem do not satisfy the current backend contract. For example, Modal would need an SSH-capable Sandbox or a new transport abstraction; implementing its function API directly as a `Provisioner` would leave sync, attach, and session resume without a usable connection. Document such a design change separately instead of hiding provider-specific non-SSH behavior behind a fake endpoint.
+Serverless jobs without SSH or a durable interactive filesystem do not satisfy the current backend contract. For example, Modal would need an SSH-capable Sandbox or a new transport abstraction; implementing its function API directly as a `Backend` would leave sync, attach, and session resume without a usable connection. Document such a design change separately instead of hiding provider-specific non-SSH behavior behind a fake endpoint.
 
 ## Architecture
 
@@ -25,12 +25,12 @@ The extension points are intentionally small:
 
 | Area | File | Responsibility |
 | --- | --- | --- |
-| Backend contract | `src/fwd/backends/base.py` | `Provisioner`, `TargetInfo`, `TargetStatus`, and diagnostic result types |
+| Backend contract | `src/fwd/backends/base.py` | `Backend`, config-choice metadata, `TargetInfo`, `TargetStatus`, and diagnostics |
 | Provider implementation | `src/fwd/backends/<provider>.py` | Provider API/CLI calls and conversion to the shared SSH model |
 | Backend registry | `src/fwd/backends/__init__.py` | Lazy mapping from backend name to implementation class |
 | Config model | `src/fwd/config.py` | Typed target dataclass, parsing, defaults, and validation |
 | Config discovery | `src/fwd/ops/configcmd.py` | Field descriptions, example TOML, and generated JSON Schema |
-| Setup wizard | `src/fwd/wizard.py` | Essential and required interactive fields |
+| Setup wizard | `src/fwd/wizard.py` | Generic renderer/validator for backend-owned configuration metadata |
 | Launch orchestration | `src/fwd/ops/launch.py` | Provider-independent sync, bootstrap, session transfer, and state creation |
 | Persistent state | `src/fwd/state.py` | Provider-neutral session data plus open-ended `backend_ids` |
 
@@ -84,19 +84,34 @@ Important configuration rules:
 
 Do not automatically make a provider zero-config merely because its dataclass has defaults. Add implicit resolution in `implicit_target()` only when naming the backend gives one unambiguous, reasonably safe result. RunPod can do this; a GCP project and zone generally cannot.
 
-## 2. Implement `Provisioner`
+## 2. Implement `Backend`
 
-Create `src/fwd/backends/<provider>.py` with one backend class. It does not need to inherit from a base class, but it must structurally implement every method in `Provisioner`.
+Create `src/fwd/backends/<provider>.py` with one backend class inheriting `Backend`. The abstract base class rejects incomplete implementations at instantiation time.
 
 ```python
-class GcpBackend:
+class GcpBackend(Backend):
     """Manage the GCE VM associated with an fwd session."""
 
     name = "gcp"
 
     def __init__(self, target: GcpTargetConfig, config: Config) -> None:
-        self.target = target
-        self.config = config
+        super().__init__(target, config)
+
+    @classmethod
+    def config_parameters(cls) -> tuple[ConfigParameter, ...]:
+        return (
+            ConfigParameter("project", "--project", "GCP project", required=True),
+            ConfigParameter("zone", "--zone", "compute zone", required=True),
+            ConfigParameter("machine_type", "--machine-type", "VM machine type"),
+            ConfigParameter("image", "--image", "boot image"),
+            ConfigParameter("user", "--user", "SSH username"),
+            ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
+        )
+
+    @classmethod
+    def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
+        """Optionally query gcloud for zones or machine types; retain free text when discovery fails."""
+        ...
 
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:
         """Create or reuse the named VM, wait for SSH, and return persistent connection details."""
@@ -201,13 +216,16 @@ fwd config --help
 
 The example output must remain valid TOML accepted by `load_config()`. The JSON Schema should contain every field, its real type and default, and a backend discriminator.
 
-## 5. Add wizard support
+## 5. Add setup metadata and CLI flags
 
-The wizard discovers the backend name from `TARGET_TYPES`, but its prompts require entries in `src/fwd/wizard.py`:
+The wizard discovers the backend class through the registry and reads `config_parameters()` directly. Describe every
+target dataclass field (except injected `name` and discriminator `backend`) with a `ConfigParameter`:
 
-- `ESSENTIAL_FIELDS`: the short, ordered list worth asking on first setup;
-- `REQUIRED_FIELDS`: values that must not be empty;
-- `FIELD_HELP`: concise explanations for provider-specific or ambiguous fields.
+- set `prompt=False` for advanced fields that remain flag/config-only;
+- use closed choices with `allow_free_text=False` for real provider enums;
+- override `config_choices()` for machine types, regions, GPU identifiers, SSH aliases, or other dynamic suggestions;
+- keep provider discovery best-effort so missing credentials or network access never prevents manual setup;
+- expose `parameter.flag` from `fwd setup` so every value is available non-interactively to agents.
 
 Do not prompt for every option. The wizard should produce the smallest useful target and leave advanced settings discoverable through `fwd config --example <backend>`.
 
@@ -277,4 +295,3 @@ Verification should focus on the backend's contract and destructive boundaries:
 - A focused live smoke run covers create, sync, attach, stop, restart, and remove before the backend is advertised as supported.
 
 Do not use a live provider test as the first safety check for destructive logic. Exercise command construction and state mapping with recorded provider responses or narrow fakes first, then run one explicitly scoped end-to-end resource whose name and ownership are easy to verify in the provider console.
-

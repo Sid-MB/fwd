@@ -29,7 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from fwd.backends.ssh_host import SshHostBackend
+from fwd.backends.ssh import SshHostBackend
 from fwd.config import SyncConfig, load_config
 from fwd.remote import detect_dep_commands, run_bootstrap, run_dep_install
 from fwd.sshexec import SSHEndpoint, SSHError

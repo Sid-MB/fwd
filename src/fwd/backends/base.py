@@ -1,4 +1,4 @@
-"""Backend contract — the ``Provisioner`` protocol every target type implements.
+"""Backend contract shared by provisioning, setup discovery, and diagnostics.
 
 Design intent
 -------------
@@ -19,9 +19,10 @@ state is stale).
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar
 
 from fwd.config import Config, TargetConfig
 from fwd.sshexec import SSHEndpoint
@@ -98,13 +99,44 @@ class ProvisionError(RuntimeError):
     """Raised when a target cannot be created, restarted or resolved. Message is shown directly to the user."""
 
 
-@runtime_checkable
-class Provisioner(Protocol):
-    """The interface each backend implements.
+@dataclass(frozen=True, slots=True)
+class ConfigChoice:
+    """One provider-suggested value for a setup parameter."""
 
-    Implementations are constructed per invocation with their own target config plus the full config (needed for
-    cross-cutting settings like sync excludes). They should be cheap to construct and do all network work inside the
-    methods, so ``fwd ls`` can build one per session without slowing down.
+    value: str
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigChoices:
+    """Choices discovered for a setup field and whether values outside that list remain valid."""
+
+    values: tuple[ConfigChoice, ...] = ()
+    allow_free_text: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigParameter:
+    """Standard setup metadata owned by a backend.
+
+    ``choices`` contains cheap static suggestions. Backends override :meth:`Backend.config_choices` for provider or
+    machine-derived values such as SSH aliases, RunPod GPU identifiers, or cloud machine types.
+    """
+
+    name: str
+    flag: str
+    help: str
+    required: bool = False
+    prompt: bool = True
+    choices: tuple[ConfigChoice, ...] = ()
+    allow_free_text: bool = True
+
+
+class Backend(ABC):
+    """Abstract base class every backend must implement.
+
+    Runtime methods provide a normalized lifecycle over SSH-reachable compute. Class-level setup methods describe the
+    backend before a target exists, allowing both humans and agents to discover the same configuration contract.
     """
 
     name: ClassVar[str]
@@ -114,8 +146,24 @@ class Provisioner(Protocol):
         target: This backend's own resolved target configuration.
         config: The full merged config, for settings that are not target-scoped.
         """
-        ...
+        self.target = target
+        self.config = config
 
+    @classmethod
+    @abstractmethod
+    def config_parameters(cls) -> tuple[ConfigParameter, ...]:
+        """Return ordered setup fields, including flags, help, requiredness, and static choice policy."""
+
+    @classmethod
+    def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
+        """Return current choices for ``parameter``.
+
+        Called while setup is in progress, so ``values`` contains fields already answered. Provider discovery must be
+        best-effort and return the static choices on failure rather than making setup depend on network availability.
+        """
+        return ConfigChoices(parameter.choices, parameter.allow_free_text)
+
+    @abstractmethod
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:
         """Create or reuse a target and return how to reach it.
 
@@ -131,8 +179,8 @@ class Provisioner(Protocol):
         Raises:
             ProvisionError: On any failure to obtain a usable target.
         """
-        ...
 
+    @abstractmethod
     def endpoint(self, session: SessionState) -> SSHEndpoint:
         """Re-resolve current connection details for an existing session.
 
@@ -142,8 +190,8 @@ class Provisioner(Protocol):
         Raises:
             ProvisionError: If the target no longer exists or has no reachable address.
         """
-        ...
 
+    @abstractmethod
     def status(self, session: SessionState) -> TargetStatus:
         """Query current liveness. Must never raise.
 
@@ -151,22 +199,26 @@ class Provisioner(Protocol):
         failure) is ``UNKNOWN``. That distinction is load-bearing — ``GONE`` authorizes callers to offer deleting the
         session entry, so reporting it on a mere provider hiccup can strand a running, billing target.
         """
-        ...
 
+    @abstractmethod
     def stop(self, session: SessionState) -> None:
         """Suspend the target while preserving data (RunPod ``pod stop``, Slurm ``scancel``).
 
         Must be safe to call on an already-stopped or already-gone target.
         """
-        ...
 
+    @abstractmethod
     def destroy(self, session: SessionState) -> None:
         """Permanently delete the target and its volumes. Callers confirm with the user first."""
-        ...
 
+    @abstractmethod
     def doctor(self) -> list[CheckResult]:
         """Check local prerequisites for this backend (CLI present, credentials set, host reachable).
 
         Read-only and must not raise; failures are reported as ``CheckResult`` entries with hints.
         """
-        ...
+        raise NotImplementedError
+
+
+# Compatibility alias for callers and third-party code written against fwd's original protocol name.
+Provisioner = Backend

@@ -33,60 +33,12 @@ import tomlkit
 import typer
 
 from fwd import ui
-from fwd.backends import make_backend
+from fwd.backends import ConfigChoices, ConfigParameter, get_backend, make_backend
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, TargetConfig, load_config
 
-# Fields worth prompting for, per backend, in the order they are asked. Everything else keeps its dataclass default.
-# Required fields (no useful default) come first so an impatient user can accept the rest with Enter.
-ESSENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
-    "ssh": ("host", "user", "port", "key_path", "proxy_jump", "remote_base"),
-    "runpod": ("compute_type", "gpu", "image", "volume_gb", "remote_base", "tool_prefix", "user"),
-    "slurm": ("login_host", "user", "remote_base", "alloc", "tool_prefix", "partition", "account", "env_setup"),
-}
-
-# Fields that must be non-empty for the target to be usable at all; the wizard re-asks until they are given.
-REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    # SSH user is deliberately optional: an alias in ~/.ssh/config may already specify User, IdentityFile, ProxyJump,
-    # and other connection details. Passing an empty user lets OpenSSH resolve the complete alias as it normally would.
-    "ssh": ("host",),
-    "runpod": (),
-    "slurm": ("login_host", "user", "remote_base"),
-}
-
-# Human-readable guidance shown alongside the prompt for fields whose purpose is not obvious from the name.
-FIELD_HELP: dict[str, str] = {
-    "host": "hostname, IP, or Host alias from ~/.ssh/config",
-    "user": "remote username; SSH targets may leave this blank to defer to OpenSSH",
-    "remote_base": "parent directory for project checkouts on the remote side",
-    "tool_prefix": "persistent path for installed tooling (survives stop/restart)",
-    "alloc": "flags passed to salloc, e.g. --time=04:00:00 --gres=gpu:1",
-    "env_setup": "comma-separated shell lines run before the allocation (module load ...)",
-    "proxy_jump": "bastion host to jump through, if any",
-    "key_path": "explicit ssh identity file; blank uses your ssh config/agent",
-    "volume_gb": "persistent volume size; tooling and your project both live here",
-    "compute_type": "cpu or gpu; CPU-only is the default",
-}
-
-# CLI flag names for every field the interactive wizard can ask for. Kept beside ``ESSENTIAL_FIELDS`` so adding a
-# prompt without a non-interactive equivalent is visible during review and can be checked before setup starts.
-FIELD_FLAGS: dict[str, str] = {
-    "host": "--host",
-    "login_host": "--login-host",
-    "user": "--user",
-    "port": "--port",
-    "key_path": "--key-path",
-    "proxy_jump": "--proxy-jump",
-    "remote_base": "--remote-base",
-    "gpu": "--gpu",
-    "compute_type": "--compute-type",
-    "image": "--image",
-    "volume_gb": "--volume-gb",
-    "tool_prefix": "--tool-prefix",
-    "alloc": "--alloc",
-    "partition": "--partition",
-    "account": "--account",
-    "env_setup": "--env-setup",
-}
+def _parameters(backend: str) -> tuple[ConfigParameter, ...]:
+    """Return setup metadata from the backend class, the single source of truth for wizard fields."""
+    return get_backend(backend).config_parameters()
 
 
 def _ask(label: str, default: str = "") -> str:
@@ -100,15 +52,20 @@ def _ask(label: str, default: str = "") -> str:
     return typer.prompt(label, default=default, show_default=bool(default))
 
 
-def _prompt_value(field_name: str, current: Any, *, required: bool) -> Any:
+def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: str | None = None, choices: ConfigChoices | None = None) -> Any:
     """Prompt for one field, coercing the answer to the type of its default.
 
     Types are inferred from the dataclass default rather than from annotations because the defaults are already the
     authoritative shape (``int`` port, ``list[str]`` env_setup) and inspecting annotations would mean parsing strings
     under ``from __future__ import annotations``.
     """
-    hint = FIELD_HELP.get(field_name)
-    label = f"{field_name} ({hint})" if hint else field_name
+    choice_set = choices or ConfigChoices()
+    rendered_choices = " | ".join(choice.value if choice.label is None else f"{choice.value} ({choice.label})" for choice in choice_set.values)
+    guidance = help_text or ""
+    if rendered_choices:
+        suffix = f"choices: {rendered_choices}" + ("; custom value allowed" if choice_set.allow_free_text else "")
+        guidance = f"{guidance}; {suffix}" if guidance else suffix
+    label = f"{field_name} ({guidance})" if guidance else field_name
     default_display = "" if current in (None, "", [], 0) else current
     if isinstance(current, list):
         default_display = ", ".join(current)
@@ -121,6 +78,10 @@ def _prompt_value(field_name: str, current: Any, *, required: bool) -> Any:
                 ui.warn(f"{field_name} is required")
                 continue
             return current
+        allowed = {choice.value for choice in choice_set.values}
+        if allowed and not choice_set.allow_free_text and raw not in allowed:
+            ui.warn(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
+            continue
         if isinstance(current, bool):
             return raw.lower() in {"1", "true", "yes", "y"}
         if isinstance(current, int) and not isinstance(current, bool):
@@ -147,11 +108,15 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
     """
     cls = TARGET_TYPES[backend]
     defaults = {f.name: getattr(cls(name=backend), f.name) for f in dataclass_fields(cls)}
-    required = REQUIRED_FIELDS.get(backend, ())
+    parameters = _parameters(backend)
+    backend_class = get_backend(backend)
     provided = supplied or {}
 
     answers: dict[str, Any] = {}
-    for field_name in ESSENTIAL_FIELDS.get(backend, ()):
+    for parameter in parameters:
+        if not parameter.prompt:
+            continue
+        field_name = parameter.name
         if field_name not in defaults:
             continue
         effective_compute_type = str(answers.get("compute_type", provided.get("compute_type") or defaults.get("compute_type", ""))).lower()
@@ -159,7 +124,9 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
             continue
         if backend == "runpod" and field_name == "image":
             defaults["image"] = DEFAULT_RUNPOD_CPU_IMAGE if effective_compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE
-        value = provided[field_name] if provided.get(field_name) is not None else _prompt_value(field_name, defaults[field_name], required=field_name in required)
+        known_values = {**defaults, **provided, **answers}
+        choice_set = backend_class.config_choices(parameter, known_values)
+        value = provided[field_name] if provided.get(field_name) is not None else _prompt_value(field_name, defaults[field_name], required=parameter.required, help_text=parameter.help, choices=choice_set)
         if value != defaults[field_name]:
             answers[field_name] = value
     return answers
@@ -185,12 +152,13 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     normalized = backend.strip().lower()
     if normalized not in TARGET_TYPES:
         ui.die(f"unknown backend {normalized!r}; expected one of: {', '.join(sorted(TARGET_TYPES))}")
-    missing = [field for field in REQUIRED_FIELDS.get(normalized, ()) if values.get(field) in (None, "", [])]
+    required = [parameter for parameter in _parameters(normalized) if parameter.required]
+    missing = [parameter for parameter in required if values.get(parameter.name) in (None, "", [])]
     if missing:
-        flags = " ".join(f"{FIELD_FLAGS[field]} VALUE" for field in missing)
+        flags = " ".join(f"{parameter.flag} VALUE" for parameter in missing)
         ui.die(
             f"fwd setup is running in non-interactive mode because {reason}. Missing required flag(s) for {normalized}: "
-            f"{', '.join(FIELD_FLAGS[field] for field in missing)}.\n"
+            f"{', '.join(parameter.flag for parameter in missing)}.\n"
             f"Required form: fwd setup --backend {normalized} {flags}\n"
             "Run 'fwd setup --help' for every optional field, or pass --interactive to force prompts."
         )
@@ -281,9 +249,8 @@ def run_wizard(
     else:
         resolved_backend = _validate_non_interactive(backend, provided, reason)
 
-    target_values = _prompt_target_values(resolved_backend, provided) if interactive else {
-        key: value for key, value in provided.items() if key in ESSENTIAL_FIELDS.get(resolved_backend, ()) and value is not None
-    }
+    parameter_names = {parameter.name for parameter in _parameters(resolved_backend)}
+    target_values = _prompt_target_values(resolved_backend, provided) if interactive else {key: value for key, value in provided.items() if key in parameter_names and value is not None}
 
     default_name = resolved_backend if resolved_backend not in existing.targets else f"{resolved_backend}-2"
     resolved_name = (target_name or "").strip()

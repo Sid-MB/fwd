@@ -10,10 +10,10 @@ from __future__ import annotations
 import shlex
 import shutil
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from fwd.backends.base import CheckResult, ProvisionError, TargetInfo, TargetStatus
-from fwd.config import Config, SshTargetConfig
+from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.config import Config, SshTargetConfig, ssh_config_host_aliases
 from fwd.remote import tmux_kill
 from fwd.sshexec import SSHEndpoint, SSHError, wait_for_ssh
 from fwd.state import SessionState
@@ -26,14 +26,33 @@ DEFAULT_TOOL_PREFIX = "~/.fwd-tools"
 PROTECTED_REMOTE_DIRS = frozenset({"", "/", "/root", "/home", "/workspace", "/tmp", "/usr", "/var", "/etc"})
 
 
-class SshHostBackend:
+class SshHostBackend(Backend):
     """Provisioner over a static SSH host (see :class:`fwd.backends.base.Provisioner`)."""
 
     name: ClassVar[str] = "ssh"
 
     def __init__(self, target: SshTargetConfig, config: Config) -> None:
-        self.target = target
-        self.config = config
+        super().__init__(target, config)
+
+    @classmethod
+    def config_parameters(cls) -> tuple[ConfigParameter, ...]:
+        """Describe SSH setup; only host is required because OpenSSH config can supply every other connection field."""
+        return (
+            ConfigParameter("host", "--host", "hostname, IP, or Host alias from ~/.ssh/config", required=True),
+            ConfigParameter("user", "--user", "remote username; blank defers to OpenSSH"),
+            ConfigParameter("port", "--port", "SSH port"),
+            ConfigParameter("key_path", "--key-path", "explicit identity file; blank uses SSH config/agent"),
+            ConfigParameter("proxy_jump", "--proxy-jump", "bastion host to jump through, if any"),
+            ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
+            ConfigParameter("extra_opts", "--extra-ssh-option", "additional raw SSH argv entries", prompt=False),
+        )
+
+    @classmethod
+    def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
+        """Offer declared SSH aliases for host while always permitting hostnames and IP addresses."""
+        if parameter.name == "host":
+            return ConfigChoices(tuple(ConfigChoice(alias) for alias in sorted(ssh_config_host_aliases())), allow_free_text=True)
+        return super().config_choices(parameter, values)
 
     def _build_endpoint(self) -> SSHEndpoint:
         """Translate the target config into an endpoint, validating the fields ssh cannot do without."""

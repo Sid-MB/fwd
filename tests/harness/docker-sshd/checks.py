@@ -17,7 +17,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from fwd.backends.ssh_host import SshHostBackend
+from fwd.backends.ssh import SshHostBackend
 from fwd.config import load_config
 from fwd.remote import BOOTSTRAP_PATH, detect_dep_commands, tmux_attach_argv, tmux_exists, tmux_kill, tmux_new
 from fwd.sshexec import SSHError

@@ -42,12 +42,12 @@ from __future__ import annotations
 import posixpath
 import shlex
 import shutil
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from fwd import remote as remote_mod
-from fwd.backends.base import CheckResult, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.backends.slurm_job import job_name, job_script_path, render_job_script, render_tmux_command
-from fwd.config import Config, SlurmTargetConfig
+from fwd.config import Config, SlurmTargetConfig, ssh_config_host_aliases
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
 
@@ -134,17 +134,40 @@ def _job_sort_key(job_id: str) -> tuple[int, int]:
         return (0, 0)
 
 
-class SlurmBackend:
+class SlurmBackend(Backend):
     """Provisioner over a Slurm cluster (see :class:`fwd.backends.base.Provisioner`)."""
 
     name: ClassVar[str] = "slurm"
 
     def __init__(self, target: SlurmTargetConfig, config: Config) -> None:
-        self.target = target
-        self.config = config
+        super().__init__(target, config)
         # Remembered from provision so a later job_script/claude_launch_wrapper call in the same launch keeps the
         # --gpu the user asked for without ops having to thread it through.
         self._gpu: str | None = None
+
+    @classmethod
+    def config_parameters(cls) -> tuple[ConfigParameter, ...]:
+        """Describe portable Slurm fields; cluster-specific values intentionally remain free text."""
+        return (
+            ConfigParameter("login_host", "--login-host", "cluster login hostname or SSH alias", required=True),
+            ConfigParameter("user", "--user", "remote username", required=True),
+            ConfigParameter("port", "--port", "SSH port", prompt=False),
+            ConfigParameter("key_path", "--key-path", "explicit SSH identity file", prompt=False),
+            ConfigParameter("proxy_jump", "--proxy-jump", "SSH bastion hop", prompt=False),
+            ConfigParameter("remote_base", "--remote-base", "scratch parent for project checkouts", required=True),
+            ConfigParameter("alloc", "--alloc", "flags passed to salloc"),
+            ConfigParameter("tool_prefix", "--tool-prefix", "scratch-backed tooling and cache root"),
+            ConfigParameter("partition", "--partition", "Slurm partition"),
+            ConfigParameter("account", "--account", "Slurm account"),
+            ConfigParameter("env_setup", "--env-setup", "shell lines run before allocation"),
+        )
+
+    @classmethod
+    def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
+        """Offer SSH aliases as login-node candidates while allowing cluster hostnames not present in SSH config."""
+        if parameter.name == "login_host":
+            return ConfigChoices(tuple(ConfigChoice(alias) for alias in sorted(ssh_config_host_aliases())), allow_free_text=True)
+        return super().config_choices(parameter, values)
 
     # ------------------------------------------------------------------ helpers
 

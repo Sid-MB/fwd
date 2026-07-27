@@ -37,8 +37,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import CheckResult, ProvisionError, TargetInfo, TargetStatus
-from fwd.config import Config, RunpodTargetConfig
+from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, Config, RunpodTargetConfig
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState
 
@@ -322,14 +322,55 @@ def pod_name_for(session_name: str) -> str:
     return f"fwd-{session_name}"
 
 
-class RunpodBackend:
+class RunpodBackend(Backend):
     """Provisioner over RunPod pods (see :class:`fwd.backends.base.Provisioner`)."""
 
     name: ClassVar[str] = "runpod"
 
     def __init__(self, target: RunpodTargetConfig, config: Config) -> None:
-        self.target = target
-        self.config = config
+        super().__init__(target, config)
+
+    @classmethod
+    def config_parameters(cls) -> tuple[ConfigParameter, ...]:
+        """Describe RunPod setup, with provider enums closed and resource identifiers extensible."""
+        return (
+            ConfigParameter("compute_type", "--compute-type", "compute kind; CPU-only is the default", choices=(ConfigChoice("cpu", "CPU only"), ConfigChoice("gpu", "GPU")), allow_free_text=False),
+            ConfigParameter("cloud_type", "--cloud-type", "RunPod cloud pool", choices=(ConfigChoice("secure"), ConfigChoice("community")), allow_free_text=False),
+            ConfigParameter("gpu", "--gpu", "GPU identifier; used only for GPU compute"),
+            ConfigParameter("image", "--image", "container image", choices=(ConfigChoice(DEFAULT_RUNPOD_CPU_IMAGE, "CPU base"), ConfigChoice(DEFAULT_RUNPOD_GPU_IMAGE, "GPU/PyTorch")), allow_free_text=True),
+            ConfigParameter("volume_gb", "--volume-gb", "persistent volume size in GB; GPU pods only"),
+            ConfigParameter("volume_mount_path", "--volume-mount-path", "persistent volume mount path", prompt=False),
+            ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
+            ConfigParameter("tool_prefix", "--tool-prefix", "path for installed tooling and caches"),
+            ConfigParameter("user", "--user", "remote username"),
+            ConfigParameter("port", "--port", "SSH port", prompt=False),
+            ConfigParameter("key_path", "--key-path", "explicit SSH identity file", prompt=False),
+            ConfigParameter("allow_proxy", "--allow-proxy", "allow ssh.runpod.io fallback when direct SSH is unavailable", prompt=False, choices=(ConfigChoice("true"), ConfigChoice("false")), allow_free_text=False),
+        )
+
+    @classmethod
+    def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
+        """Discover GPU identifiers from runpodctl; failures retain the configured/default value and free text."""
+        if parameter.name != "gpu" or str(values.get("compute_type", "cpu")).lower() != "gpu":
+            return super().config_choices(parameter, values)
+        choices: list[ConfigChoice] = [ConfigChoice("NVIDIA GeForce RTX 4090")]
+        try:
+            process = subprocess.run([RUNPODCTL, "gpu", "list"], capture_output=True, text=True, timeout=20)
+            payload = _first_json(process.stdout) if process.returncode == 0 else None
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, str):
+                        value, label = item, None
+                    elif isinstance(item, dict):
+                        value = str(item.get("id") or item.get("gpuTypeId") or item.get("displayName") or item.get("name") or "")
+                        label = str(item.get("displayName") or item.get("name") or "") or None
+                    else:
+                        continue
+                    if value and value not in {choice.value for choice in choices}:
+                        choices.append(ConfigChoice(value, label))
+        except (OSError, RunpodError, subprocess.SubprocessError, ValueError):
+            pass
+        return ConfigChoices(tuple(choices), allow_free_text=True)
 
     def _run_ctl(self, args: list[str], *, check: bool = True, timeout: float = 120.0) -> str:
         """Run ``runpodctl <args>`` and return stdout.

@@ -13,7 +13,11 @@ from __future__ import annotations
 import importlib
 
 from fwd.backends.base import (
+    Backend,
     CheckResult,
+    ConfigChoice,
+    ConfigChoices,
+    ConfigParameter,
     Provisioner,
     ProvisionError,
     TargetInfo,
@@ -23,7 +27,11 @@ from fwd.config import Config, TargetConfig
 
 __all__ = [
     "BACKENDS",
+    "Backend",
     "CheckResult",
+    "ConfigChoice",
+    "ConfigChoices",
+    "ConfigParameter",
     "ProvisionError",
     "Provisioner",
     "TargetInfo",
@@ -35,7 +43,7 @@ __all__ = [
 
 # Backend name (matches config's ``backend =`` value) -> (module path, class name).
 BACKENDS: dict[str, tuple[str, str]] = {
-    "ssh": ("fwd.backends.ssh_host", "SshHostBackend"),
+    "ssh": ("fwd.backends.ssh", "SshHostBackend"),
     "runpod": ("fwd.backends.runpod", "RunpodBackend"),
     "slurm": ("fwd.backends.slurm", "SlurmBackend"),
 }
@@ -46,7 +54,7 @@ def backend_names() -> list[str]:
     return sorted(BACKENDS)
 
 
-def get_backend(name: str) -> type[Provisioner]:
+def get_backend(name: str) -> type[Backend]:
     """Import and return the backend class for ``name``.
 
     Args:
@@ -62,12 +70,15 @@ def get_backend(name: str) -> type[Provisioner]:
         raise ProvisionError(f"unknown backend {name!r}; expected one of: {', '.join(backend_names())}") from None
     try:
         module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-    except (ImportError, AttributeError) as exc:
+        backend_class = getattr(module, class_name)
+        if not isinstance(backend_class, type) or not issubclass(backend_class, Backend):
+            raise TypeError(f"{backend_class!r} does not inherit Backend")
+        return backend_class
+    except (ImportError, AttributeError, TypeError) as exc:
         raise ProvisionError(f"backend {name!r} failed to load ({module_path}.{class_name}): {exc}") from exc
 
 
-def make_backend(target: TargetConfig, config: Config) -> Provisioner:
+def make_backend(target: TargetConfig, config: Config) -> Backend:
     """Instantiate the backend implied by a target's ``backend`` field.
 
     The one-liner every caller in ``ops`` uses, so nobody repeats the lookup-then-construct dance.
