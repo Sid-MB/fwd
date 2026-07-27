@@ -34,13 +34,13 @@ import typer
 
 from fwd import ui
 from fwd.backends import make_backend
-from fwd.config import GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, TargetConfig, load_config
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, TargetConfig, load_config
 
 # Fields worth prompting for, per backend, in the order they are asked. Everything else keeps its dataclass default.
 # Required fields (no useful default) come first so an impatient user can accept the rest with Enter.
 ESSENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     "ssh": ("host", "user", "port", "key_path", "proxy_jump", "remote_base"),
-    "runpod": ("gpu", "image", "volume_gb", "remote_base", "tool_prefix", "user"),
+    "runpod": ("compute_type", "gpu", "image", "volume_gb", "remote_base", "tool_prefix", "user"),
     "slurm": ("login_host", "user", "remote_base", "alloc", "tool_prefix", "partition", "account", "env_setup"),
 }
 
@@ -64,6 +64,7 @@ FIELD_HELP: dict[str, str] = {
     "proxy_jump": "bastion host to jump through, if any",
     "key_path": "explicit ssh identity file; blank uses your ssh config/agent",
     "volume_gb": "persistent volume size; tooling and your project both live here",
+    "compute_type": "cpu or gpu; CPU-only is the default",
 }
 
 # CLI flag names for every field the interactive wizard can ask for. Kept beside ``ESSENTIAL_FIELDS`` so adding a
@@ -77,6 +78,7 @@ FIELD_FLAGS: dict[str, str] = {
     "proxy_jump": "--proxy-jump",
     "remote_base": "--remote-base",
     "gpu": "--gpu",
+    "compute_type": "--compute-type",
     "image": "--image",
     "volume_gb": "--volume-gb",
     "tool_prefix": "--tool-prefix",
@@ -152,6 +154,11 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
     for field_name in ESSENTIAL_FIELDS.get(backend, ()):
         if field_name not in defaults:
             continue
+        effective_compute_type = str(answers.get("compute_type", provided.get("compute_type") or defaults.get("compute_type", ""))).lower()
+        if backend == "runpod" and field_name == "gpu" and effective_compute_type == "cpu":
+            continue
+        if backend == "runpod" and field_name == "image":
+            defaults["image"] = DEFAULT_RUNPOD_CPU_IMAGE if effective_compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE
         value = provided[field_name] if provided.get(field_name) is not None else _prompt_value(field_name, defaults[field_name], required=field_name in required)
         if value != defaults[field_name]:
             answers[field_name] = value

@@ -146,7 +146,8 @@ def test_implicit_runpod_from_pure_defaults() -> None:
     target, origin = resolved
     assert isinstance(target, RunpodTargetConfig)
     assert target.name == "runpod"
-    assert target.compute_type == "gpu"
+    assert target.compute_type == "cpu"
+    assert target.image == "runpod/base:0.6.2-cpu"
     assert target.remote_base == "/workspace"
     assert origin == ORIGIN_BUILTIN
 

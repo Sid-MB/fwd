@@ -200,12 +200,13 @@ class TestCreatePodArgs:
         for flag in emitted:
             assert flag in help_text, f"{flag} is not a real 'pod create' flag"
 
-    def test_gpu_secure_defaults(self) -> None:
+    def test_cpu_secure_defaults(self) -> None:
         args = create_pod_args(runpod_target(), "fwd-x")
         assert args[:2] == ["pod", "create"]
-        assert args[args.index("--compute-type") + 1] == "GPU"
+        assert args[args.index("--compute-type") + 1] == "CPU"
         assert args[args.index("--cloud-type") + 1] == "SECURE"
-        assert args[args.index("--gpu-id") + 1] == "NVIDIA GeForce RTX 4090"
+        assert "--gpu-id" not in args
+        assert args[args.index("--image") + 1] == "runpod/base:0.6.2-cpu"
         assert args[args.index("--ports") + 1] == "22/tcp"
         assert args[args.index("--name") + 1] == "fwd-x"
 
@@ -225,7 +226,7 @@ class TestCreatePodArgs:
         assert "--gpu-id" not in args
 
     def test_gpu_override_wins_over_config(self) -> None:
-        args = create_pod_args(runpod_target(gpu="NVIDIA RTX A4000"), "fwd-x", gpu="NVIDIA A40")
+        args = create_pod_args(runpod_target(compute_type="gpu", gpu="NVIDIA RTX A4000"), "fwd-x", gpu="NVIDIA A40")
         assert args[args.index("--gpu-id") + 1] == "NVIDIA A40"
 
     def test_volume_flags_always_present(self) -> None:
@@ -275,7 +276,8 @@ class TestRunpodConfigFields:
 
     def test_defaults(self) -> None:
         cfg = parse_target("pod", {"backend": "runpod"})
-        assert (cfg.compute_type, cfg.cloud_type) == ("gpu", "secure")
+        assert (cfg.compute_type, cfg.cloud_type) == ("cpu", "secure")
+        assert cfg.image == "runpod/base:0.6.2-cpu"
 
     def test_parsed_from_config_table(self) -> None:
         cfg = parse_target("pod", {"backend": "runpod", "compute_type": "cpu", "cloud_type": "community"})
@@ -298,7 +300,7 @@ class TestCreateSummary:
     """The progress label must describe only what is actually sent (docs/live-e2e-report.md, R2-4)."""
 
     def test_gpu_pod_names_the_gpu_and_volume(self) -> None:
-        summary = create_summary(runpod_target(gpu="NVIDIA RTX A4000", volume_gb=20))
+        summary = create_summary(runpod_target(compute_type="gpu", gpu="NVIDIA RTX A4000", volume_gb=20))
         assert "NVIDIA RTX A4000" in summary
         assert "20 GB volume" in summary
         assert "secure cloud" in summary
@@ -311,7 +313,7 @@ class TestCreateSummary:
         assert "container disk only" in summary
 
     def test_gpu_override_is_reflected(self) -> None:
-        assert "NVIDIA A40" in create_summary(runpod_target(gpu="NVIDIA RTX A4000"), "NVIDIA A40")
+        assert "NVIDIA A40" in create_summary(runpod_target(compute_type="gpu", gpu="NVIDIA RTX A4000"), "NVIDIA A40")
 
     def test_community_cloud_is_reflected(self) -> None:
         assert "community cloud" in create_summary(runpod_target(cloud_type="community"))

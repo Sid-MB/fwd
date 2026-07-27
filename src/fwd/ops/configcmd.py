@@ -217,6 +217,7 @@ def _render_example_target(backend: str) -> list[str]:
     name = EXAMPLE_TARGET_NAMES[backend]
     required = REQUIRED_PLACEHOLDERS[backend]
     docs = {**FIELD_DOCS, **TARGET_FIELD_DOCS.get(backend, {})}
+    instance = cls(name=name)
     lines = [f"[targets.{name}]"]
     for f in fields(cls):
         if f.name == "name":
@@ -226,8 +227,12 @@ def _render_example_target(backend: str) -> list[str]:
             lines.append(f'backend = "{backend}"  # {comment}')
         elif f.name in required:
             lines.append(f"{f.name} = {_toml_scalar(required[f.name])}  # {comment}")
+        elif backend == "runpod" and f.name == "gpu" and instance.compute_type == "cpu":
+            lines.append(f"# gpu = {_toml_scalar(instance.gpu)}  # optional for compute_type = \"gpu\" — {comment}")
         else:
-            value = f.default_factory() if f.default_factory is not MISSING else f.default
+            # Read the constructed instance rather than the raw dataclass field so normalized/dynamic defaults from
+            # __post_init__ (notably RunPod's CPU-vs-GPU image) remain discoverable from the generated reference.
+            value = getattr(instance, f.name)
             if value is None or value == "":
                 # No emittable default: TOML has no null, and "" would read as a setting rather than an absence. Show a
                 # plausible value commented out so the field is discoverable without being silently applied.
@@ -266,7 +271,7 @@ def render_example(which: str = "all") -> str:
         "# Commented-out lines are optional fields shown with a plausible value, not defaults being applied.",
         "# Inspect what your own files actually resolve to with 'fwd config'.",
         "#",
-        "# You may not need any of this: 'fwd up --target runpod' provisions a GPU pod from built-in defaults, and",
+        "# You may not need any of this: 'fwd up --target runpod' provisions a CPU pod from built-in defaults, and",
         "# 'fwd up --target user@host' (or any Host alias in ~/.ssh/config) works with no config file at all.",
         "",
         f'default_target = "{EXAMPLE_TARGET_NAMES[backends[0]]}"  # used when --target is omitted',
@@ -301,6 +306,7 @@ def _section_schema(cls: type, docs: dict[str, str], *, backend: str | None = No
     """Build one strict object schema from a config dataclass, including its real defaults and field descriptions."""
     hints = get_type_hints(cls)
     backend_docs = TARGET_FIELD_DOCS.get(backend or "", {})
+    instance = cls(name=backend) if backend is not None else cls()
     properties: dict[str, Any] = {}
     for field_info in fields(cls):
         if field_info.name == "name":
@@ -309,10 +315,9 @@ def _section_schema(cls: type, docs: dict[str, str], *, backend: str | None = No
         field_schema["description"] = backend_docs.get(field_info.name, docs.get(field_info.name, f"See {cls.__name__}.{field_info.name}."))
         if field_info.name == "backend" and backend is not None:
             field_schema = {"const": backend, **field_schema}
-        if field_info.default is not MISSING and field_info.default is not None:
-            field_schema["default"] = field_info.default
-        elif field_info.default_factory is not MISSING:
-            field_schema["default"] = field_info.default_factory()
+        effective_default = getattr(instance, field_info.name)
+        if effective_default is not None:
+            field_schema["default"] = effective_default
         properties[field_info.name] = field_schema
     schema: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
     if backend is not None:

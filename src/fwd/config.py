@@ -64,7 +64,8 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
     ".DS_Store",
 )
 
-DEFAULT_RUNPOD_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+DEFAULT_RUNPOD_CPU_IMAGE = "runpod/base:0.6.2-cpu"
+DEFAULT_RUNPOD_GPU_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 
 # Accepted values for RunpodTargetConfig.compute_type / .cloud_type, mirroring `runpodctl pod create --help`
 # (`--compute-type GPU|CPU`, `--cloud-type SECURE|COMMUNITY`). Stored lower-case; the backend upper-cases for the CLI.
@@ -114,10 +115,10 @@ class RunpodTargetConfig:
 
     name: str
     backend: Literal["runpod"] = "runpod"
-    compute_type: str = "gpu"
+    compute_type: str = "cpu"
     cloud_type: str = "secure"
     gpu: str = "NVIDIA GeForce RTX 4090"
-    image: str = DEFAULT_RUNPOD_IMAGE
+    image: str = ""
     volume_gb: int = 50
     volume_mount_path: str = "/workspace"
     remote_base: str = "/workspace"
@@ -140,6 +141,8 @@ class RunpodTargetConfig:
             raise ConfigError(f"target {self.name!r}: compute_type must be one of {', '.join(sorted(RUNPOD_COMPUTE_TYPES))} (got {self.compute_type!r})")
         if self.cloud_type not in RUNPOD_CLOUD_TYPES:
             raise ConfigError(f"target {self.name!r}: cloud_type must be one of {', '.join(sorted(RUNPOD_CLOUD_TYPES))} (got {self.cloud_type!r})")
+        if not self.image:
+            self.image = DEFAULT_RUNPOD_CPU_IMAGE if self.compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE
 
 
 @dataclass(slots=True)
@@ -223,7 +226,7 @@ def implicit_target(name: str, *, ssh_config: Path | None = None) -> tuple[Targe
     anything:
 
     - ``runpod`` — every field of :class:`RunpodTargetConfig` already has a working default, so the pure-dataclass
-      instance is a valid GPU pod. The remaining precondition (is ``runpodctl`` installed and authenticated?) is
+      instance is a valid CPU-only pod. The remaining precondition (is ``runpodctl`` installed and authenticated?) is
       deliberately *not* checked here; it belongs to the backend and to ``fwd doctor``, which report it with a fix.
     - ``user@host`` — unambiguous, so it becomes an ssh target directly.
     - an ssh config ``Host`` alias — the user has already written the connection details down once, in the file whose
@@ -336,7 +339,7 @@ class Config:
             raise ConfigError(
                 "No target is configured or selected.\n\n"
                 "Launch now without a config file:\n"
-                "  fwd up --target runpod       Provision a GPU pod\n"
+                "  fwd up --target runpod       Provision a CPU pod\n"
                 "  fwd up --target user@host    Use an existing SSH machine\n\n"
                 "To save a default, run 'fwd setup'. To configure manually, run 'fwd config --example' and add "
                 f"[targets.<name>] to {GLOBAL_CONFIG_PATH}."

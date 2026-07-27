@@ -1,9 +1,9 @@
 # fwd
 
-**Forward your Claude Code session to a remote machine.**
+**Forward your coding session to a remote machine.**
 
-You are working with Claude Code on your laptop and hit a wall: the model needs a GPU, or 200 GB of RAM, or your
-cluster's data. `fwd` moves the whole working session somewhere bigger. It provisions (or reuses) a remote target,
+You are working with a coding agent on your laptop and want another machine: a clean CPU VM, a GPU, 200 GB of RAM, or
+access to your cluster's data. `fwd` moves the whole working session there. It provisions (or reuses) a remote target,
 mirrors your working directory up, installs the toolchain, carries your Claude conversation across, and drops you into
 a persistent remote `tmux` session already running `claude`. Close the laptop, open it tomorrow, type `fwd` in the same
 directory, and you are back in the same conversation on the same machine.
@@ -205,8 +205,8 @@ override a single field of a globally-declared target without restating the rest
 You may not need a config file at all. A `--target` that is not in your config is inferred when it is unambiguous:
 
 ```sh
-fwd up --target runpod              # provisions a GPU pod using the built-in RunPod defaults
-fwd up --target sid@gpu.example.com # a machine you already have
+fwd up --target runpod              # provisions a CPU-only pod using the built-in RunPod defaults
+fwd up --target sid@vm.example.com  # a machine you already have
 fwd up --target my-box              # any Host alias in ~/.ssh/config
 ```
 
@@ -229,15 +229,14 @@ proxy_jump = "sid@bastion.example"   # optional
 remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 ```
 
-### RunPod — provision a GPU per session
+### RunPod — provision CPU or GPU compute per session
 
 ```toml
 [targets.pod]
 backend = "runpod"
-compute_type = "gpu"                 # gpu | cpu
+compute_type = "cpu"                 # cpu (default) | gpu
 cloud_type = "secure"                # secure | community (community is cheaper)
-gpu = "NVIDIA RTX A4000"
-image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+image = "runpod/base:0.6.2-cpu"
 volume_gb = 50
 volume_mount_path = "/workspace"
 remote_base = "/workspace"           # MUST be on the volume
@@ -256,8 +255,9 @@ Needs `runpodctl` installed and configured (>= 2.6.0). Three things worth knowin
 - **`cloud_type = "community"` is the cheap option and still works fully.** Community-cloud pods were verified to
   expose a direct `ip:port` for 22/tcp with no extra flags, so rsync stays available.
 
-For a throwaway session where nothing needs to survive a stop, `compute_type = "cpu"` with
-`cloud_type = "secure"` is the cheapest thing that boots.
+CPU-only is the default, including for zero-config `fwd up --target runpod` and `fwd setup`. To request a GPU target,
+set `compute_type = "gpu"`, choose a `gpu`, and use an appropriate CUDA image such as
+`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`.
 
 Pods are reused by name across launches, restarted if stopped, and their IP/port are re-resolved on every attach
 (RunPod churns both across restarts). If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh

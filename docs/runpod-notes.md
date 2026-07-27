@@ -103,7 +103,7 @@ Added after the full-stack live e2e (`docs/live-e2e-report.md`) found that neith
 and community-cloud pods unreachable from the CLI and left a **secure-cloud GPU as the cheapest launchable target** —
 the most expensive of the three options.
 
-`RunpodTargetConfig` now carries `compute_type` (`gpu`|`cpu`, default `gpu`) and `cloud_type`
+`RunpodTargetConfig` carries `compute_type` (`gpu`|`cpu`, default `cpu`) and `cloud_type`
 (`secure`|`community`, default `secure`). Both are normalized to lower case and validated in `__post_init__`, so a
 typo raises `ConfigError` at config-load time rather than surfacing as an opaque `runpodctl` scheduling failure two
 minutes into a launch. The backend upper-cases them for the CLI, which documents `GPU|CPU` and `SECURE|COMMUNITY`.

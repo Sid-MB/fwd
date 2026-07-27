@@ -35,8 +35,8 @@ Config: `~/.fwd/config.toml` is global; a project-local `.fwd/config.toml` **dee
 **You often need no config at all.** A `--target` absent from config is inferred when unambiguous, so these work on a clean machine:
 
 ```sh
-fwd up --target runpod                  # GPU pod from built-in RunPod defaults
-fwd up --target sid@gpu.example.com     # a host the user already has
+fwd up --target runpod                  # CPU-only pod from built-in RunPod defaults
+fwd up --target sid@vm.example.com      # a host the user already has
 fwd up --target my-box                  # any Host alias in ~/.ssh/config
 ```
 
@@ -53,12 +53,11 @@ host = "gpu.example.com"
 user = "sid"
 remote_base = "~/fwd"
 
-[targets.pod]                 # runpod — provision a GPU per session
+[targets.pod]                 # runpod — provision CPU or GPU compute per session
 backend = "runpod"
-compute_type = "gpu"          # gpu | cpu; cpu pods get NO persistent volume
-cloud_type = "community"      # community is cheaper and fully works
-gpu = "NVIDIA RTX A4000"
-image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+compute_type = "cpu"          # CPU-only is the default; CPU pods get NO persistent volume
+cloud_type = "secure"
+image = "runpod/base:0.6.2-cpu"
 volume_gb = 50
 remote_base = "/workspace"    # MUST be on the volume; container disk is wiped on stop
 tool_prefix = "/workspace/.fwd-tools"
@@ -72,6 +71,8 @@ alloc = "--time=04:00:00 --cpus-per-task=8 --mem=32G --gres=gpu:a100:1"
 partition = "gpu"
 env_setup = ["module purge", "module load cuda/12.4"]
 ```
+
+For GPU compute, explicitly set `compute_type = "gpu"`, `gpu = "..."`, and a CUDA-capable image.
 
 ## Using fwd from inside a Claude session
 
