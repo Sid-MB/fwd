@@ -5,7 +5,7 @@ description: Forward the current Claude Code session to a remote machine with fw
 
 # fwd — forward this Claude session to a remote machine
 
-`fwd` is a CLI that relocates the *current working session* to a bigger machine. It provisions (or reuses) a remote target over ssh, RunPod, or Slurm, rsyncs the working directory up, installs the remote toolchain (uv, node, bun, claude, tmux), carries the local Claude transcript across so the remote `claude` resumes the same conversation, and leaves it running in a persistent remote tmux. Reach for it when the work needs a GPU, far more RAM, or data that only lives on a cluster — and when the user wants the *conversation* to come along, not just the files. It is not a file-sync tool or a general remote-shell wrapper; if the user only needs to copy files, use rsync/scp directly.
+`fwd` is a CLI that relocates work to another machine: a clean CPU VM, a GPU, a high-memory host, or a cluster with local data. It provisions (or reuses) an SSH, RunPod, or Slurm target, rsyncs the working directory, installs or verifies uv, Bun, tmux, and the requested agent, and leaves a shell, command, Claude, or Codex running in persistent remote tmux. Claude can resume the real transferred transcript; Codex receives portable settings and skills but not its transcript or authentication. Node/npm is used when available but is not required. Use `fwd send` when the user or agent needs a one-shot remote command and its response.
 
 ## Installation
 
@@ -30,6 +30,8 @@ fwd doctor --format json    # checks prerequisites/targets; structured stdout an
 
 Agents may run `fwd setup` non-interactively by supplying the fields shown by `fwd setup --help`, for example `fwd setup --backend ssh --host my-box --target-name work`. Missing required fields fail with the exact flags needed and no prompt. `--interactive` forces the wizard and should be left to the user. `fwd doctor` is safe and non-interactive, so run it first whenever anything misbehaves.
 
+Interactive setup keeps uncommon backend fields behind one reusable `Set advanced options? (Defaults: …)` gate. For RunPod, cloud type, remote paths, and user are advanced; GPU volume size is advanced and appears only after selecting GPU compute. Every field remains available as a non-interactive flag and in `fwd config --schema`.
+
 Config: `~/.fwd/config.toml` is global; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can override one field of a global target (commonly the Slurm `alloc`) without restating the rest. Writing config files directly is fine and often faster than the wizard.
 
 **Do not guess config fields.** Run `fwd config --example <ssh|runpod|slurm|all>` to see every available field with its real default and a comment — the output is generated from fwd's own schema, so it matches the installed version. Run `fwd config --schema` for the machine-readable JSON Schema, and `fwd config` to inspect the effective merged config, annotated with which file set each value, before editing anything. The longer configuration guide is https://github.com/Sid-MB/fwd#configuration.
@@ -43,8 +45,11 @@ fwd up --target my-box                  # any Host alias in ~/.ssh/config
 ```
 
 For a human terminal, `fwd <configured-target>` launches that target's configured default command and attaches.
-`fwd <backend>` (for example `fwd ssh`) selects the most recently used configured target of that backend. These
-attach-taking shorthands intentionally fail in agent/non-interactive environments; use `fwd up --target NAME` there.
+`fwd <backend>` selects the most recently used configured target of that backend, or offers to configure that backend
+when none exists. Examples include `fwd runpod`, `fwd ssh`, and `fwd work`. Exact target names win over backend
+interpretation. Unknown names never create config, and all attach-taking shorthands intentionally fail in
+agent/non-interactive environments; use `fwd up --target NAME` there. If several targets share a backend without any
+usage history, fwd reports the ambiguity instead of choosing arbitrarily.
 
 Configured targets always win over inferred ones. Slurm is deliberately not inferable (site-specific login host, scratch path and allocation) — for a cluster, tell the user to run `fwd setup`, or write a config using `fwd config --example slurm`.
 
@@ -76,8 +81,7 @@ backend = "runpod"
 compute_type = "cpu"          # CPU-only is the default; CPU pods get NO persistent volume
 cloud_type = "secure"
 image = "runpod/base:0.6.2-cpu"
-volume_gb = 50
-remote_base = "/workspace"    # MUST be on the volume; container disk is wiped on stop
+remote_base = "/workspace"    # GPU: volume-backed; CPU: fwd relocates to ephemeral /root/fwd
 tool_prefix = "/workspace/.fwd-tools"
 
 [targets.hpc]                 # slurm — a university/lab cluster
@@ -90,7 +94,9 @@ partition = "gpu"
 env_setup = ["module purge", "module load cuda/12.4"]
 ```
 
-For GPU compute, explicitly set `compute_type = "gpu"`, `gpu = "..."`, and a CUDA-capable image.
+For GPU compute, explicitly set `compute_type = "gpu"`, `gpu = "..."`, `volume_gb = 50`, and a CUDA-capable image.
+CPU RunPod work is ephemeral: stopping the pod wipes the relocated project and tools. Use a GPU pod when work must
+survive `fwd stop`.
 
 ## Using fwd from inside a Claude session
 
@@ -134,14 +140,14 @@ fwd ls --format json          # sessions with live per-backend status — stable
 fwd push                      # re-sync local changes up (mirrors: deletes remote-only files)
 fwd pull                      # bring the whole remote dir down (additive; never deletes local files)
 fwd pull outputs/ logs/       # path-scoped pull, the usual way to fetch results
-fwd stop                      # kill the remote tmux and suspend the target; synced data survives
+fwd stop                      # kill tmux and suspend compute; CPU RunPod container-disk data is wiped
 fwd rm --force                # destroy the target and forget the session; irreversible
 ```
 
 - `fwd rm` prompts and its prompt defaults to **no**, so a non-interactive `fwd rm` does nothing — pass `--force` when the user has asked for destruction.
 - Read commands use Markdown automatically outside a human terminal. Prefer explicit `--format json` with `fwd ls`, `fwd doctor`, and `fwd info` when consuming their output programmatically; progress and errors stay on stderr.
 - `fwd attach` refuses to restart **stopped, billable** compute without a terminal. `--restart` (`-y`) authorizes it explicitly. Never pass `--restart` on your own initiative; restarting a pod resumes billing.
-- On RunPod, a stop wipes everything outside the volume. On Slurm, when an allocation ends `fwd attach` offers a new allocation in place without re-syncing.
+- On RunPod, a stop wipes everything outside a persistent GPU volume; CPU pods have no volume, so their remote work is wiped. On Slurm, when an allocation ends `fwd attach` offers a new allocation in place without re-syncing.
 
 ### What you must hand back to the user
 

@@ -2,11 +2,11 @@
 
 **Forward your coding session to a remote machine.**
 
-You are working with a coding agent on your laptop and want another machine: a clean CPU VM, a GPU, 200 GB of RAM, or
-access to your cluster's data. `fwd` moves the whole working session there. It provisions (or reuses) a remote target,
-mirrors your working directory up, installs the toolchain, carries your Claude conversation across, and drops you into
-a persistent remote `tmux` session already running `claude`. Close the laptop, open it tomorrow, type `fwd` in the same
-directory, and you are back in the same conversation on the same machine.
+You are working on your laptop and want another machine: a clean CPU VM for development, a GPU, 200 GB of RAM, or
+access to your cluster's data. `fwd` moves the working environment there. It provisions (or reuses) a remote target,
+mirrors your working directory, installs the requested toolchain, and starts a persistent command in remote `tmux`.
+It can carry a Claude transcript across, sync Codex settings and skills, start an ordinary shell or command, and run
+one-shot commands whose responses remain local. Close the laptop, return tomorrow, and the remote session is waiting.
 
 Existing tools either remote-*view* a session that stays pinned to your laptop, or provision machines with no session
 story at all. `fwd` does the handoff itself.
@@ -15,8 +15,9 @@ story at all. `fwd` does the handoff itself.
 laptop                                    remote (ssh / RunPod / Slurm)
 ──────                                    ────────────────────────────
 your project dir  ──── rsync ──────────▶  ~/fwd/project
-~/.claude/…       ──── transcript ─────▶  ~/.claude/projects/<re-encoded>/
-                                          tmux fwd-<name> → claude --resume <id>
+Claude transcript ──── optional ───────▶  ~/.claude/projects/<re-encoded>/
+Codex settings    ──── optional ───────▶  ~/.codex/ + ~/.agents/skills/
+                                          tmux fwd-<name> → shell / command / agent
     fwd  ◀────────── ssh -t attach ─────  (survives disconnects)
 ```
 
@@ -32,8 +33,8 @@ Or try it without installing:
 uvx --from git+https://github.com/Sid-MB/fwd fwd --help
 ```
 
-Requires Python 3.12+, plus `ssh` and `rsync` locally. Everything the *remote* needs (uv, bun, node, claude, tmux) is
-installed by `fwd` on first launch.
+Requires Python 3.12+, plus `ssh` and `rsync` locally. On first launch, fwd installs or verifies remote `uv`, Bun, tmux,
+and the requested coding agent. Node/npm is used when present but is not required; Codex can be installed through Bun.
 
 ## Install as a Claude Code skill
 
@@ -50,19 +51,20 @@ The skill teaches Claude the safe subset of the CLI — it uses the non-attachin
 
 ```sh
 cd ~/code/my-project
-fwd setup                 # prompts in a terminal; flag-only for agents and scripts
-fwd                       # launch, sync, bootstrap, and attach
-fwd work                  # launch configured target "work" and attach
-fwd ssh                   # use the most recently used configured SSH target
+fwd runpod                # configure RunPod if needed, launch its saved default, and attach
+fwd ssh                   # most recently used SSH target, or offer SSH setup when none exists
+fwd work                  # configured target named "work": launch its saved default and attach
+fwd                       # current-directory session: attach, launch its saved default, or start first-time setup
 ```
 
-That is the whole loop. Inside the session you are in a normal `claude` REPL on the remote machine. Detach with
-`ctrl-b d` (tmux) — the session keeps running. Type `fwd` again from the same directory to reattach.
+These shorthand forms are for a human terminal: they may prompt, and they attach by replacing the local process with
+`ssh -t`. Inside the session, detach with `ctrl-b d` (tmux); the command keeps running. Type `fwd` again from the same
+directory to reattach. Agents and scripts should use the explicit, non-attaching `fwd up --target NAME` form instead.
 
 ```sh
 fwd ls                    # what is running, and what it is costing you
 fwd pull outputs/         # bring results back down
-fwd stop                  # pause the machine, keep the data
+fwd stop                  # suspend compute; CPU RunPod container-disk data is wiped
 fwd rm                    # destroy it
 ```
 
@@ -76,6 +78,10 @@ of opening a prompt. Run `fwd setup --help` for every field, or pass `--interact
 fwd setup --backend ssh --host my-box --target-name work
 fwd setup --backend slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
 ```
+
+Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
+`Set advanced options? (Defaults: …)` gate. RunPod's gate includes cloud type, remote paths, and user; GPU targets also
+include volume size, while CPU targets omit it because RunPod CPU pods do not have persistent volumes.
 
 ## Commands
 
@@ -130,14 +136,15 @@ never prompt. The explicit `fwd --install-completion` command remains available 
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |
-| `fwd TARGET` / `fwd BACKEND` | Launch that target's configured default and attach; a backend selects its most recently used configured target |
+| `fwd TARGET` | Launch that configured target's saved default command and attach |
+| `fwd BACKEND` | Use the most recently used configured target of that backend and attach; offer setup interactively if none exists |
 | `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching |
 | `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first |
 | `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status |
 | `fwd ls` | List sessions with live status queried from each backend |
 | `fwd push` | Re-sync local changes up |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) |
-| `fwd stop [name]` | Kill the remote tmux and suspend the target; data is preserved |
+| `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive |
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) |
 | `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag |
 | `fwd doctor` | Check local prerequisites and target reachability |
@@ -193,6 +200,9 @@ it again and it picks up where it left off rather than starting over or duplicat
 The startup forms are:
 
 ```sh
+fwd runpod                         # configure/select RunPod, run its saved default, and attach
+fwd ssh                            # select the most recently used SSH target and attach
+fwd work                           # select the configured target named "work" and attach
 fwd up                              # provision, sync, bootstrap, start a persistent remote shell; stay local
 fwd up claude                       # transfer this conversation and auto-attach in a human terminal
 fwd up codex                        # sync Codex settings/skills and auto-attach in a human terminal
@@ -201,8 +211,15 @@ fwd up -a python train.py           # start an arbitrary command and attach
 fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
 ```
 
-Bare `fwd` retains the original ergonomic workflow: on first launch it is equivalent to `fwd up --attach claude`;
-later it attaches to the existing session.
+Bare `fwd` retains the current-directory workflow: it attaches to that directory's existing session; otherwise it
+launches the layered `default_command` and attaches. The built-in default is Claude, but `fwd default` can change it.
+
+`fwd TARGET` and `fwd BACKEND` are human-terminal shortcuts, not aliases for `fwd up --target`. They run the selected
+target's layered `default_command` and attach. Exact configured target names win; otherwise a recognized backend name
+such as `ssh`, `runpod`, or `slurm` selects its most recently used configured target. When that backend has no target,
+an interactive invocation offers backend-specific setup. Unknown names never create config, and non-interactive
+invocations never prompt or provision through these shortcuts; agents should use `fwd up --target NAME`. If several
+targets share a backend and none has usage history yet, fwd reports the ambiguity and asks for an exact target name.
 
 `fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
 profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.
@@ -293,14 +310,22 @@ default_command = ["python", "-m", "agent"]
 unchanged. Existing values require confirmation in an interactive terminal; scripts and agents must pass `--force`.
 Removing an override reveals the next value in the precedence chain rather than copying that value into the file.
 
-### Zero-config quickstart
+### Target shortcuts and zero-config launches
 
-You may not need a config file at all. A `--target` that is not in your config is inferred when it is unambiguous:
+For a human who wants a saved target and an attached coding environment, use the backend shortcut:
 
 ```sh
-fwd up --target runpod              # provisions a CPU-only pod using the built-in RunPod defaults
+fwd runpod                          # offer CPU-first RunPod setup if needed, then launch the saved default and attach
+fwd ssh                             # use recent SSH config, or offer SSH setup
+fwd pod                             # exact configured target name; run its saved default and attach
+```
+
+For a background launch without writing config, pass an inferable target explicitly:
+
+```sh
+fwd up --target runpod              # unsaved CPU pod using built-in defaults; start a remote shell and stay local
 fwd up --target sid@vm.example.com  # a machine you already have
-fwd up --target my-box              # any Host alias in ~/.ssh/config
+fwd up --target my-box              # any Host alias in your ~/.ssh/config
 ```
 
 Configured targets always win — declaring `[targets.runpod]` overrides the built-in rather than competing with it.
@@ -331,27 +356,34 @@ backend = "runpod"
 compute_type = "cpu"                 # cpu (default) | gpu
 cloud_type = "secure"                # secure | community (community is cheaper)
 image = "runpod/base:0.6.2-cpu"
-volume_gb = 50
-volume_mount_path = "/workspace"
-remote_base = "/workspace"           # MUST be on the volume
-tool_prefix = "/workspace/.fwd-tools"
+remote_base = "/workspace"           # GPU: persistent volume; CPU: fwd relocates to ephemeral container disk
+tool_prefix = "/workspace/.fwd-tools" # same relocation rule as remote_base
 allow_proxy = true                   # fall back to ssh.runpod.io if no direct IP
+
+# GPU targets may additionally set:
+# compute_type = "gpu"
+# gpu = "NVIDIA GeForce RTX 4090"
+# image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+# volume_gb = 50
+# volume_mount_path = "/workspace"
 ```
 
 Needs `runpodctl` installed and configured (>= 2.6.0). Three things worth knowing, all learned the hard way
 (`docs/runpod-notes.md`):
 
-- **The container disk is wiped on stop; only the volume survives.** That is why `remote_base` and `tool_prefix` both
-  live under `/workspace` — otherwise every restart re-downloads the entire toolchain.
+- **The container disk is wiped on stop; only a GPU pod's persistent volume survives.** On a GPU target,
+  `remote_base` and `tool_prefix` therefore belong under `volume_mount_path`.
 - **CPU-only pods silently get no persistent volume.** `--volume-in-gb` is folded into the container disk and
   `/workspace` never exists. `fwd` detects this, relocates the project to `/root/fwd/...` on the container disk, and
-  warns loudly that everything there is wiped on stop. Use a GPU pod if you want persistence.
+  warns loudly that everything there is wiped on stop. `volume_gb` is irrelevant and omitted from CPU setup. Use a
+  GPU pod if work must survive `fwd stop`.
 - **`cloud_type = "community"` is the cheap option and still works fully.** Community-cloud pods were verified to
   expose a direct `ip:port` for 22/tcp with no extra flags, so rsync stays available.
 
 CPU-only is the default, including for zero-config `fwd up --target runpod` and `fwd setup`. To request a GPU target,
-set `compute_type = "gpu"`, choose a `gpu`, and use an appropriate CUDA image such as
-`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`.
+set `compute_type = "gpu"`, choose a `gpu`, set `volume_gb`, and use an appropriate CUDA image such as
+`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`. The interactive wizard keeps cloud, volume, remote paths,
+and user behind its advanced-options gate.
 
 Pods are reused by name across launches, restarted if stopped, and their IP/port are re-resolved on every attach
 (RunPod churns both across restarts). If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
