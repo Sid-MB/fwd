@@ -100,6 +100,7 @@ def main(
 
         completion_setup.offer_once()
         skill_setup.offer_once()
+        skill_setup.update_if_needed()
     if ctx.invoked_subcommand is not None:
         return
     from fwd.ops import attach as attach_ops

@@ -26,9 +26,10 @@ packages = ["src/fwd"]
 # bootstrap.sh must land inside the installed package so remote.BOOTSTRAP_PATH can resolve it via importlib.resources.
 [tool.hatch.build.targets.wheel.force-include]
 "src/fwd/scripts/bootstrap.sh" = "fwd/scripts/bootstrap.sh"
+"SKILL.md" = "fwd/SKILL.md"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/fwd", "tests", "README.md"]
+include = ["src/fwd", "tests", "README.md", "/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

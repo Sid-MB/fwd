@@ -44,7 +44,7 @@ and the requested coding agent. Node/npm is used when present but is not require
 npx skills add Sid-MB/fwd
 ```
 
-The first human terminal invocation also offers to run this command after the shell-completion prompt. Accepting keeps `npx` attached to your terminal for any choices made by the skills installer; declining is remembered independently in `~/.fwd/skill-prompted`. Agent, redirected, help/version, and shell-completion invocations never show onboarding prompts.
+The first human terminal invocation also offers to run this command after the shell-completion prompt. Accepting keeps `npx` attached to your terminal for any choices made by the skills installer; declining is remembered independently in `~/.fwd/skill-prompted`. After an accepted install, the first interactive invocation of each updated fwd build automatically runs `npx --yes skills update fwd -y` and reports the refresh without asking again. Agent, redirected, help/version, and shell-completion invocations never show onboarding prompts.
 
 The skill teaches Claude the safe subset of the CLI — it uses the non-attaching `fwd up claude` workflow and hands
 `fwd`/`fwd attach` back to you only when an interactive terminal is needed.
@@ -140,7 +140,9 @@ installer. Accepting may update the Bash/Zsh startup file; declining is remember
 `~/.fwd/completion-prompted`. Agents, redirected commands, help/version output, and shell-completion subprocesses
 never prompt. It then independently offers to install the bundled coding-agent skill with
 `npx skills add Sid-MB/fwd`, remembering that decision in `~/.fwd/skill-prompted`. The explicit
-`fwd --install-completion` and `npx skills add Sid-MB/fwd` commands remain available after a decline.
+`fwd --install-completion` and `npx skills add Sid-MB/fwd` commands remain available after a decline. Accepted skill
+installs are automatically refreshed once per updated fwd build with the non-interactive
+`npx --yes skills update fwd -y` command.
 
 | Command | What it does | Example |
 | --- | --- | --- |

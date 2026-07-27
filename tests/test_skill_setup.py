@@ -14,6 +14,7 @@ def _marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the persistent onboarding marker away from the real user home."""
     marker = tmp_path / ".fwd" / "skill-prompted"
     monkeypatch.setattr(skill_setup, "SKILL_PROMPT_PATH", marker)
+    monkeypatch.setattr(skill_setup, "_current_revision", lambda: "revision-2")
     return marker
 
 
@@ -27,7 +28,7 @@ def test_offer_installs_through_npx_and_records_success(tmp_path: Path, monkeypa
     skill_setup.offer_once()
 
     assert calls == [(["/usr/local/bin/npx", "skills", "add", "Sid-MB/fwd"], False)]
-    assert marker.read_text(encoding="utf-8") == "installed\n"
+    assert marker.read_text(encoding="utf-8") == "installed:revision-2\n"
 
 
 def test_offer_records_decline_and_never_prompts_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,8 +64,50 @@ def test_root_callback_offers_completion_then_skill_only_for_normal_interactive_
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
     monkeypatch.setattr(completion_setup, "offer_once", lambda: offered.append("completion"))
     monkeypatch.setattr(skill_setup, "offer_once", lambda: offered.append("skill"))
+    monkeypatch.setattr(skill_setup, "update_if_needed", lambda: offered.append("update"))
     cli.main(SimpleNamespace(resilient_parsing=False, invoked_subcommand="info"))
     cli.main(SimpleNamespace(resilient_parsing=True, invoked_subcommand="info"))
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: False)
     cli.main(SimpleNamespace(resilient_parsing=False, invoked_subcommand="info"))
-    assert offered == ["completion", "skill"]
+    assert offered == ["completion", "skill", "update"]
+
+
+def test_update_refreshes_an_accepted_skill_once_per_cli_revision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    marker = _marker(tmp_path, monkeypatch)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("installed:revision-1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(skill_setup.shutil, "which", lambda executable: "/usr/bin/npx")
+    monkeypatch.setattr(skill_setup.subprocess, "run", lambda command, check: (calls.append(command) or SimpleNamespace(returncode=0)))
+
+    skill_setup.update_if_needed()
+    skill_setup.update_if_needed()
+
+    assert calls == [["/usr/bin/npx", "--yes", "skills", "update", "fwd", "-y"]]
+    assert marker.read_text(encoding="utf-8") == "installed:revision-2\n"
+
+
+@pytest.mark.parametrize("state", ["declined", "installed:revision-2"])
+def test_update_skips_declined_or_current_skill(state: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    marker = _marker(tmp_path, monkeypatch)
+    marker.parent.mkdir(parents=True)
+    marker.write_text(state + "\n", encoding="utf-8")
+    monkeypatch.setattr(skill_setup.subprocess, "run", lambda *args, **kwargs: pytest.fail("current or declined skill must not update"))
+
+    skill_setup.update_if_needed()
+
+
+@pytest.mark.parametrize("failure", ["missing", "exit", "os-error"])
+def test_failed_update_keeps_old_revision_for_retry(failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    marker = _marker(tmp_path, monkeypatch)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("installed:revision-1\n", encoding="utf-8")
+    monkeypatch.setattr(skill_setup.shutil, "which", lambda executable: None if failure == "missing" else "/usr/bin/npx")
+    if failure == "exit":
+        monkeypatch.setattr(skill_setup.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=9))
+    elif failure == "os-error":
+        monkeypatch.setattr(skill_setup.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+
+    skill_setup.update_if_needed()
+
+    assert marker.read_text(encoding="utf-8") == "installed:revision-1\n"

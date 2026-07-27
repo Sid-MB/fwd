@@ -7,13 +7,32 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from hashlib import sha256
 from pathlib import Path
 
 from fwd import ui
 
 SKILL_SOURCE = "Sid-MB/fwd"
-SKILL_COMMAND = ("skills", "add", SKILL_SOURCE)
+SKILL_NAME = "fwd"
+SKILL_ADD_COMMAND = ("skills", "add", SKILL_SOURCE)
+SKILL_UPDATE_COMMAND = ("--yes", "skills", "update", SKILL_NAME, "-y")
 SKILL_PROMPT_PATH = Path.home() / ".fwd" / "skill-prompted"
+
+
+def _current_revision() -> str:
+    """Fingerprint the installed CLI and bundled skill so Git installs are detected even before a package version bump."""
+    package_dir = Path(__file__).resolve().parent
+    digest = sha256()
+    for path in sorted(package_dir.rglob("*.py")):
+        digest.update(path.relative_to(package_dir).as_posix().encode())
+        digest.update(path.read_bytes())
+    bundled_skill = package_dir / "SKILL.md"
+    editable_skill = package_dir.parents[1] / "SKILL.md"
+    skill_path = bundled_skill if bundled_skill.is_file() else editable_skill
+    if skill_path.is_file():
+        digest.update(b"SKILL.md")
+        digest.update(skill_path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def _record(outcome: str) -> None:
@@ -29,7 +48,7 @@ def offer_once() -> None:
     """Offer to run ``npx skills add Sid-MB/fwd`` once, retaining inherited stdio for the installer's own prompts."""
     if SKILL_PROMPT_PATH.exists():
         return
-    command_text = f"npx {' '.join(SKILL_COMMAND)}"
+    command_text = f"npx {' '.join(SKILL_ADD_COMMAND)}"
     if not ui.confirm(f"Install the fwd skill for your coding agents with '{command_text}'?", default=True):
         _record("declined")
         return
@@ -38,12 +57,40 @@ def offer_once() -> None:
         ui.warn(f"could not install the fwd skill because npx is not on PATH; retry later with '{command_text}'")
         return
     try:
-        result = subprocess.run([npx, *SKILL_COMMAND], check=False)
+        result = subprocess.run([npx, *SKILL_ADD_COMMAND], check=False)
     except OSError as exc:
         ui.warn(f"could not install the fwd skill ({exc}); retry with '{command_text}'")
         return
     if result.returncode != 0:
         ui.warn(f"could not install the fwd skill (npx exited with status {result.returncode}); retry with '{command_text}'")
         return
-    _record("installed")
+    _record(f"installed:{_current_revision()}")
     ui.ok(f"installed the fwd coding-agent skill from {SKILL_SOURCE}")
+
+
+def update_if_needed() -> None:
+    """Update an accepted skill once per installed CLI revision without introducing another confirmation prompt."""
+    try:
+        state = SKILL_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if not state.startswith("installed"):
+        return
+    revision = _current_revision()
+    if state == f"installed:{revision}":
+        return
+    npx = shutil.which("npx")
+    if npx is None:
+        ui.warn("could not update the installed fwd skill because npx is not on PATH; it will retry next time")
+        return
+    command_text = f"npx {' '.join(SKILL_UPDATE_COMMAND)}"
+    try:
+        result = subprocess.run([npx, *SKILL_UPDATE_COMMAND], check=False)
+    except OSError as exc:
+        ui.warn(f"could not update the installed fwd skill ({exc}); it will retry with '{command_text}'")
+        return
+    if result.returncode != 0:
+        ui.warn(f"could not update the installed fwd skill (npx exited with status {result.returncode}); it will retry with '{command_text}'")
+        return
+    _record(f"installed:{revision}")
+    ui.ok("updated the installed fwd coding-agent skill")
