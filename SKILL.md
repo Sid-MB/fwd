@@ -22,11 +22,11 @@ Needs Python 3.12+ locally, plus `ssh` and `rsync`. The RunPod backend additiona
 ## First-time setup
 
 ```sh
-fwd setup     # interactive wizard: pick a backend, fill in host/cluster details, writes ~/.fwd/config.toml
+fwd setup     # prompts in a terminal; automatically requires flags under CLAUDECODE/CODEX_AGENT or redirected output
 fwd doctor    # checks local prerequisites and every configured target; non-zero exit on failure
 ```
 
-`fwd setup` is interactive — do not run it yourself; tell the user to run it. `fwd doctor` is safe and non-interactive, so run it first whenever anything misbehaves.
+Agents may run `fwd setup` non-interactively by supplying the fields shown by `fwd setup --help`, for example `fwd setup --backend ssh --host my-box --target-name work`. Missing required fields fail with the exact flags needed and no prompt. `--interactive` forces the wizard and should be left to the user. `fwd doctor` is safe and non-interactive, so run it first whenever anything misbehaves.
 
 Config: `~/.fwd/config.toml` is global; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can override one field of a global target (commonly the Slurm `alloc`) without restating the rest. Writing config files directly is fine and often faster than the wizard.
 

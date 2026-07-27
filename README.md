@@ -52,7 +52,7 @@ and hands `fwd`/`fwd attach` back to you. Installing the skill does not install 
 ## Quickstart
 
 ```sh
-fwd setup                 # interactive: pick a backend, fill in host/cluster details
+fwd setup                 # prompts in a terminal; flag-only for agents and scripts
 cd ~/code/my-project
 fwd                       # launch, sync, bootstrap, and attach
 ```
@@ -69,6 +69,15 @@ fwd rm                    # destroy it
 
 Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every configured target.
 
+`fwd setup` automatically switches to flag-only mode when stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
+present. This makes setup safe for agents and scripts: missing required values produce the exact flags needed instead
+of opening a prompt. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
+
+```sh
+fwd setup --backend ssh --host my-box --target-name work
+fwd setup --backend slurm --login-host login.example.edu --user sid --remote-base /scratch/sid/fwd
+```
+
 ## Commands
 
 | Command | What it does |
@@ -81,7 +90,7 @@ Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) |
 | `fwd stop [name]` | Kill the remote tmux and suspend the target; data is preserved |
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) |
-| `fwd setup` | Interactive wizard writing `~/.fwd/config.toml` |
+| `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag |
 | `fwd doctor` | Check local prerequisites and target reachability |
 | `fwd config` | Print the effective merged config, annotated with where each value came from |
 | `fwd config --example [backend]` | Print a commented reference config generated from the schema |

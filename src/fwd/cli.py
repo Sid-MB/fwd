@@ -193,11 +193,61 @@ def config_cmd(
 
 
 @app.command("setup")
-def setup_cmd() -> None:
-    """Interactively create or update ~/.fwd/config.toml: pick a backend and fill in its target details."""
+def setup_cmd(
+    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: ssh, runpod, or slurm. Required in non-interactive mode.")] = None,
+    target_name: Annotated[str | None, typer.Option("--target-name", help="Local fwd label for this connection; defaults to the backend name.")] = None,
+    host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.")] = None,
+    login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.")] = None,
+    user: Annotated[str | None, typer.Option("--user", help="Remote username; optional for SSH aliases.")] = None,
+    port: Annotated[int | None, typer.Option("--port", help="SSH port.")] = None,
+    key_path: Annotated[str | None, typer.Option("--key-path", help="SSH identity file; omit to use your SSH agent/config.")] = None,
+    proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="SSH bastion hop, as user@host.")] = None,
+    remote_base: Annotated[str | None, typer.Option("--remote-base", help="Remote parent directory for project checkouts.")] = None,
+    gpu: Annotated[str | None, typer.Option("--gpu", help="Default RunPod GPU id.")] = None,
+    image: Annotated[str | None, typer.Option("--image", help="Default RunPod container image.")] = None,
+    volume_gb: Annotated[int | None, typer.Option("--volume-gb", help="RunPod persistent volume size in GB.")] = None,
+    tool_prefix: Annotated[str | None, typer.Option("--tool-prefix", help="Persistent remote directory for installed tools and caches.")] = None,
+    alloc: Annotated[str | None, typer.Option("--alloc", help="Slurm salloc flags.")] = None,
+    partition: Annotated[str | None, typer.Option("--partition", help="Slurm partition.")] = None,
+    account: Annotated[str | None, typer.Option("--account", help="Slurm account.")] = None,
+    env_setup: Annotated[list[str] | None, typer.Option("--env-setup", help="Slurm shell line to run before allocation; repeat for multiple lines.")] = None,
+    make_default: Annotated[bool, typer.Option("--make-default", help="Make this target the saved default. The first target is always made default.")] = False,
+    test_connection: Annotated[bool, typer.Option("--test-connection", help="Run read-only provider diagnostics after non-interactive setup.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing target with the same name without prompting.")] = False,
+    interactive: Annotated[bool, typer.Option("--interactive", help="Force prompts even when stdout is redirected or an agent environment is detected.")] = False,
+) -> None:
+    """Create or update ~/.fwd/config.toml interactively or entirely from flags.
+
+    Setup automatically becomes non-interactive when stdout is not a TTY or CLAUDECODE/CODEX_AGENT is set. Missing
+    required flags produce an exact invocation; pass --interactive to force prompts.
+    """
     from fwd import wizard
 
-    wizard.run_wizard()
+    wizard.run_wizard(
+        force_interactive=interactive,
+        backend=backend,
+        target_name=target_name,
+        values={
+            "host": host,
+            "login_host": login_host,
+            "user": user,
+            "port": port,
+            "key_path": key_path,
+            "proxy_jump": proxy_jump,
+            "remote_base": remote_base,
+            "gpu": gpu,
+            "image": image,
+            "volume_gb": volume_gb,
+            "tool_prefix": tool_prefix,
+            "alloc": alloc,
+            "partition": partition,
+            "account": account,
+            "env_setup": env_setup,
+        },
+        make_default=make_default,
+        test_connection=test_connection,
+        force=force,
+    )
 
 
 @app.command("doctor")

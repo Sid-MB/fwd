@@ -23,6 +23,8 @@ work before the backends are finished.
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any
@@ -64,18 +66,36 @@ FIELD_HELP: dict[str, str] = {
     "volume_gb": "persistent volume size; tooling and your project both live here",
 }
 
+# CLI flag names for every field the interactive wizard can ask for. Kept beside ``ESSENTIAL_FIELDS`` so adding a
+# prompt without a non-interactive equivalent is visible during review and can be checked before setup starts.
+FIELD_FLAGS: dict[str, str] = {
+    "host": "--host",
+    "login_host": "--login-host",
+    "user": "--user",
+    "port": "--port",
+    "key_path": "--key-path",
+    "proxy_jump": "--proxy-jump",
+    "remote_base": "--remote-base",
+    "gpu": "--gpu",
+    "image": "--image",
+    "volume_gb": "--volume-gb",
+    "tool_prefix": "--tool-prefix",
+    "alloc": "--alloc",
+    "partition": "--partition",
+    "account": "--account",
+    "env_setup": "--env-setup",
+}
+
 
 def _ask(label: str, default: str = "") -> str:
-    """Prompt for a free-text value, returning the default when input is unavailable.
+    """Prompt for a free-text value, allowing Click to abort cleanly on Ctrl-C or Ctrl-D.
 
     Kept local to the wizard rather than added to :mod:`fwd.ui` because this is the only interactive-input site in
-    fwd; everything else is confirmations. Non-interactive stdin returns the default so ``fwd setup`` in a script
-    degrades to "accept everything" instead of raising on EOF.
+    fwd; everything else is confirmations. Do not catch :class:`typer.Abort` or ``EOFError`` here: Click translates
+    both interrupt keys into its normal ``Aborted!`` exit. Treating either as an empty answer traps users in required
+    field loops, and silently accepting defaults on closed stdin can write an unintended partial configuration.
     """
-    try:
-        return typer.prompt(label, default=default, show_default=bool(default))
-    except (EOFError, typer.Abort):
-        return default
+    return typer.prompt(label, default=default, show_default=bool(default))
 
 
 def _prompt_value(field_name: str, current: Any, *, required: bool) -> Any:
@@ -112,32 +132,67 @@ def _prompt_value(field_name: str, current: Any, *, required: bool) -> Any:
         return raw
 
 
-def _prompt_target_values(backend: str) -> dict[str, Any]:
-    """Prompt for a target's connection fields before asking for its fwd label.
+def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Prompt for unsupplied target fields before asking for its fwd label.
 
     Returns:
         Values that differ from the backend defaults, which is all that gets written to disk.
 
     A placeholder name is used only to construct the dataclass defaults; target names do not affect field defaults.
     Asking for the label after these concrete connection details gives the user enough context to choose a useful name.
+    Values supplied as CLI flags skip their corresponding prompts, making the same interface useful for partial
+    interactive setup and fully non-interactive agent calls.
     """
     cls = TARGET_TYPES[backend]
     defaults = {f.name: getattr(cls(name=backend), f.name) for f in dataclass_fields(cls)}
     required = REQUIRED_FIELDS.get(backend, ())
+    provided = supplied or {}
 
     answers: dict[str, Any] = {}
     for field_name in ESSENTIAL_FIELDS.get(backend, ()):
         if field_name not in defaults:
             continue
-        value = _prompt_value(field_name, defaults[field_name], required=field_name in required)
+        value = provided[field_name] if provided.get(field_name) is not None else _prompt_value(field_name, defaults[field_name], required=field_name in required)
         if value != defaults[field_name]:
             answers[field_name] = value
     return answers
 
 
-def _test_connection(target: TargetConfig, cfg: Config) -> None:
-    """Optionally run the backend's own doctor against the new target, skipping cleanly when unavailable."""
-    if not ui.confirm(f"test the connection to {target.name!r} now?", default=True):
+def _non_interactive_reason() -> str | None:
+    """Return why setup should avoid prompts, or ``None`` for a normal interactive terminal."""
+    markers = [name for name in ("CLAUDECODE", "CODEX_AGENT") if name in os.environ]
+    if markers:
+        return f"{', '.join(markers)} is set"
+    if not sys.stdout.isatty():
+        return "stdout is not a TTY"
+    return None
+
+
+def _validate_non_interactive(backend: str | None, values: dict[str, Any], reason: str) -> str:
+    """Validate flag-only setup and return the resolved backend, otherwise exit with an actionable invocation."""
+    if not backend:
+        ui.die(
+            f"fwd setup is running in non-interactive mode because {reason}. Missing required flag: --backend.\n"
+            "Choose a backend with --backend ssh, --backend runpod, or --backend slurm. To force prompts, pass --interactive."
+        )
+    normalized = backend.strip().lower()
+    if normalized not in TARGET_TYPES:
+        ui.die(f"unknown backend {normalized!r}; expected one of: {', '.join(sorted(TARGET_TYPES))}")
+    missing = [field for field in REQUIRED_FIELDS.get(normalized, ()) if values.get(field) in (None, "", [])]
+    if missing:
+        flags = " ".join(f"{FIELD_FLAGS[field]} VALUE" for field in missing)
+        ui.die(
+            f"fwd setup is running in non-interactive mode because {reason}. Missing required flag(s) for {normalized}: "
+            f"{', '.join(FIELD_FLAGS[field] for field in missing)}.\n"
+            f"Required form: fwd setup --backend {normalized} {flags}\n"
+            "Run 'fwd setup --help' for every optional field, or pass --interactive to force prompts."
+        )
+    return normalized
+
+
+def _test_connection(target: TargetConfig, cfg: Config, *, ask: bool = True) -> None:
+    """Run the backend's doctor, optionally asking first, and skip cleanly when checks are unavailable."""
+    if ask and not ui.confirm(f"test the connection to {target.name!r} now?", default=True):
         return
     try:
         results = make_backend(target, cfg).doctor()
@@ -174,38 +229,79 @@ def _write_config(path: Path, target_name: str, backend: str, values: dict[str, 
     path.chmod(0o600)
 
 
-def run_wizard() -> None:
-    """Prompt for a target definition and merge it into the global config, preserving existing content."""
+def run_wizard(
+    *,
+    force_interactive: bool = False,
+    backend: str | None = None,
+    target_name: str | None = None,
+    values: dict[str, Any] | None = None,
+    make_default: bool = False,
+    test_connection: bool = False,
+    force: bool = False,
+) -> None:
+    """Create or update a target interactively or entirely from command-line values.
+
+    Interactive mode is the default only when stdout is a terminal and no known agent environment marker is set.
+    ``force_interactive`` overrides that detection. Non-interactive mode never prompts: it validates the required
+    backend fields, reports the exact missing flags, writes the target, and runs provider checks only when explicitly
+    requested.
+
+    Args:
+        force_interactive: Prompt even under redirected output or a known agent environment.
+        backend: Provider identifier supplied by ``--backend``.
+        target_name: Optional local fwd label; defaults to the backend name, with a numeric suffix on collision.
+        values: Target field values supplied through CLI flags; ``None`` entries mean unspecified.
+        make_default: Make this target the saved default even when another default already exists.
+        test_connection: Run the backend's read-only diagnostics after writing in non-interactive mode.
+        force: Overwrite an existing target with the same name without confirmation.
+    """
     ui.info(f"configuring {GLOBAL_CONFIG_PATH}")
     existing = load_config(Path.cwd())
     if existing.targets:
         ui.info(f"existing targets: {', '.join(existing.target_names())}")
 
+    provided = values or {}
+    reason = None if force_interactive else _non_interactive_reason()
+    interactive = reason is None
     backends_list = sorted(TARGET_TYPES)
-    # ssh is the default because it is the one backend that needs no account, no spend and no cluster access, so it
-    # is where a first-time user should land if they just press Enter.
-    default_backend = "ssh" if "ssh" in TARGET_TYPES else backends_list[0]
-    backend = _ask(f"backend ({'/'.join(backends_list)})", default=default_backend).strip().lower()
-    if backend not in TARGET_TYPES:
-        ui.die(f"unknown backend {backend!r}; expected one of: {', '.join(backends_list)}")
+    if interactive:
+        # ssh is the default because it is the one backend that needs no account, no spend and no cluster access, so it
+        # is where a first-time user should land if they just press Enter.
+        default_backend = (backend or ("ssh" if "ssh" in TARGET_TYPES else backends_list[0])).strip().lower()
+        resolved_backend = _ask(f"backend ({'/'.join(backends_list)})", default=default_backend).strip().lower()
+        if resolved_backend not in TARGET_TYPES:
+            ui.die(f"unknown backend {resolved_backend!r}; expected one of: {', '.join(backends_list)}")
+    else:
+        resolved_backend = _validate_non_interactive(backend, provided, reason)
 
-    values = _prompt_target_values(backend)
+    target_values = _prompt_target_values(resolved_backend, provided) if interactive else {
+        key: value for key, value in provided.items() if key in ESSENTIAL_FIELDS.get(resolved_backend, ()) and value is not None
+    }
 
-    default_name = backend if backend not in existing.targets else f"{backend}-2"
-    target_name = _ask("fwd target name (a local label for this connection)", default=default_name).strip() or default_name
-    if target_name in existing.targets and not ui.confirm(f"target {target_name!r} exists; overwrite it?", default=False):
-        ui.info("aborted")
-        return
+    default_name = resolved_backend if resolved_backend not in existing.targets else f"{resolved_backend}-2"
+    resolved_name = (target_name or "").strip()
+    if interactive and not resolved_name:
+        resolved_name = _ask("fwd target name (a local label for this connection)", default=default_name).strip()
+    resolved_name = resolved_name or default_name
+    if resolved_name in existing.targets and not force:
+        if not interactive:
+            ui.die(f"target {resolved_name!r} already exists; pass --force to overwrite it, or choose another name with --target-name")
+        if not ui.confirm(f"target {resolved_name!r} exists; overwrite it?", default=False):
+            ui.info("aborted")
+            return
 
-    target = TARGET_TYPES[backend](name=target_name, **values)
-    make_default = not existing.default_target or ui.confirm(
-        f"make {target_name!r} the default target?", default=not existing.targets
-    )
+    target = TARGET_TYPES[resolved_backend](name=resolved_name, **target_values)
+    should_make_default = make_default or not existing.default_target
+    if interactive and existing.default_target and not make_default:
+        should_make_default = ui.confirm(f"make {resolved_name!r} the default target?", default=not existing.targets)
 
-    _write_config(GLOBAL_CONFIG_PATH, target_name, backend, values, make_default=make_default)
-    ui.ok(f"wrote target {target_name!r} to {GLOBAL_CONFIG_PATH}")
+    _write_config(GLOBAL_CONFIG_PATH, resolved_name, resolved_backend, target_values, make_default=should_make_default)
+    ui.ok(f"wrote target {resolved_name!r} to {GLOBAL_CONFIG_PATH}")
 
-    _test_connection(target, existing)
+    if interactive:
+        _test_connection(target, existing)
+    elif test_connection:
+        _test_connection(target, existing, ask=False)
     ui.info("run 'fwd up' in a project directory to launch a session")
     # The wizard only asks about the fields it needs; point at the rest of the schema rather than pretending it is all.
     ui.info("'fwd config' shows the effective config and which file each value came from")
