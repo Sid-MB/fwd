@@ -13,6 +13,7 @@ curl -fsSL https://bun.sh/install | BUN_INSTALL="$FWD_TOOL_PREFIX/bun" bash >/de
 """.strip()
 
 CURL = ToolRequirement(name="curl", command="curl", version_command=("curl", "--version"), hint="Install curl on the remote host.")
+TAR = ToolRequirement(name="tar", command="tar", version_command=("tar", "--version"), hint="Install tar on the remote host.")
 UNZIP = ToolRequirement(name="unzip", command="unzip", version_command=("unzip", "-v"), hint="Install unzip on the remote host.")
 MISE = ToolRequirement(name="mise", command="mise", version_command=("mise", "--version"), hint="Install mise on the remote host.")
 COREPACK = ToolRequirement(name="Corepack", command="corepack", version_command=("corepack", "--version"), hint="Install Corepack or expose npm as an alternative package-manager installer.")
@@ -80,6 +81,87 @@ YARN = ToolRequirement(
         ToolInstaller("npm", 'npm_config_prefix="$FWD_TOOL_PREFIX/npm" npm install -g yarn', requirements=(NPM,)),
     ),
     hint="Install Yarn on the remote host, enable it with Corepack, or expose npm so fwd can install it in persistent storage.",
+)
+
+SWIFTLY = ToolRequirement(
+    name="Swiftly",
+    command="swiftly",
+    version_command=("swiftly", "--version"),
+    installers=(
+        ToolInstaller(
+            "official Swiftly archive",
+            """
+SWIFTLY_ROOT="$FWD_TOOL_PREFIX/swiftly"
+SWIFTLY_HOME_DIR="$SWIFTLY_ROOT/home"
+SWIFTLY_BIN_DIR="$SWIFTLY_ROOT/bin"
+SWIFTLY_TOOLCHAINS_DIR="$SWIFTLY_ROOT/toolchains"
+archive="$FWD_SCRATCH/swiftly-$(uname -m).tar.gz"
+work_dir="$(mktemp -d "$FWD_SCRATCH/swiftly.XXXXXX")"
+trap 'rm -rf "$work_dir" "$archive"' EXIT
+curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$archive"
+tar -xzf "$archive" -C "$work_dir"
+env SWIFTLY_HOME_DIR="$SWIFTLY_HOME_DIR" SWIFTLY_BIN_DIR="$SWIFTLY_BIN_DIR" SWIFTLY_TOOLCHAINS_DIR="$SWIFTLY_TOOLCHAINS_DIR" "$work_dir/swiftly" init --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
+cat >"$FWD_TOOL_PREFIX/bin/swiftly" <<EOF
+#!/bin/sh
+export SWIFTLY_HOME_DIR="$SWIFTLY_HOME_DIR"
+export SWIFTLY_BIN_DIR="$SWIFTLY_BIN_DIR"
+export SWIFTLY_TOOLCHAINS_DIR="$SWIFTLY_TOOLCHAINS_DIR"
+exec "$SWIFTLY_BIN_DIR/swiftly" "\\$@"
+EOF
+chmod +x "$FWD_TOOL_PREFIX/bin/swiftly"
+""".strip(),
+            requirements=(CURL, TAR),
+        ),
+    ),
+    hint="Install Swiftly on the remote Linux host, or provide curl and tar for fwd's persistent user-space installer.",
+)
+
+SWIFT = ToolRequirement(
+    name="Swift",
+    command="swift",
+    version_command=("swift", "--version"),
+    installers=(
+        ToolInstaller(
+            "Swiftly latest stable toolchain",
+            """
+SWIFTLY_ROOT="$FWD_TOOL_PREFIX/swiftly"
+SWIFTLY_HOME_DIR="$SWIFTLY_ROOT/home"
+SWIFTLY_BIN_DIR="$SWIFTLY_ROOT/bin"
+SWIFTLY_TOOLCHAINS_DIR="$SWIFTLY_ROOT/toolchains"
+post_install="$FWD_SCRATCH/swift-post-install.sh"
+if ! swiftly install latest --use --assume-yes --post-install-file "$post_install"; then
+    swiftly install latest --use --assume-yes --post-install-file "$post_install"
+fi
+if [ -s "$post_install" ]; then
+    if [ "$(id -u)" = "0" ]; then
+        if grep -q 'apt-get' "$post_install"; then DEBIAN_FRONTEND=noninteractive apt-get update -qq; fi
+        bash "$post_install"
+        rm -f "$post_install"
+    else
+        printf '%s\n' "Swift requires system packages. Run this generated script as an administrator, then retry:" >&2
+        cat "$post_install" >&2
+        exit 1
+    fi
+fi
+for candidate in "$SWIFTLY_BIN_DIR"/*; do
+    [ -x "$candidate" ] || continue
+    name="${candidate##*/}"
+    [ "$name" = "swiftly" ] && continue
+    rm -f "$FWD_TOOL_PREFIX/bin/$name"
+    cat >"$FWD_TOOL_PREFIX/bin/$name" <<EOF
+#!/bin/sh
+export SWIFTLY_HOME_DIR="$SWIFTLY_HOME_DIR"
+export SWIFTLY_BIN_DIR="$SWIFTLY_BIN_DIR"
+export SWIFTLY_TOOLCHAINS_DIR="$SWIFTLY_TOOLCHAINS_DIR"
+exec "$candidate" "\\$@"
+EOF
+    chmod +x "$FWD_TOOL_PREFIX/bin/$name"
+done
+""".strip(),
+            requirements=(SWIFTLY,),
+        ),
+    ),
+    hint="Install a Linux Swift toolchain or provide Swiftly (or curl and tar) for fwd's persistent user-space installer.",
 )
 
 CLAUDE = ToolRequirement(

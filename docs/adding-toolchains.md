@@ -1,6 +1,6 @@
 # Adding a project toolchain
 
-This guide explains how to add built-in project support for an ecosystem such as Swift, Haskell, Rust, or Go. A toolchain detects a local project, declares the remote executables it requires, and returns idempotent dependency commands. It does not provision compute, open SSH, install coding-agent settings, synchronize files, or manage tmux.
+This guide explains how to add built-in project support for an ecosystem such as Haskell, Rust, or Go. Swift is included as a complete reference implementation. A toolchain detects a local project, declares the remote executables it requires, and returns idempotent dependency commands. It does not provision compute, open SSH, install coding-agent settings, synchronize files, or manage tmux.
 
 ## Architecture and execution order
 
@@ -22,7 +22,7 @@ The relevant extension points are:
 | --- | --- | --- |
 | Shared contracts | `src/fwd/tooling/base.py` | `Toolchain`, `ToolRequirement`, `ToolInstaller`, and aggregate plans |
 | Remote resolver | `src/fwd/tooling/resolver.py` | Probe, fallback installation, verification, logging, and actionable failure |
-| Built-in requirements | `src/fwd/tooling/requirements.py` | Reusable uv, JS-manager, Claude, and Codex definitions |
+| Built-in requirements | `src/fwd/tooling/requirements.py` | Reusable uv, JS-manager, Swift/Swiftly, Claude, and Codex definitions |
 | Toolchain registry | `src/fwd/toolchains/__init__.py` | Explicit ordered list and project plan aggregation |
 | Ecosystem implementation | `src/fwd/toolchains/<name>.py` | Detection, requirements, and dependency commands |
 | Coding-agent registry | `src/fwd/agents.py` | Agent commands, synchronization, sending, and shared tool requirements |
@@ -32,23 +32,17 @@ Do not implement a language as a `Backend`. Backends acquire SSH-reachable compu
 
 ## Implement the class
 
-Simple ecosystems declare exact top-level markers and implement two class methods:
+Simple ecosystems declare exact top-level markers and implement two class methods. The built-in Swift integration is the smallest complete example:
 
 ```python
 from pathlib import Path
 
 from fwd.tooling import ToolRequirement, Toolchain
-
-SWIFT = ToolRequirement(
-    name="Swift",
-    command="swift",
-    version_command=("swift", "--version"),
-    hint="Install a Linux Swift toolchain and expose it to non-interactive SSH commands.",
-)
+from fwd.tooling.requirements import SWIFT
 
 
 class SwiftToolchain(Toolchain):
-    """Prepare Swift Package Manager projects without owning the compiler installation policy."""
+    """Prepare Swift packages with the system Swift toolchain or fwd's persistent Swiftly fallback."""
 
     name = "swift"
     markers = ("Package.swift",)
@@ -119,6 +113,8 @@ Installer requirements:
 - leave final success to the resolver's version re-probe;
 - declare reusable executable prerequisites through `ToolInstaller.requirements` instead of repeating `command -v` checks or embedding another tool's installer;
 - provide a precise `hint` for machines where automatic installation is impossible.
+
+Compiler distributions may additionally require system libraries that cannot live under `FWD_TOOL_PREFIX`. Keep that exception explicit and upstream-driven: the Swift installer asks Swiftly to write its platform-specific `--post-install-file`, refreshes apt metadata when that generated script uses apt, runs the script only when the remote account is already root, and otherwise prints it and fails with administrator instructions. The file remains in fwd's scratch directory until it succeeds so a repair rerun can finish an interrupted package setup without downloading Swift again. Do not silently invoke `sudo`, guess distro packages, or make system changes when an existing compiler already passes its probe.
 
 Avoid downloading a compiler merely because fwd supports its ecosystem. Installation happens only after project detection or explicit agent selection produces the requirement.
 

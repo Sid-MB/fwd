@@ -33,8 +33,7 @@ Or try it without installing:
 uvx --from git+https://github.com/Sid-MB/fwd fwd --help
 ```
 
-Requires Python 3.12+, plus `ssh` and `rsync` locally. On first launch, fwd installs or verifies remote `uv`, Bun, tmux,
-and the requested coding agent. Node/npm is used when present but is not required; Codex can be installed through Bun.
+Requires Python 3.12+, plus `ssh` and `rsync` locally. On first launch, fwd installs or verifies remote `tmux` plus only the tools required by the detected Python, JavaScript, or Swift project and requested coding agent. Existing tools always win; for example, Node/npm is used when present, Codex can fall back to Bun, and Swift packages can fall back to Swiftly.
 
 ## Install as a coding-agent skill
 
@@ -368,15 +367,15 @@ Set defaults for any of these under `[claude]` in your config.
 
 ## Project toolchains
 
-fwd detects Python and JavaScript projects from their manifests and lockfiles, then prepares only the tools required by
+fwd detects Python, JavaScript, and Swift Package Manager projects from their manifests and lockfiles, then prepares only the tools required by
 that project and the selected coding agent. Every requirement first probes the remote command and version, so an
-existing `uv`, Bun, npm, pnpm, Yarn, Claude Code, or Codex installation is reused when it is visible to non-interactive
+existing `uv`, Bun, npm, pnpm, Yarn, Swift, Claude Code, or Codex installation is reused when it is visible to non-interactive
 SSH commands. Missing tools use ordered user-space fallbacks under the target's persistent fwd tool directory; fwd
 recursively prepares only the selected fallback's prerequisites, deduplicates them across agents and project
 toolchains, and verifies every resulting command before running dependency setup.
 
 Repositories can commit `.fwd/setup.sh` for an unsupported language, private build system, or extra setup. It runs
-after detected toolchain dependency commands. Contributors adding first-class Swift, Haskell, Rust, or another
+after detected toolchain dependency commands. Swift packages use their top-level `Package.swift`, reuse an existing Linux Swift installation, or install the latest stable toolchain through the official Swiftly installer before running `swift package resolve`; when Swiftly reports missing distro packages, fwd installs its generated prerequisites on root-owned disposable machines such as RunPod and gives non-root targets the exact administrator script. Contributors adding first-class Haskell, Rust, or another
 ecosystem should read [Adding a project toolchain](docs/adding-toolchains.md): integrations conform to one
 `Toolchain` class, return shared `ToolRequirement` values, and add one explicit registry entry. Coding agents use the
 same resolver, so agent and project requirements are deduplicated.

@@ -13,7 +13,7 @@ from fwd import toolchains
 from fwd.sshexec import SSHError
 from fwd.tooling import ToolInstaller, ToolRequirement, Toolchain, ensure_tools, merge_requirements
 from fwd.tooling import resolver
-from fwd.tooling.requirements import BUN, CLAUDE, CODEX, NPM, PNPM, UV, YARN
+from fwd.tooling.requirements import BUN, CLAUDE, CODEX, NPM, PNPM, SWIFT, SWIFTLY, UV, YARN
 
 
 def _touch(root: Path, *names: str) -> Path:
@@ -30,37 +30,39 @@ def test_builtin_toolchains_return_requirements_with_their_commands(tmp_path: Pa
     npm = toolchains.plan(_touch(tmp_path / "npm", "package-lock.json"))
     pnpm = toolchains.plan(_touch(tmp_path / "pnpm", "pnpm-lock.yaml"))
     yarn = toolchains.plan(_touch(tmp_path / "yarn", "yarn.lock"))
+    swift = toolchains.plan(_touch(tmp_path / "swift", "Package.swift"))
 
     assert (python.requirements, python.commands) == ((UV,), ("uv sync",))
     assert (bun.requirements, bun.commands) == ((BUN,), ("bun install",))
     assert (npm.requirements, npm.commands) == ((NPM,), ("npm ci",))
     assert (pnpm.requirements, pnpm.commands) == ((PNPM,), ("pnpm install --frozen-lockfile",))
     assert (yarn.requirements, yarn.commands) == ((YARN,), ("yarn --frozen-lockfile",))
+    assert (swift.names, swift.requirements, swift.commands) == (("swift",), (SWIFT,), ("swift package resolve",))
 
 
 def test_conforming_toolchain_class_plugs_into_the_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    swift = ToolRequirement("Swift", "swift", ("swift", "--version"), hint="Install a Linux Swift toolchain.")
+    stack = ToolRequirement("Stack", "stack", ("stack", "--version"), hint="Install Stack.")
 
-    class SwiftToolchain(Toolchain):
-        name = "swift"
-        markers = ("Package.swift",)
+    class HaskellToolchain(Toolchain):
+        name = "haskell"
+        markers = ("stack.yaml",)
 
         @classmethod
         def requirements(cls, project: Path) -> tuple[ToolRequirement, ...]:
             del project
-            return (swift,)
+            return (stack,)
 
         @classmethod
         def dependency_commands(cls, project: Path) -> tuple[str, ...]:
             del project
-            return ("swift package resolve",)
+            return ("stack setup",)
 
-    monkeypatch.setattr(toolchains, "TOOLCHAINS", (*toolchains.TOOLCHAINS, SwiftToolchain))
-    plan = toolchains.plan(_touch(tmp_path, "Package.swift"))
+    monkeypatch.setattr(toolchains, "TOOLCHAINS", (*toolchains.TOOLCHAINS, HaskellToolchain))
+    plan = toolchains.plan(_touch(tmp_path, "stack.yaml"))
 
-    assert plan.names == ("swift",)
-    assert plan.requirements == (swift,)
-    assert plan.commands == ("swift package resolve",)
+    assert plan.names == ("haskell",)
+    assert plan.requirements == (stack,)
+    assert plan.commands == ("stack setup",)
 
 
 def test_project_setup_remains_last_after_every_detected_toolchain(tmp_path: Path) -> None:
@@ -240,7 +242,24 @@ def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_w
     assert "codex 1.0" in result.stdout
 
 
-@pytest.mark.parametrize("requirement", [UV, BUN, NPM, PNPM, YARN, CLAUDE, CODEX])
+def test_swift_installs_through_swiftly_without_making_swiftly_an_unconditional_root(tmp_path: Path) -> None:
+    assert SWIFT.installers[0].requirements == (SWIFTLY,)
+    assert SWIFTLY not in toolchains.plan(tmp_path).requirements
+
+
+def test_swift_installer_captures_and_handles_swiftlys_platform_package_script() -> None:
+    script = SWIFT.installers[0].script
+    assert "--post-install-file" in script
+    assert 'if [ "$(id -u)" = "0" ]' in script
+    assert "apt-get update" in script
+    assert 'bash "$post_install"' in script
+    assert 'rm -f "$post_install"' in script
+    assert 'rm -f "$FWD_TOOL_PREFIX/bin/$name"' in script
+    assert 'exec "$candidate" "\\$@"' in script
+    assert "Run this generated script as an administrator" in script
+
+
+@pytest.mark.parametrize("requirement", [UV, BUN, NPM, PNPM, YARN, SWIFTLY, SWIFT, CLAUDE, CODEX])
 def test_builtin_installer_scripts_are_valid_bash(requirement: ToolRequirement) -> None:
     for installer in requirement.installers:
         script = resolver._installer_script(installer.script)

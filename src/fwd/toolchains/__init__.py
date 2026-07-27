@@ -10,9 +10,10 @@ from pathlib import Path
 
 from fwd.toolchains.javascript import JavaScriptToolchain
 from fwd.toolchains.python import PythonToolchain
+from fwd.toolchains.swift import SwiftToolchain
 from fwd.tooling import Toolchain, ToolchainPlan, merge_requirements
 
-TOOLCHAINS: tuple[type[Toolchain], ...] = (PythonToolchain, JavaScriptToolchain)
+TOOLCHAINS: tuple[type[Toolchain], ...] = (PythonToolchain, JavaScriptToolchain, SwiftToolchain)
 PROJECT_SETUP_RELPATH = ".fwd/setup.sh"
 
 
@@ -27,4 +28,4 @@ def plan(project: str | Path) -> ToolchainPlan:
     return ToolchainPlan(names=tuple(toolchain.name for toolchain in detected), requirements=requirements, commands=commands)
 
 
-__all__ = ["PROJECT_SETUP_RELPATH", "TOOLCHAINS", "JavaScriptToolchain", "PythonToolchain", "plan"]
+__all__ = ["PROJECT_SETUP_RELPATH", "TOOLCHAINS", "JavaScriptToolchain", "PythonToolchain", "SwiftToolchain", "plan"]
