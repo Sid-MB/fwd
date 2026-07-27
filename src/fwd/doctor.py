@@ -98,14 +98,14 @@ def _config_check(project_dir: Path) -> tuple[CheckResult, Config | None]:
     try:
         cfg = load_config(project_dir)
     except ConfigError as exc:
-        return CheckResult(name="config", ok=False, detail=str(exc), hint="fix the file or run 'fwd setup'"), None
+        return CheckResult(name="config", ok=False, detail=str(exc), hint=f"fix the file or run {ui.command('setup')!r}"), None
     if not cfg.sources:
         return (
             CheckResult(
                 name="config",
                 ok=False,
                 detail="no config file found",
-                hint="run 'fwd setup' to create ~/.fwd/config.toml",
+                hint=f"run {ui.command('setup')!r} to create ~/.fwd/config.toml",
             ),
             cfg,
         )
@@ -194,7 +194,7 @@ def run_doctor(target: str | None = None, *, output_format: OutputFormat | str =
             if result.hint:
                 detail = f"{detail} — {result.hint}"
         rows.append([result.name, mark, detail])
-    ui.table("fwd doctor", ["check", "status", "detail"], rows, output_format=output_format)
+    ui.table(ui.command("doctor"), ["check", "status", "detail"], rows, output_format=output_format)
 
     failures = [r for r in results if not r.ok]
     if failures:

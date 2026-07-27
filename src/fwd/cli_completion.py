@@ -12,6 +12,7 @@ from typing import Callable, Iterable
 
 from typer import _click
 
+from fwd import ui
 from fwd.agents import AGENTS
 from fwd.backends import backend_names
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, load_config, ssh_config_host_aliases
@@ -88,7 +89,7 @@ def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str)
     del ctx
     if len(args) > 1:
         return []
-    candidates: dict[str, str] = {"agent": "agent running in this fwd session"}
+    candidates: dict[str, str] = {"agent": f"agent running in this {ui.command()} session"}
     candidates.update({name: f"explicit {name} agent selector" for name in AGENTS})
     try:
         for task in SendTaskStore().all():
@@ -177,7 +178,7 @@ complete_example_backend = static_completer(
 )
 complete_config_key = static_completer(
     (
-        ("default_command", "argv launched by bare fwd"),
+        ("default_command", f"argv launched by bare {ui.command()}"),
         ("default_target", "target used when --target is omitted"),
         ("claude.user_config", "sync ~/.claude settings and extensions"),
         ("claude.creds", "copy Claude OAuth credentials to the remote"),

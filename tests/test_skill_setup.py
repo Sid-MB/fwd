@@ -24,7 +24,14 @@ def test_offer_installs_through_npx_and_records_success(tmp_path: Path, monkeypa
     calls: list[tuple[list[str], bool]] = []
     monkeypatch.setattr(skill_setup.ui, "confirm", lambda *args, **kwargs: True)
     monkeypatch.setattr(skill_setup.shutil, "which", lambda executable: "/usr/local/bin/npx" if executable == "npx" else None)
-    monkeypatch.setattr(skill_setup.subprocess, "run", lambda command, check: (calls.append((command, check)) or SimpleNamespace(returncode=0)))
+
+    def run(command, check, env):  # noqa: ANN001 - subprocess-shaped test double
+        calls.append((command, check))
+        assert env["DISABLE_TELEMETRY"] == "1"
+        assert "AI_AGENT" not in env
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(skill_setup.subprocess, "run", run)
 
     skill_setup.offer_once()
 
@@ -58,7 +65,7 @@ def test_offer_records_decline_and_never_prompts_again(tmp_path: Path, monkeypat
     skill_setup.offer_once()
     skill_setup.offer_once()
 
-    assert prompts == [f"Install the {skill_setup.ui.accent('fwd')} skill for Codex and Claude using {skill_setup.ui.accent('npx skills')}?"]
+    assert prompts == [f"Install the {skill_setup.ui.command_accent()} skill for Codex and Claude using {skill_setup.ui.accent('npx skills')}?"]
     assert marker.read_text(encoding="utf-8") == "declined\n"
 
 
@@ -95,8 +102,23 @@ def test_update_refreshes_an_accepted_skill_once_per_cli_revision(tmp_path: Path
     marker.parent.mkdir(parents=True)
     marker.write_text("installed:revision-1\n", encoding="utf-8")
     calls: list[list[str]] = []
+    messages: list[str] = []
+    log_path = tmp_path / "update-log" / "npx-skills.log"
+    log_path.parent.mkdir()
     monkeypatch.setattr(skill_setup.shutil, "which", lambda executable: "/usr/bin/npx")
-    monkeypatch.setattr(skill_setup.subprocess, "run", lambda command, check: (calls.append(command) or SimpleNamespace(returncode=0)))
+    monkeypatch.setattr(skill_setup, "_new_update_log_path", lambda: log_path)
+    monkeypatch.setattr(skill_setup.ui, "ok", messages.append)
+
+    def run(command, check, stdout, stderr, env):  # noqa: ANN001 - subprocess-shaped test double
+        calls.append(command)
+        assert check is False
+        assert stderr is skill_setup.subprocess.STDOUT
+        assert env["AI_AGENT"] == "fwd"
+        assert env["DISABLE_TELEMETRY"] == "1"
+        stdout.write("interactive npx skills output\n")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(skill_setup.subprocess, "run", run)
 
     skill_setup.update_if_needed()
     skill_setup.update_if_needed()
@@ -118,6 +140,8 @@ def test_update_refreshes_an_accepted_skill_once_per_cli_revision(tmp_path: Path
         ]
     ]
     assert marker.read_text(encoding="utf-8") == "installed:revision-2\n"
+    assert log_path.read_text(encoding="utf-8") == "interactive npx skills output\n"
+    assert messages == [f"updated the installed fwd coding-agent skill. logs at {log_path}"]
 
 
 def test_local_skill_source_contains_only_the_agent_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -37,11 +37,11 @@ def _running_endpoint(session_name: str | None) -> tuple[SessionState, SSHEndpoi
     status = launch_ops.status_of(backend, session)
     if status is not TargetStatus.RUNNING:
         remedies = {
-            TargetStatus.STOPPED: "restart it explicitly with 'fwd attach --restart'",
+            TargetStatus.STOPPED: f"restart it explicitly with {ui.command('attach --restart')!r}",
             TargetStatus.PENDING: "wait for it to become running",
             TargetStatus.GONE: "the remote resource no longer exists",
-            TargetStatus.JOB_ENDED: "start a new allocation with 'fwd attach'",
-            TargetStatus.UNKNOWN: "run 'fwd doctor' and retry when status is available",
+            TargetStatus.JOB_ENDED: f"start a new allocation with {ui.command('attach')!r}",
+            TargetStatus.UNKNOWN: f"run {ui.command('doctor')!r} and retry when status is available",
         }
         ui.die(f"cannot send to session {session.name!r}: target status is {status}; {remedies.get(status, 'the target must be running')}")
     return session, backend.endpoint(session)
@@ -100,7 +100,7 @@ def list_tasks(*, output_format: OutputFormat = OutputFormat.auto, include_all: 
     shown = tasks if include_all else [task for task in tasks if task.active]
     active_count = sum(task.active for task in tasks)
     ui.table(
-        f"fwd send tasks ({active_count} active)",
+        f"{ui.command('send')} tasks ({active_count} active)",
         ("id", "kind", "status", "session", "running", "command / message"),
         (
             (
@@ -116,18 +116,18 @@ def list_tasks(*, output_format: OutputFormat = OutputFormat.auto, include_all: 
         output_format=output_format,
     )
     if shown:
-        ui.info("attach: fwd send <id>    cancel: fwd send <id> --stop")
+        ui.info(f"attach: {ui.command('send <id>')}    cancel: {ui.command('send <id> --stop')}")
 
 
 def follow(task: SendTask, endpoint: SSHEndpoint, *, timeout: float | None = None) -> int:
     """Stream a task and persist the viewer's terminal disposition."""
     result = task_stream.stream(task, endpoint, timeout=timeout)
     if result.disposition == "backgrounded":
-        ui.ok(f"Backgrounded task {task.id}; attach with 'fwd send {task.id}', cancel with 'fwd send {task.id} --stop'")
+        ui.ok(f"Backgrounded task {task.id}; attach with {ui.command(f'send {task.id}')!r}, cancel with {ui.command(f'send {task.id} --stop')!r}")
         return 0
     if result.disposition == "canceled":
         store().update(task.id, status="canceled", exit_code=130, finished_at=now())
-        ui.ok(f"Canceled task {task.id}; the fwd session is still running")
+        ui.ok(f"Canceled task {task.id}; the {ui.command()} session is still running")
         return 130
     code = result.exit_code
     status = "completed" if code == 0 else ("canceled" if code == 130 else "failed")
@@ -148,7 +148,7 @@ def _start_task(session: SessionState, endpoint: SSHEndpoint, task: SendTask, *,
     else:
         ui.ok(f"Started task {task.id} in session {session.name!r}: {task.label}")
     if detach:
-        ui.ok(f"Backgrounded task {task.id}; attach with 'fwd send {task.id}', cancel with 'fwd send {task.id} --stop'")
+        ui.ok(f"Backgrounded task {task.id}; attach with {ui.command(f'send {task.id}')!r}, cancel with {ui.command(f'send {task.id} --stop')!r}")
         return 0
     return follow(task, endpoint, timeout=timeout)
 
@@ -163,11 +163,11 @@ def _session_agent(session: SessionState, selector: str) -> agents.AgentSpec:
     """Resolve ``agent`` or an explicit agent name against the session's launched command."""
     launched = agents.resolve(launch_ops.initial_command_for(session))
     if launched is None:
-        ui.die(f"session {session.name!r} is not running a registered coding agent; launch one with 'fwd up codex' or 'fwd up claude'")
+        ui.die(f"session {session.name!r} is not running a registered coding agent; launch one with {ui.command('up codex')!r} or {ui.command('up claude')!r}")
     if selector != "agent" and selector != launched.name:
         ui.die(f"session {session.name!r} is running {launched.name}, not {selector}")
     if launched.send_command is None:
-        ui.die(f"{launched.name} does not support messages through 'fwd send'")
+        ui.die(f"{launched.name} does not support messages through {ui.command('send')!r}")
     return launched
 
 
@@ -179,7 +179,7 @@ def _stop_task(task: SendTask, endpoint: SSHEndpoint) -> None:
         return
     remote_tasks.stop(endpoint, task)
     store().update(task.id, status="canceled", exit_code=130, finished_at=now())
-    ui.ok(f"Canceled task {task.id}; the fwd session is still running")
+    ui.ok(f"Canceled task {task.id}; the {ui.command()} session is still running")
 
 
 def dispatch(
@@ -222,7 +222,7 @@ def dispatch(
             if not remainder:
                 return 0
             if exact.kind != "agent" or exact.agent is None:
-                ui.die("a command task cannot be replaced with a message; start another command with 'fwd send -- COMMAND'")
+                ui.die(f"a command task cannot be replaced with a message; start another command with {ui.command('send -- COMMAND')!r}")
             agent = agents.AGENTS[exact.agent]
             message = " ".join(remainder)
             replacement = SendTask(
@@ -249,7 +249,7 @@ def dispatch(
         if stop and active:
             if len(active) > 1:
                 ids = ", ".join(task.id for task in active)
-                ui.die(f"multiple {agent.name} tasks are active ({ids}); cancel one with 'fwd send <id> --stop'")
+                ui.die(f"multiple {agent.name} tasks are active ({ids}); cancel one with {ui.command('send <id> --stop')!r}")
             _stop_task(active[0], endpoint)
             active = []
         elif stop:
@@ -280,12 +280,12 @@ def dispatch(
         if subject is None:
             active = [task for task in task_store.all() if task.session == session.name and _refresh(task, endpoint).active]
             if len(active) != 1:
-                ui.die(f"--stop without a task id requires exactly one active task; found {len(active)} (run 'fwd send --ls')")
+                ui.die(f"--stop without a task id requires exactly one active task; found {len(active)} (run {ui.command('send --ls')!r})")
             _stop_task(active[0], endpoint)
             return 0
-        ui.die(f"no send task named {subject!r}; run 'fwd send --ls' to see active task ids")
+        ui.die(f"no send task named {subject!r}; run {ui.command('send --ls')!r} to see active task ids")
     if not arguments:
-        ui.die("no remote command specified; use 'fwd send -- COMMAND [ARG ...]', 'fwd send agent MESSAGE', or 'fwd send --ls'")
+        ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}, {ui.command('send agent MESSAGE')!r}, or {ui.command('send --ls')!r}")
     task = SendTask(
         id=new_task_id("command"),
         session=session.name,

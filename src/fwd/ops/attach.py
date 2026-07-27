@@ -149,7 +149,7 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
         # reach the offer-to-prune path below (docs/live-e2e-report.md, R2-1).
         ui.die(
             f"could not determine the status of session {session.name!r} — the {session.backend} provider did not "
-            f"answer. This is usually transient; try again in a moment. Run 'fwd ls' to see what fwd knows."
+            f"answer. This is usually transient; try again in a moment. Run {ui.command('ls')!r} to see what {ui.command()} knows."
         )
 
     if status is TargetStatus.GONE:
@@ -213,6 +213,6 @@ def smart_default(*, restart: bool = False) -> NoReturn:
         # Returned rather than called bare: attach never returns in production, but if it ever did, falling through
         # would launch a second machine for a directory that already has one.
         return attach(session.name, restart=restart)
-    ui.info(f"no fwd sessions for {Path.cwd().name}; looking for a saved target")
+    ui.info(f"no {ui.command()} sessions for {Path.cwd().name}; looking for a saved target")
     launch_ops.launch(initial_command=None, attach=True)
     raise typer.Exit(0)

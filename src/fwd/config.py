@@ -348,9 +348,9 @@ class Config:
             raise ConfigError(
                 "No target is configured or selected.\n\n"
                 "Launch now without a config file:\n"
-                "  fwd up --target runpod       Provision a CPU pod\n"
-                "  fwd up --target user@host    Use an existing SSH machine\n\n"
-                "To save a default, run 'fwd setup'. To configure manually, run 'fwd config --example' and add "
+                f"  {ui.command('up --target runpod')}       Provision a CPU pod\n"
+                f"  {ui.command('up --target user@host')}    Use an existing SSH machine\n\n"
+                f"To save a default, run {ui.command('setup')!r}. To configure manually, run {ui.command('config --example')!r} and add "
                 f"[targets.<name>] to {GLOBAL_CONFIG_PATH}."
             )
         if len(self.targets) == 1:
@@ -370,13 +370,13 @@ class Config:
         if name == "slurm":
             return (
                 "target 'slurm' cannot be inferred: a cluster needs a site-specific login host, a scratch path and an "
-                "allocation spec, and guessing any of them would fail a minute into a launch. Run 'fwd setup' to define "
-                "one, or 'fwd config --example slurm' for a commented reference to paste into ~/.fwd/config.toml."
+                f"allocation spec, and guessing any of them would fail a minute into a launch. Run {ui.command('setup')!r} to define "
+                f"one, or {ui.command('config --example slurm')!r} for a commented reference to paste into ~/.fwd/config.toml."
             )
         known = ", ".join(self.target_names()) if self.targets else "none configured"
         return (
             f"unknown target {name!r} (configured targets: {known}). A name is only inferred when it is 'runpod', looks "
-            f"like user@host, or matches a Host alias in ~/.ssh/config. Run 'fwd setup' or 'fwd config --example'."
+            f"like user@host, or matches a Host alias in ~/.ssh/config. Run {ui.command('setup')!r} or {ui.command('config --example')!r}."
         )
 
 

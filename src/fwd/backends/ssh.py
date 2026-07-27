@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, ClassVar
 
+from fwd import ui
 from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import Config, SshTargetConfig, ssh_config_host_aliases
 from fwd.remote import tmux_kill
@@ -234,7 +235,7 @@ class SshHostBackend(Backend):
                 name="ssh reachable",
                 ok=reachable,
                 detail=endpoint.ssh_target(),
-                hint=None if reachable else "check the host is up and your key is authorized (fwd uses BatchMode, so no password prompts)",
+                hint=None if reachable else f"check the host is up and your key is authorized ({ui.command()} uses BatchMode, so no password prompts)",
             )
         )
         if not reachable:

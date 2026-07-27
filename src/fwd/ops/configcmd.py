@@ -68,11 +68,11 @@ FIELD_DOCS: dict[str, str] = {
     "extra_opts": "extra raw ssh options, e.g. [\"-o\", \"ServerAliveInterval=30\"]",
     "compute_type": f"one of: {' | '.join(sorted(RUNPOD_COMPUTE_TYPES))} — cpu pods get NO persistent volume",
     "cloud_type": f"one of: {' | '.join(sorted(RUNPOD_CLOUD_TYPES))} — community is cheaper and works fully",
-    "gpu": "RunPod GPU id; override per launch with 'fwd up --gpu'",
+    "gpu": f"RunPod GPU id; override per launch with {ui.command('up --gpu')!r}",
     "image": "container image the pod boots",
     "volume_gb": "persistent volume size in GB (gpu pods only)",
     "volume_mount_path": "where the persistent volume is mounted",
-    "tool_prefix": "where fwd installs uv/node/bun; must be on persistent storage or every restart re-downloads",
+    "tool_prefix": f"where {ui.command()} installs uv/node/bun; must be on persistent storage or every restart re-downloads",
     "allow_proxy": "permit the ssh.runpod.io fallback when no direct IP exists (that proxy cannot run rsync)",
     "alloc": "flags spliced into the salloc line",
     "env_setup": "shell lines run before the allocation, e.g. module loads",
@@ -99,7 +99,7 @@ SECTION_DOCS: dict[str, str] = {
     "delete": "push mirrors local, removing remote-only files",
 }
 
-DEFAULT_COMMAND_DOC = "argv launched by bare 'fwd'; target_defaults.<name>.default_command takes precedence"
+DEFAULT_COMMAND_DOC = f"argv launched by bare {ui.command()!r}; target_defaults.<name>.default_command takes precedence"
 _KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 # Fields with no usable default that the user must fill in for the target to work at all. Emitted uncommented with a
@@ -185,11 +185,11 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
     """
     origins, global_path, project_path = _provenance(project_dir)
     lines = [
-        "# Effective fwd configuration (global + project, deep-merged). Values are annotated with their source.",
+        f"# Effective {ui.command()} configuration (global + project, deep-merged). Values are annotated with their source.",
         f"#   global  = {global_path}{'' if global_path.is_file() else '  (absent)'}",
         f"#   project = {project_path}{'' if project_path.is_file() else '  (absent)'}",
-        "#   default = built into fwd, not written anywhere",
-        "# Run 'fwd config --example' for a commented reference of every available field.",
+        f"#   default = built into {ui.command()}, not written anywhere",
+        f"# Run {ui.command('config --example')!r} for a commented reference of every available field.",
         "",
     ]
 
@@ -212,8 +212,8 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
     if not cfg.targets:
         lines += [
             "",
-            "# No targets are configured. 'fwd up --target runpod' and 'fwd up --target user@host' still work — those",
-            "# names are inferred without config. Run 'fwd setup' or 'fwd config --example' to declare one.",
+            f"# No targets are configured. {ui.command('up --target runpod')!r} and {ui.command('up --target user@host')!r} still work — those",
+            f"# names are inferred without config. Run {ui.command('setup')!r} or {ui.command('config --example')!r} to declare one.",
         ]
     for name in cfg.target_names():
         target = cfg.targets[name]
@@ -277,17 +277,17 @@ def render_example(which: str = "all") -> str:
     """
     backends = list(EXAMPLE_TARGET_NAMES) if which == "all" else [which]
     lines = [
-        "# fwd configuration reference — generated from fwd's own dataclasses, so it matches this exact version.",
+        f"# {ui.command()} configuration reference — generated from {ui.command()}'s own dataclasses, so it matches this exact version.",
         "# Global file: ~/.fwd/config.toml.  Per-project override: <project>/.fwd/config.toml, which DEEP-MERGES over",
         "# the global one, so a repo can change a single field of a target without restating the rest.",
         "# Commented-out lines are optional fields shown with a plausible value, not defaults being applied.",
-        "# Inspect what your own files actually resolve to with 'fwd config'.",
+        f"# Inspect what your own files actually resolve to with {ui.command('config')!r}.",
         "#",
-        "# You may not need any of this: 'fwd up --target runpod' provisions a CPU pod from built-in defaults, and",
-        "# 'fwd up --target user@host' (or any Host alias in ~/.ssh/config) works with no config file at all.",
+        f"# You may not need any of this: {ui.command('up --target runpod')!r} provisions a CPU pod from built-in defaults, and",
+        f"# {ui.command('up --target user@host')!r} (or any Host alias in ~/.ssh/config) works with no config file at all.",
         "",
         f'default_target = "{EXAMPLE_TARGET_NAMES[backends[0]]}"  # used when --target is omitted',
-        'default_command = ["claude"]  # argv launched by bare fwd; set with: fwd default <command>',
+        f'default_command = ["claude"]  # argv launched by bare {ui.command()}; set with: {ui.command("default <command>")}',
     ]
     for backend in backends:
         lines += ["", *_render_example_target(backend)]
@@ -353,7 +353,7 @@ def render_schema() -> str:
     target_refs = [{"$ref": f"#/$defs/{backend}Target"} for backend in TARGET_TYPES]
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "fwd configuration",
+        "title": f"{ui.command()} configuration",
         "description": "Configuration for ~/.fwd/config.toml and the deep-merged per-project .fwd/config.toml override.",
         "type": "object",
         "properties": {
@@ -400,8 +400,8 @@ def show(which_example: str | None = None, project_dir: Path | None = None, *, s
         ui.die(str(exc))
     if not cfg.sources:
         ui.info("no config file found (looked for ~/.fwd/config.toml and ./.fwd/config.toml)")
-        ui.info("run 'fwd setup' for the wizard, or 'fwd config --example' for a commented reference to start from")
-        ui.info("or skip config entirely: 'fwd up --target runpod', or 'fwd up --target user@host'")
+        ui.info(f"run {ui.command('setup')!r} for the wizard, or {ui.command('config --example')!r} for a commented reference to start from")
+        ui.info(f"or skip config entirely: {ui.command('up --target runpod')!r}, or {ui.command('up --target user@host')!r}")
     ui.raw(render_effective(cfg, root))
 
 

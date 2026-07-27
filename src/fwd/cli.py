@@ -41,9 +41,9 @@ CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 
 app = typer.Typer(
     cls=AliasHelpGroup,
-    name="fwd",
+    name=ui.COMMAND_NAME,
     help="Move coding work to remote compute: provision or reuse a target, sync the project, and run a persistent shell, command, Claude Code, or Codex.",
-    epilog=f"Bare 'fwd' attaches to this directory's session, launches its saved default, or starts setup on first use. 'fwd <target>' launches that target's saved default and attaches; 'fwd <backend>' uses its most recently used configured target. For a zero-config background launch, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'.",
+    epilog=f"Bare {ui.command()!r} attaches to this directory's session, launches its saved default, or starts setup on first use. {ui.command('<target>')!r} launches that target's saved default and attaches; {ui.command('<backend>')!r} uses its most recently used configured target. For a zero-config background launch, use {ui.command('up --target runpod')!r}, {ui.command('up --target user@host')!r}, or an SSH alias. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -51,7 +51,7 @@ app = typer.Typer(
 )
 config_app = typer.Typer(
     name="config",
-    help="Inspect or update fwd's layered configuration.",
+    help=f"Inspect or update {ui.command()}'s layered configuration.",
     no_args_is_help=False,
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -89,7 +89,7 @@ def _version_callback(value: bool) -> None:
 def main(
     ctx: typer.Context,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
-    version: Annotated[bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Print the installed fwd version and exit.")] = False,
+    version: Annotated[bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help=f"Print the installed {ui.command()} version and exit.")] = False,
 ) -> None:
     """Attach to this directory's session, launching its saved default or starting setup on first use.
 
@@ -144,8 +144,16 @@ def _up(
     )
 
 
+UP_HELP = f"""Provision/reuse a target, sync and bootstrap it, then start a shell or the requested command.
+
+Magic commands 'claude' and 'codex' sync their agent settings and auto-attach in an interactive terminal. Startup
+is persistent in tmux. Use --no-attach for a background launch and '--' before remote command flags.
+
+To add a new target, run {ui.command('setup')!r}.
+"""
+
 # Registered twice so `up` and its `launch` alias can never diverge.
-app.command("up", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_up)
+app.command("up", help=UP_HELP, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_up)
 app.command("launch", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_up)
 
 
@@ -205,8 +213,16 @@ def _send(
     raise typer.Exit(code)
 
 
+SEND_HELP = f"""Start, follow, background, list, or cancel durable remote tasks.
+
+Every command and agent turn runs in remote tmux and receives a task id. During streams, Ctrl-C cancels and Ctrl-B
+backgrounds. Reattach with {ui.command('send TASK_ID')!r}, cancel with {ui.command('send TASK_ID --stop')!r}, and list
+with {ui.command('send --ls')!r}. Never starts or restarts compute. Use '--' before raw commands:
+{ui.command('send -- python train.py --epochs 10')}
+"""
+
 # Registered from one callback so the short alias cannot diverge from the primary command.
-app.command("send", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
+app.command("send", help=SEND_HELP, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
 app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_send)
 
 
@@ -214,7 +230,7 @@ app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignor
 def ls_cmd(
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
-    """List every fwd session with live status and cost queried from each backend."""
+    """List every managed session with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
 
     lifecycle.ls(output_format=output_format)
@@ -260,7 +276,7 @@ def diff_cmd(
     raise typer.Exit(code)
 
 
-@app.command("stop")
+@app.command("stop", help=f"Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.")
 def stop_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
 ) -> None:
@@ -273,7 +289,7 @@ def stop_cmd(
     lifecycle.stop(name)
 
 
-@app.command("rm")
+@app.command("rm", help=f"Destroy a session's target and forget the session. Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
 def rm_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
@@ -299,7 +315,7 @@ class ExampleBackend(str, Enum):
 @config_app.callback()
 def config_cmd(
     ctx: typer.Context,
-    example: Annotated[bool, typer.Option("--example", help="Print a commented reference config generated from fwd's own schema instead of your effective one.")] = False,
+    example: Annotated[bool, typer.Option("--example", help=f"Print a commented reference config generated from {ui.command()}'s own schema instead of your effective one.")] = False,
     schema: Annotated[bool, typer.Option("--schema", help="Print the complete machine-readable JSON Schema for config files.")] = False,
 ) -> None:
     """Show effective config, a commented TOML reference, or machine-readable JSON Schema.
@@ -321,7 +337,7 @@ def _config_example_backend(ctx: typer.Context, backend: ExampleBackend) -> None
     """Preserve ``fwd config --example <backend>`` while allowing real config subcommands such as ``set``."""
     parent = ctx.parent
     if parent is None or not parent.params.get("example"):
-        ui.die(f"'fwd config {backend.value}' is only meaningful with --example; run 'fwd config --example {backend.value}' for a reference, or 'fwd config' for your effective config")
+        ui.die(f"{ui.command(f'config {backend.value}')!r} is only meaningful with --example; run {ui.command(f'config --example {backend.value}')!r} for a reference, or {ui.command('config')!r} for your effective config")
     if parent.params.get("schema"):
         ui.die("--example and --schema are mutually exclusive")
     from fwd.ops import configcmd
@@ -353,7 +369,7 @@ def _set_config_value(key: str, value: tuple[str, ...], *, user: bool, project: 
         ui.die(str(exc))
 
 
-@config_app.command("set", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@config_app.command("set", help=f"Set a configuration value without opening an editor.\n\nUse '--' before values that begin with '-', for example: {ui.command('config set default_command -- python -m agent')}", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def config_set_cmd(
     key: Annotated[str, typer.Argument(help="Dotted config key, for example default_target, default_command, or sync.delete.", autocompletion=complete_config_key)],
     value: Annotated[list[str] | None, typer.Argument(help="Value words. Multiple words become an array; default_command is always stored as argv.", autocompletion=complete_agent)] = None,
@@ -390,7 +406,7 @@ def config_rm_cmd(
         ui.die(str(exc))
 
 
-@app.command("default", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command("default", help=f"Set the command bare {ui.command()!r} launches; shorthand for {ui.command('config set default_command ...')!r}.\n\nUse '--' before command flags, for example: {ui.command('default --project -- python -m my_agent')}", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def default_cmd(
     command: Annotated[list[str] | None, typer.Argument(help="Default command argv, such as claude, codex, or python -m agent.", autocompletion=complete_agent)] = None,
     user: Annotated[bool, typer.Option("--user", help="Set the user-wide default in ~/.fwd/config.toml; this is the default scope.")] = False,
@@ -407,7 +423,7 @@ def default_cmd(
 @app.command("setup")
 def setup_cmd(
     backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: ssh, runpod, or slurm. Required in non-interactive mode.", autocompletion=complete_backend)] = None,
-    target_name: Annotated[str | None, typer.Option("--target-name", help="Local fwd label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
+    target_name: Annotated[str | None, typer.Option("--target-name", help=f"Local {ui.command()} label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
     host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.", autocompletion=complete_ssh_host)] = None,
     login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.", autocompletion=complete_ssh_host)] = None,
     user: Annotated[str | None, typer.Option("--user", help="Remote username; optional for SSH aliases.")] = None,
@@ -490,12 +506,12 @@ def doctor_cmd(
 def info_cmd(
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
-    """Print installed version and the local paths fwd uses for configuration and session state."""
+    """Print installed version and the local paths used for configuration and session state."""
     from fwd.config import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_RELPATH
     from fwd.state import STATE_PATH
 
     ui.record(
-        "fwd info",
+        ui.command("info"),
         (
             ("version", __version__),
             ("global config", str(GLOBAL_CONFIG_PATH)),
@@ -512,5 +528,14 @@ def version_cmd() -> None:
     ui.console.print(__version__)
 
 
+def entrypoint() -> None:
+    """Run the Typer application with the centralized display name.
+
+    Console-script wrappers otherwise pass their on-disk filename as Click's ``prog_name``, which would leave Usage
+    lines hard-coded to the installed executable even after every other UI string adopted :func:`fwd.ui.command`.
+    """
+    app(prog_name=ui.COMMAND_NAME)
+
+
 if __name__ == "__main__":
-    app()
+    entrypoint()

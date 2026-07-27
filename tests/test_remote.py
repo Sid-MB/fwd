@@ -291,6 +291,7 @@ def test_run_bootstrap_passes_requested_agent_to_script(monkeypatch, tmp_path: P
 
     assert captured["script"] == BOOTSTRAP_PATH
     assert captured["env"] == {
+        "FWD_COMMAND_NAME": "fwd",
         "FWD_TOOL_PREFIX": "/tools",
         "FWD_REMOTE_DIR": "/project",
         "FWD_SCRATCH": "/cache",

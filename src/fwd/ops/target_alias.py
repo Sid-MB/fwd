@@ -93,7 +93,7 @@ def resolve(selector: str, config: Config | None = None) -> TargetSelection | No
         return None
     selected_name = _most_recent_target_name(cfg, selector)
     if selected_name is None:
-        ui.die(f"backend {selector!r} has multiple configured targets but no usage history selects one: {', '.join(matching)}. Name one explicitly, for example 'fwd {matching[0]}'.")
+        ui.die(f"backend {selector!r} has multiple configured targets but no usage history selects one: {', '.join(matching)}. Name one explicitly, for example {ui.command(matching[0])!r}.")
     reason = "only configured target for backend" if len(matching) == 1 else "most recently used target for backend"
     return TargetSelection(cfg.targets[selected_name], reason)
 
@@ -114,9 +114,9 @@ def _identity(target: TargetConfig) -> str:
 def _setup_missing_backend(selector: str) -> TargetSelection:
     """Offer the setup wizard for a known backend, then resolve the target it created."""
     if not interactive_terminal():
-        ui.die(f"no configured {selector!r} target. This is non-interactive mode, so fwd will not prompt or create one. Configure it with 'fwd setup --backend {selector} --help', then run 'fwd up --target <name>'; pass '--interactive' to fwd setup to force its wizard.")
+        ui.die(f"no configured {selector!r} target. This is non-interactive mode, so {ui.command()} will not prompt or create one. Configure it with {ui.command(f'setup --backend {selector} --help')!r}, then run {ui.command('up --target <name>')!r}; pass '--interactive' to {ui.command('setup')} to force its wizard.")
     if not ui.confirm(f"no configured {selector!r} target exists; set one up now?", default=True):
-        ui.die(f"no configured {selector!r} target; run 'fwd setup --backend {selector}' when ready")
+        ui.die(f"no configured {selector!r} target; run {ui.command(f'setup --backend {selector}')!r} when ready")
     before = set(load_config().targets)
     from fwd import wizard
 
@@ -136,12 +136,12 @@ def forward(selector: str) -> None:
     selection = resolve(selector)
     if selection is None:
         if selector not in TARGET_TYPES:
-            ui.die(f"unknown target or command {selector!r}; configure a target with 'fwd setup' or list commands with 'fwd --help'")
+            ui.die(f"unknown target or command {selector!r}; configure a target with {ui.command('setup')!r} or list commands with {ui.command('--help')!r}")
         selection = _setup_missing_backend(selector)
     target = selection.target
     ui.info(f"selector {selector!r} resolved to target {target.name!r} ({selection.reason}; {_identity(target)})")
     if not interactive_terminal():
-        ui.die(f"target alias {selector!r} attaches interactively, but fwd is running in non-interactive mode. Run 'fwd up --target {target.name}' to launch without attaching.")
+        ui.die(f"target alias {selector!r} attaches interactively, but {ui.command()} is running in non-interactive mode. Run {ui.command(f'up --target {target.name}')!r} to launch without attaching.")
     from fwd.ops import launch as launch_ops
 
     launch_ops.launch(target=target.name, initial_command=None, attach=True)

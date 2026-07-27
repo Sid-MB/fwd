@@ -9,14 +9,16 @@ skill; pointing at the Python package or repository root would accidentally inst
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 from hashlib import sha256
 from pathlib import Path
 
 from fwd import ui
 
-SKILL_NAME = "fwd"
+SKILL_NAME = ui.COMMAND_NAME
 SKILL_PROMPT_PATH = Path.home() / ".fwd" / "skill-prompted"
 LOCAL_SKILL_SOURCE = Path.home() / ".fwd" / "skill-source"
 TARGET_AGENTS = ("codex", "claude-code")
@@ -58,6 +60,15 @@ def _add_command(npx: str, source: Path, *, noninteractive: bool) -> list[str]:
     return command
 
 
+def _skills_environment(*, noninteractive: bool) -> dict[str, str]:
+    """Return an inherited environment with telemetry disabled always and agent detection for noninteractive calls."""
+    environment = {**os.environ, "DISABLE_TELEMETRY": "1"}
+    if noninteractive:
+        # AI_AGENT makes `skills` run noninteractively through https://www.npmjs.com/package/@vercel/detect-agent.
+        environment["AI_AGENT"] = SKILL_NAME
+    return environment
+
+
 def _current_revision() -> str:
     """Fingerprint the installed CLI and skill payload so editable installs refresh before a version bump."""
     package_dir = Path(__file__).resolve().parent
@@ -82,28 +93,39 @@ def _record(outcome: str) -> None:
         ui.warn(f"could not remember the coding-agent skill choice ({exc})")
 
 
+def _new_update_log_path() -> Path:
+    """Create a persistent temporary log path for one quiet automatic skill refresh.
+
+    Automatic updates run during an otherwise ordinary CLI invocation, so forwarding the interactive ``skills`` UI
+    obscures the command the user actually requested. The temporary directory intentionally outlives this process:
+    the one-line result can point curious users or bug reports at the complete installer transcript.
+    """
+    directory = Path(tempfile.mkdtemp(prefix=f"{ui.COMMAND_NAME}-skill-update-"))
+    return directory / "npx-skills.log"
+
+
 def offer_once() -> None:
     """Offer one local, global Codex/Claude skill install while retaining the installer's terminal."""
     if SKILL_PROMPT_PATH.exists():
         return
-    if not ui.confirm(f"Install the {ui.accent('fwd')} skill for Codex and Claude using {ui.accent('npx skills')}?", default=True):
+    if not ui.confirm(f"Install the {ui.command_accent()} skill for Codex and Claude using {ui.accent('npx skills')}?", default=True):
         _record("declined")
         return
     npx = shutil.which("npx")
     if npx is None:
-        ui.warn("could not install the bundled fwd skill because npx is not on PATH; it will offer again next time")
+        ui.warn(f"could not install the bundled {ui.command()} skill because npx is not on PATH; it will offer again next time")
         return
     try:
         source = _materialize_skill_source()
-        result = subprocess.run(_add_command(npx, source, noninteractive=False), check=False)
+        result = subprocess.run(_add_command(npx, source, noninteractive=False), check=False, env=_skills_environment(noninteractive=False))
     except OSError as exc:
-        ui.warn(f"could not install the bundled fwd skill ({exc}); it will offer again next time")
+        ui.warn(f"could not install the bundled {ui.command()} skill ({exc}); it will offer again next time")
         return
     if result.returncode != 0:
-        ui.warn(f"could not install the bundled fwd skill (npx exited with status {result.returncode}); it will offer again next time")
+        ui.warn(f"could not install the bundled {ui.command()} skill (npx exited with status {result.returncode}); it will offer again next time")
         return
     _record(f"installed:{_current_revision()}")
-    ui.ok(f"installed the bundled fwd skill for Codex and Claude from {source}")
+    ui.ok(f"installed the bundled {ui.command()} skill for Codex and Claude from {source}")
 
 
 def update_if_needed() -> None:
@@ -119,16 +141,22 @@ def update_if_needed() -> None:
         return
     npx = shutil.which("npx")
     if npx is None:
-        ui.warn("could not update the installed fwd skill because npx is not on PATH; it will retry next time")
+        ui.warn(f"could not update the installed {ui.command()} skill because npx is not on PATH; it will retry next time")
+        return
+    try:
+        log_path = _new_update_log_path()
+    except OSError as exc:
+        ui.warn(f"could not create a log for the installed {ui.command()} skill update ({exc}); it will retry next time")
         return
     try:
         source = _materialize_skill_source()
-        result = subprocess.run(_add_command(npx, source, noninteractive=True), check=False)
+        with log_path.open("w", encoding="utf-8") as log:
+            result = subprocess.run(_add_command(npx, source, noninteractive=True), check=False, stdout=log, stderr=subprocess.STDOUT, env=_skills_environment(noninteractive=True))
     except OSError as exc:
-        ui.warn(f"could not update the installed fwd skill from the local package ({exc}); it will retry next time")
+        ui.warn(f"could not update the installed {ui.command()} skill from the local package ({exc}); logs at {log_path}; it will retry next time")
         return
     if result.returncode != 0:
-        ui.warn(f"could not update the installed fwd skill from the local package (npx exited with status {result.returncode}); it will retry next time")
+        ui.warn(f"could not update the installed {ui.command()} skill from the local package (npx exited with status {result.returncode}); logs at {log_path}; it will retry next time")
         return
     _record(f"installed:{revision}")
-    ui.ok("updated the installed fwd coding-agent skill")
+    ui.ok(f"updated the installed {ui.command()} coding-agent skill. logs at {log_path}")

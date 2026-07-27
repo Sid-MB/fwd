@@ -30,9 +30,9 @@ def _shell_name() -> str | None:
 def _completion_path(shell: str) -> Path | None:
     """Return Typer's standard completion-script location when it is predictable without installation."""
     paths = {
-        "bash": Path.home() / ".bash_completions" / "fwd.sh",
-        "zsh": Path.home() / ".zfunc" / "_fwd",
-        "fish": Path.home() / ".config" / "fish" / "completions" / "fwd.fish",
+        "bash": Path.home() / ".bash_completions" / f"{ui.COMMAND_NAME}.sh",
+        "zsh": Path.home() / ".zfunc" / f"_{ui.COMMAND_NAME}",
+        "fish": Path.home() / ".config" / "fish" / "completions" / f"{ui.COMMAND_NAME}.fish",
     }
     return paths.get(shell)
 
@@ -61,13 +61,13 @@ def offer_once() -> None:
     if installed_path is not None and installed_path.is_file():
         _record(f"already-installed:{shell}")
         return
-    if not ui.confirm(f"Install fwd shell completion for {shell}? This may update your shell startup file.", default=True):
+    if not ui.confirm(f"Install {ui.command()} shell completion for {shell}? This may update your shell startup file.", default=True):
         _record(f"declined:{shell}")
         return
     try:
-        installed_shell, path = completion.install(shell=shell, prog_name="fwd", complete_var="_FWD_COMPLETE")
+        installed_shell, path = completion.install(shell=shell, prog_name=ui.COMMAND_NAME, complete_var=f"_{ui.COMMAND_NAME.upper()}_COMPLETE")
     except (OSError, RuntimeError, typer.Exit) as exc:
-        ui.warn(f"could not install shell completion ({exc}); retry with 'fwd --install-completion'")
+        ui.warn(f"could not install shell completion ({exc}); retry with {ui.command('--install-completion')!r}")
         return
     _record(f"installed:{installed_shell}")
     ui.ok(f"installed {installed_shell} completion at {path}; restart your shell to enable it")

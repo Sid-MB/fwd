@@ -415,7 +415,7 @@ class RunpodBackend(Backend):
         if probe.returncode != 0 or "--ports" not in probe.stdout:
             version = subprocess.run([RUNPODCTL, "--version"], capture_output=True, text=True).stdout.strip()
             raise RunpodError(
-                f"this runpodctl ({version or 'unknown version'}) does not support the 'runpodctl pod create' syntax fwd "
+                f"this runpodctl ({version or 'unknown version'}) does not support the 'runpodctl pod create' syntax {ui.command()} "
                 f"requires; upgrade to >= {MIN_RUNPODCTL_VERSION} with 'runpodctl update' or brew"
             )
         _SYNTAX_OK = True
@@ -574,9 +574,9 @@ class RunpodBackend(Backend):
         """
         pod = self._get_pod(self._pod_id(session))
         if pod is None:
-            raise RunpodError(f"pod for session {session.name!r} no longer exists; run 'fwd rm {session.name}' or launch again")
+            raise RunpodError(f"pod for session {session.name!r} no longer exists; run {ui.command(f'rm {session.name}')!r} or launch again")
         if pod_status(pod) is TargetStatus.STOPPED:
-            raise RunpodError(f"pod for session {session.name!r} is stopped; run 'fwd up' to restart it")
+            raise RunpodError(f"pod for session {session.name!r} is stopped; run {ui.command('up')!r} to restart it")
         endpoint, _ = self._endpoint_from_pod(pod)
         return endpoint
 

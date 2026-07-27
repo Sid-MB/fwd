@@ -23,6 +23,7 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
+from fwd import ui
 from fwd.sshexec import SSHEndpoint, SSHError
 
 # Package-relative so it resolves identically from a wheel install and an editable checkout. Switch to
@@ -112,6 +113,7 @@ def run_bootstrap(
         fwd.sshexec.SSHError: If the script exits nonzero.
     """
     env = {
+        "FWD_COMMAND_NAME": ui.COMMAND_NAME,
         "FWD_TOOL_PREFIX": tool_prefix,
         "FWD_REMOTE_DIR": remote_dir,
         "FWD_SCRATCH": scratch or f"{tool_prefix.rstrip('/')}/scratch",
@@ -227,8 +229,8 @@ def tmux_attach_command(session: str, fwd_session: str | None = None) -> str:
     attach = f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
     if not fwd_session:
         return attach
-    attach_command = shlex.join(["fwd", "attach", fwd_session])
-    stop_command = shlex.join(["fwd", "stop", fwd_session])
+    attach_command = shlex.join([ui.COMMAND_NAME, "attach", fwd_session])
+    stop_command = shlex.join([ui.COMMAND_NAME, "stop", fwd_session])
     hint = f"To attach, use `{attach_command}`; to stop, run `{stop_command}`."
     return f"{attach}; status=$?; printf '\\n%s\\n' {shlex.quote(hint)} >&2; exit \"$status\""
 

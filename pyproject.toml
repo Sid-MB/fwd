@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fwd = "fwd.cli:app"
+fwd = "fwd.cli:entrypoint"
 
 [dependency-groups]
 dev = ["pytest>=8"]

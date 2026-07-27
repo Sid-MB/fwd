@@ -144,7 +144,7 @@ def resolve_session(name: str | None, *, required: bool = True) -> SessionState 
         if name:
             known = ", ".join(s.name for s in st.all()) or "none"
             ui.die(f"no session named {name!r} (known sessions: {known})")
-        ui.die("no fwd sessions for this directory; run 'fwd up' to create one")
+        ui.die(f"no {ui.command()} sessions for this directory; run {ui.command('up')!r} to create one")
     return session
 
 
@@ -187,7 +187,7 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: 
     instead. See docs/live-e2e-report.md, R2-2.
     """
     if not sys.stdin.isatty():
-        ui.die("attach needs an interactive terminal; in scripts use 'fwd up' without --attach")
+        ui.die(f"attach needs an interactive terminal; in scripts use {ui.command('up')!r} without --attach")
     try:
         argv = remote.tmux_attach_argv(endpoint, tmux_session, session_name)
     except NotImplementedError:
@@ -261,7 +261,7 @@ def track_job_id(backend: Provisioner, endpoint: sshexec.SSHEndpoint, session_na
     try:
         job_id = finder(endpoint, session_name)
     except Exception as exc:
-        ui.warn(f"could not determine the job id ({exc}); 'fwd ls' will rescan by name")
+        ui.warn(f"could not determine the job id ({exc}); {ui.command('ls')!r} will rescan by name")
         return {}
     if not job_id:
         ui.info("job is queued; its id will be picked up on the next status check")
@@ -533,7 +533,7 @@ def _launch(
     agent = agents.resolve(initial_command)
     is_claude = agent is not None and agent.name == "claude"
     if not is_claude and any((session, handoff, user_config, creds)):
-        ui.die("--session, --handoff, --user-config, and --creds are only valid with 'fwd up claude'")
+        ui.die(f"--session, --handoff, --user-config, and --creds are only valid with {ui.command('up claude')!r}")
     flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds) if is_claude else {
         "session": False,
         "handoff": False,
@@ -560,14 +560,14 @@ def _launch(
     # pod that neither `fwd ls` nor `fwd stop` can see. The final persist below refreshes flags and late backend ids.
     flags["gpu"] = gpu
     _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
-    ui.info(f"tracking provisioned instance as session {session_name!r}; stop it with 'fwd stop {session_name}' even if launch setup fails")
+    ui.info(f"tracking provisioned instance as session {session_name!r}; stop it with {ui.command(f'stop {session_name}')!r} even if launch setup fails")
 
     # 2. Wait for sshd, then multiplex every later stage over a single connection.
     with ui.step(f"Waiting for SSH on {endpoint.host}:{endpoint.port}"):
         if not sshexec.wait_for_ssh(endpoint):
             ui.die(
                 f"{endpoint.ssh_target()} did not become reachable; check the target is running and that your key is "
-                f"authorized, then run 'fwd doctor'"
+                f"authorized, then run {ui.command('doctor')!r}"
             )
     try:
         endpoint.open_control_master()
@@ -628,7 +628,7 @@ def _launch(
         if flags["handoff"]:
             ui.warn("could not install the transcript remotely; the session will start from HANDOFF.md instead")
         else:
-            ui.warn("could not install the transcript remotely; starting a fresh session (try 'fwd up --handoff')")
+            ui.warn(f"could not install the transcript remotely; starting a fresh session (try {ui.command('up --handoff')!r})")
 
     startup_cmd = (
         build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
@@ -653,7 +653,7 @@ def _launch(
 
     state = _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags)
     if not attach:
-        ui.ok(f"session {session_name!r} ready; attach with 'fwd attach {session_name}'")
+        ui.ok(f"session {session_name!r} ready; attach with {ui.command(f'attach {session_name}')!r}")
         return state
 
     state.touch_attached()

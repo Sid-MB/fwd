@@ -23,6 +23,7 @@ no call site needs to remember to do it.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Iterable, Iterator, Sequence
@@ -36,6 +37,10 @@ from fwd.output import OutputFormat, RecordElement, TableElement, render
 
 console = Console()
 err_console = Console(stderr=True)
+
+# The executable's displayed name belongs here rather than in individual prompts, errors, and help examples. Alternate
+# builds can configure it before process startup without touching internal compatibility paths such as ``~/.fwd``.
+COMMAND_NAME = os.environ.get("FWD_COMMAND_NAME", "fwd")
 
 
 def _tty() -> bool:
@@ -142,13 +147,28 @@ def record(title: str, fields: Sequence[tuple[str, object]], *, output_format: O
     render(RecordElement(title, tuple(fields)), output_format=output_format, console=console)
 
 
+def command(arguments: str = "") -> str:
+    """Return the configured executable name, optionally followed by a display-ready argument string.
+
+    This helper deliberately does not shell-quote ``arguments`` because it is also used with documentation
+    placeholders such as ``<name>``. Callers interpolating real untrusted argv should continue to use
+    :func:`shlex.join` with :data:`COMMAND_NAME` as its first element.
+    """
+    return f"{COMMAND_NAME} {arguments}".rstrip()
+
+
 def accent(text: str) -> str:
-    """Return a bold cyan terminal label for command names and other short prompt anchors.
+    """Return a bold cyan terminal label for short prompt anchors.
 
     Typer's prompts are implemented by Click rather than Rich, so Rich markup such as ``[bold cyan]`` would be shown
     literally. Typer's ANSI styling is understood by Click and is automatically stripped when color is unavailable.
     """
     return typer.style(text, fg=typer.colors.CYAN, bold=True)
+
+
+def command_accent() -> str:
+    """Return the configured command name as the purple brand anchor used in interactive prompts."""
+    return typer.style(command(), fg=typer.colors.MAGENTA, bold=True)
 
 
 def confirm(prompt: str, *, default: bool = False) -> bool:

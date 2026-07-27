@@ -88,7 +88,7 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
             ]
         )
     ui.table(
-        f"fwd sessions ({len(rows)} active)",
+        f"{ui.command()} sessions ({len(rows)} active)",
         ["name", "backend", "status", "tmux", "local dir", "last attached", "ids"],
         rows,
         output_format=output_format,
@@ -142,9 +142,9 @@ def stop(name: str | None = None) -> None:
         raise KeyboardInterrupt
     target = getattr(backend, "target", None)
     if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu":
-        ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with 'fwd attach {session.name}'")
+        ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with {ui.command(f'attach {session.name}')!r}")
     else:
-        ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with 'fwd attach {session.name}'")
+        ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with {ui.command(f'attach {session.name}')!r}")
 
 
 def remove(name: str | None = None, *, force: bool = False) -> None:

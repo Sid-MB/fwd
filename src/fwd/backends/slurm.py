@@ -44,7 +44,7 @@ import shlex
 import shutil
 from typing import Any, ClassVar
 
-from fwd import remote as remote_mod
+from fwd import remote as remote_mod, ui
 from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.backends.slurm_job import job_name, job_script_path, render_job_script, render_tmux_command
 from fwd.config import Config, SlurmTargetConfig, ssh_config_host_aliases
@@ -255,7 +255,7 @@ class SlurmBackend(Backend):
             except SSHError:
                 notes.append(
                     f"pinned login node {pinned!r} is not directly reachable; using the alias "
-                    f"{self.target.login_host!r} instead — a later 'fwd attach' may land on a different login node "
+                    f"{self.target.login_host!r} instead — a later {ui.command('attach')!r} may land on a different login node "
                     f"and not find the tmux session"
                 )
                 pinned, pin_mode = self.target.login_host, "alias"

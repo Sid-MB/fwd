@@ -111,7 +111,7 @@ def _advanced_options_enabled(parameters: list[ConfigParameter], values: dict[st
 
 def _launch_command(target_name: str) -> str:
     """Return a copy-paste-safe launch command pinned to the target setup just wrote."""
-    return shlex.join(("fwd", "up", "--target", target_name))
+    return shlex.join((ui.COMMAND_NAME, "up", "--target", target_name))
 
 
 def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -184,7 +184,7 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     """Validate flag-only setup and return the resolved backend, otherwise exit with an actionable invocation."""
     if not backend:
         ui.die(
-            f"fwd setup is running in non-interactive mode because {reason}. Missing required flag: --backend.\n"
+            f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required flag: --backend.\n"
             "Choose a backend with --backend ssh, --backend runpod, or --backend slurm. To force prompts, pass --interactive."
         )
     normalized = backend.strip().lower()
@@ -195,10 +195,10 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     if missing:
         flags = " ".join(f"{parameter.flag} VALUE" for parameter in missing)
         ui.die(
-            f"fwd setup is running in non-interactive mode because {reason}. Missing required flag(s) for {normalized}: "
+            f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required flag(s) for {normalized}: "
             f"{', '.join(parameter.flag for parameter in missing)}.\n"
-            f"Required form: fwd setup --backend {normalized} {flags}\n"
-            "Run 'fwd setup --help' for every optional field, or pass --interactive to force prompts."
+            f"Required form: {ui.command(f'setup --backend {normalized} {flags}')}\n"
+            f"Run {ui.command('setup --help')!r} for every optional field, or pass --interactive to force prompts."
         )
     return normalized
 
@@ -293,7 +293,7 @@ def run_wizard(
     default_name = resolved_backend if resolved_backend not in existing.targets else f"{resolved_backend}-2"
     resolved_name = (target_name or "").strip()
     if interactive and not resolved_name:
-        resolved_name = _ask("fwd target name (a local label for this connection)", default=default_name).strip()
+        resolved_name = _ask(f"{ui.command()} target name (a local label for this connection)", default=default_name).strip()
     resolved_name = resolved_name or default_name
     if resolved_name in existing.targets and not force:
         if not interactive:
