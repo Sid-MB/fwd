@@ -26,12 +26,11 @@ def _current_revision() -> str:
     for path in sorted(package_dir.rglob("*.py")):
         digest.update(path.relative_to(package_dir).as_posix().encode())
         digest.update(path.read_bytes())
-    bundled_skill = package_dir / "SKILL.md"
-    editable_skill = package_dir.parents[1] / "SKILL.md"
-    skill_path = bundled_skill if bundled_skill.is_file() else editable_skill
-    if skill_path.is_file():
-        digest.update(b"SKILL.md")
-        digest.update(skill_path.read_bytes())
+    payload_root = package_dir if (package_dir / "SKILL.md").is_file() else package_dir.parents[1]
+    payload_paths = [payload_root / "SKILL.md", *(payload_root / "agents").rglob("*"), *(payload_root / "references").rglob("*"), *(payload_root / "skills").rglob("*"), payload_root / ".codex-plugin" / "plugin.json"]
+    for path in sorted((path for path in payload_paths if path.is_file()), key=lambda item: item.relative_to(payload_root).as_posix()):
+        digest.update(path.relative_to(payload_root).as_posix().encode())
+        digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
 
 

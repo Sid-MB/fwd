@@ -1,0 +1,6 @@
+interface:
+  display_name: "fwd Remote Development"
+  short_description: "Move coding work to remote compute"
+  default_prompt: "Use $fwd to continue this project on a remote machine."
+policy:
+  allow_implicit_invocation: true

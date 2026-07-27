@@ -36,9 +36,10 @@ uvx --from git+https://github.com/Sid-MB/fwd fwd --help
 Requires Python 3.12+, plus `ssh` and `rsync` locally. On first launch, fwd installs or verifies remote `uv`, Bun, tmux,
 and the requested coding agent. Node/npm is used when present but is not required; Codex can be installed through Bun.
 
-## Install as a Claude Code skill
+## Install as a coding-agent skill
 
-`fwd` ships a `SKILL.md` so your agent can drive it for you: ask it to "Continue my work on a GPU machine" and it will launch, sync and hand the session back:
+`fwd` ships an Agent Skills-compatible workflow for Claude Code, Codex, and other supporting agents. Ask it to
+"Continue this project on a remote CPU machine" and it will launch, sync, and hand the session back:
 
 ```sh
 npx skills add Sid-MB/fwd
@@ -46,8 +47,11 @@ npx skills add Sid-MB/fwd
 
 The first human terminal invocation also offers to run this command after the shell-completion prompt. Accepting keeps `npx` attached to your terminal for any choices made by the skills installer; declining is remembered independently in `~/.fwd/skill-prompted`. After an accepted install, the first interactive invocation of each updated fwd build automatically runs `npx --yes skills update fwd -y` and reports the refresh without asking again. Agent, redirected, help/version, and shell-completion invocations never show onboarding prompts.
 
-The skill teaches Claude the safe subset of the CLI — it uses the non-attaching `fwd up claude` workflow and hands
-`fwd`/`fwd attach` back to you only when an interactive terminal is needed.
+Invoke it explicitly as `/fwd natural-language instructions` in Claude Code, `$fwd natural-language instructions` in
+Codex, or select it from Codex's `/skills` menu. Matching natural-language requests can invoke it implicitly. The
+skill teaches agents the machine-readable, non-attaching CLI workflow and hands `fwd attach` back to you only when an
+interactive terminal is needed. The repository also includes `.codex-plugin/plugin.json` for Codex/OpenAI plugin
+distribution.
 
 ## Quickstart
 

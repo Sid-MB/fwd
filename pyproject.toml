@@ -27,9 +27,13 @@ packages = ["src/fwd"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/fwd/scripts/bootstrap.sh" = "fwd/scripts/bootstrap.sh"
 "SKILL.md" = "fwd/SKILL.md"
+"agents" = "fwd/agents"
+"references" = "fwd/references"
+".codex-plugin/plugin.json" = "fwd/.codex-plugin/plugin.json"
+"skills" = "fwd/skills"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/fwd", "tests", "README.md", "/SKILL.md"]
+include = ["src/fwd", "tests", "README.md", "/SKILL.md", "/agents", "/references", "/skills", "/.codex-plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

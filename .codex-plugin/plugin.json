@@ -1,0 +1,27 @@
+{
+  "name": "fwd",
+  "version": "0.1.0",
+  "description": "Move coding projects and agent workflows to remote compute.",
+  "author": {
+    "name": "Sid-MB",
+    "url": "https://github.com/Sid-MB"
+  },
+  "homepage": "https://github.com/Sid-MB/fwd",
+  "repository": "https://github.com/Sid-MB/fwd",
+  "keywords": ["remote-development", "ssh", "runpod", "slurm", "claude-code", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "fwd Remote Development",
+    "shortDescription": "Move coding work to remote compute.",
+    "longDescription": "Provision or reuse SSH, RunPod, and Slurm targets; synchronize a project; and continue work with a shell, command, Claude Code, or Codex.",
+    "developerName": "Sid-MB",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/Sid-MB/fwd",
+    "defaultPrompt": [
+      "Continue this project on a remote machine.",
+      "Start Codex on my RunPod CPU target.",
+      "Run this workload on my Slurm cluster."
+    ]
+  }
+}
