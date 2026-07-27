@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -615,6 +616,13 @@ class RunpodBackend(Backend):
         pod_id = session.backend_ids.get("pod_id")
         if pod_id:
             self._run_ctl(["pod", "stop", pod_id], check=False)
+
+    def remote_stop_command(self, session: SessionState) -> str | None:
+        """Stop this pod from inside itself using RunPod's preinstalled CLI and pod-scoped credentials."""
+        pod_id = session.backend_ids.get("pod_id")
+        if not pod_id:
+            return None
+        return f"pod_id=${{RUNPOD_POD_ID:-{shlex.quote(pod_id)}}}; runpodctl pod stop \"$pod_id\" || true"
 
     def destroy(self, session: SessionState) -> None:
         """``runpodctl pod delete`` — deletes the pod and its volume irreversibly."""

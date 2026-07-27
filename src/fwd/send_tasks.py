@@ -17,13 +17,13 @@ import os
 import tempfile
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
 TASKS_PATH = Path.home() / ".fwd" / "tasks.json"
-TASKS_VERSION = 1
+TASKS_VERSION = 2
 
 
 def now() -> str:
@@ -33,7 +33,7 @@ def now() -> str:
 
 def new_task_id(kind: str) -> str:
     """Return a readable, collision-resistant task identifier."""
-    prefix = "agt" if kind == "agent" else "cmd"
+    prefix = {"agent": "agt", "stopafter": "stp"}.get(kind, "cmd")
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
@@ -52,6 +52,7 @@ class SendTask:
     finished_at: str | None = None
     exit_code: int | None = None
     depends_on: str | None = None
+    dependencies: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Fill timestamps for newly constructed tasks while preserving deserialized values."""
@@ -75,6 +76,13 @@ class SendTask:
     def active(self) -> bool:
         """Return whether the remote task may still be doing work."""
         return self.status in {"queued", "running", "unknown"}
+
+    @property
+    def dependency_ids(self) -> tuple[str, ...]:
+        """Return every prerequisite while preserving compatibility with version-1 single-dependency records."""
+        if self.dependencies:
+            return tuple(self.dependencies)
+        return (self.depends_on,) if self.depends_on else ()
 
 
 class SendTaskStore:

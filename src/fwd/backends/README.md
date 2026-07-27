@@ -17,6 +17,9 @@ Implement these lifecycle methods:
 - `endpoint(session) -> SSHEndpoint`: cheaply re-resolve an existing resource without starting or creating it.
 - `status(session) -> TargetStatus`: normalize provider state. API failures are `UNKNOWN`, never `GONE`.
 - `stop(session)`: suspend compute without deleting preserved data.
+- `remote_stop_command(session)`: optional shell command that performs the provider half of `stop` from the remote
+  endpoint after the local computer may be gone. Implement it to support `--stop-after`; inherit `None` for a clear
+  unsupported error. Never embed a local credential—use provider-scoped remote identity such as RunPod's pod key.
 - `destroy(session)`: permanently delete the backend resource after the caller confirms.
 - `doctor() -> list[CheckResult]`: return read-only prerequisite diagnostics instead of raising.
 

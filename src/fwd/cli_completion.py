@@ -110,10 +110,18 @@ complete_diff_target = complete_existing_session
 def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
     """Complete durable task IDs and agent selectors for attach/stop/send operations."""
     del ctx
-    if len(args) > 1:
+    canceling = bool(args and args[0] == "cancel")
+    if len(args) > (2 if canceling else 1):
         return []
-    candidates: dict[str, str] = {"agent": f"agent running in this {ui.command()} session"}
-    candidates.update({name: f"explicit {name} agent selector" for name in AGENTS})
+    if canceling:
+        candidates: dict[str, str] = {"stopafter": "cancel queued remote shutdown", "all": "cancel every active task"}
+    else:
+        candidates = {
+            "agent": f"agent running in this {ui.command()} session",
+            "stopafter": "queue remote shutdown after all active tasks",
+            "cancel": "cancel queued tasks or stop-after",
+        }
+        candidates.update({name: f"explicit {name} agent selector" for name in AGENTS})
     try:
         for task in SendTaskStore().all():
             if task.active:

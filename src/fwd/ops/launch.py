@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Sequence
 
-from fwd import agents, backends, claude_state, remote, sshexec, sync, ui
+from fwd import agents, backends, claude_state, remote, sshexec, stop_after as stop_after_ops, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
 from fwd.config import Config, ConfigError, TargetConfig, load_config
 from fwd.state import SessionState, StateStore, endpoint_to_dict
@@ -754,16 +754,35 @@ def _launch(
         else:
             ui.warn(f"could not install the transcript remotely; starting a fresh session (try {ui.command('up --handoff')!r})")
 
+    flags["tool_prefix"] = tool_prefix
     if run_command_as_task:
         startup_cmd = REMOTE_SHELL_COMMAND
     elif is_claude:
         startup_cmd = build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
     else:
         startup_cmd = build_standard_startup_command(initial_command)
+    if agent is not None:
+        runtime_session = SessionState(
+            name=session_name,
+            backend=target_cfg.backend,
+            local_cwd=str(local_cwd),
+            remote_dir=remote_dir,
+            tmux_session=tmux_session_name(session_name),
+            endpoint=endpoint_to_dict(endpoint),
+            backend_ids=dict(info.backend_ids),
+            flags={**flags, "target": target_cfg.name},
+        )
+        try:
+            action = stop_after_ops.prepare(endpoint, backend, runtime_session, agent_guidance=True)
+            startup_cmd = stop_after_ops.with_agent_environment(startup_cmd, action)
+            flags["stop_after_script"] = action
+        except stop_after_ops.StopAfterUnsupported as exc:
+            ui.warn(str(exc))
+        except Exception as exc:
+            ui.warn(f"could not install the remote stopafter helper for {agent.name}: {exc}")
     # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
     flags["resume_id"] = resume_id
     flags["gpu"] = gpu
-    flags["tool_prefix"] = tool_prefix
     tmux_name = tmux_session_name(session_name)
     tmux_was_running = remote.tmux_exists(endpoint, tmux_name)
     if tmux_was_running:

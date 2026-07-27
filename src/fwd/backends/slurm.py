@@ -350,6 +350,11 @@ class SlurmBackend(Backend):
         except (SSHError, NotImplementedError):
             pass
 
+    def remote_stop_command(self, session: SessionState) -> str:
+        """Cancel the allocation from the login node after local fwd is no longer required."""
+        job_id = session.backend_ids.get("job_id")
+        return f"scancel {shlex.quote(job_id)} || true" if job_id else f'scancel -u "$USER" -n {shlex.quote(job_name(session.name))} || true'
+
     def destroy(self, session: SessionState) -> None:
         """Cancel the job and remove the scratch project directory.
 

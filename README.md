@@ -207,6 +207,7 @@ fwd send -- pwd
 fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
 fwd send --detach -- python train.py
+fwd send --stop-after -- pytest -q
 ```
 
 By default, output streams until the task finishes and `fwd send` returns the remote exit code. If a task lasts two
@@ -220,7 +221,18 @@ fwd send --ls                         # active tasks; add --all for task history
 fwd send --ls --format json           # stable machine-readable task inventory
 fwd send cmd-a81f                     # replay its log and continue following
 fwd send cmd-a81f --stop              # cancel it; the fwd session remains alive
+fwd send stopafter                    # stop remotely after every active task
+fwd send cancel                       # cancel every queued (not running) task
+fwd send cancel cmd-a81f              # cancel any exact queued/running task
+fwd send cancel stopafter             # disarm queued remote shutdown
+fwd send cancel all                   # cancel every active task
 ```
+
+`--stop-after` creates a second durable lifecycle task before new work starts. It waits for that command or agent turn
+to finish, then stops the session from the remote host, so closing or shutting down the local computer cannot defeat
+it. `fwd send stopafter` queues the same action after all current work. The stop action and its dependencies appear
+in `fwd send --ls`; `fwd ls` has a `stop after` column. RunPod uses its preinstalled pod-scoped `runpodctl`, Slurm
+uses `scancel`, and SSH closes fwd's tmux sessions without powering off a machine fwd does not own.
 
 It never provisions or restarts compute, so stopped, pending, ended, missing, and unknown targets fail with an
 actionable message. Arguments are executed literally. To use shell syntax such as pipes, redirects, or globs, request
@@ -243,6 +255,7 @@ fwd send agent --detach "Run the long benchmark"      # return after it is queue
 fwd send agent --stop                                 # cancel the active turn only
 fwd send agent --stop "Try the smaller implementation"
 fwd send agent --immediate "Try the smaller implementation"  # same cancel-and-send behavior
+fwd send agent --stop-after "Finish the task, then stop compute"
 ```
 
 Normal follow-ups serialize behind an active managed agent turn. `--stop MESSAGE` and `--immediate MESSAGE` interrupt
@@ -253,6 +266,12 @@ not match the agent running in the selected fwd session.
 
 Interactive terminals render agent text and tool activity concisely. Pipes, scripts, and recognized agent
 environments receive the agents' original JSONL event stream.
+
+Remote Claude Code and Codex sessions also receive a small managed user-instruction block explaining the literal
+`stopafter` command. An agent can run it as its final tool action to schedule remote shutdown; `stopafter --cancel`
+disarms the delay before shutdown begins. fwd installs the helper under its existing tool prefix and adds the managed
+guidance to the agents' documented user-level instruction files, not to the synchronized project, so `fwd diff`
+remains clean.
 
 ### Comparing local and remote content
 
@@ -290,6 +309,7 @@ nor the remote project is modified.
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
 | `--attach/-a` | Attach directly after startup instead of streaming an explicit command | `fwd up -a -- bash` |
 | `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --no-attach codex` |
+| `--stop-after` | Stop the remote session server-side after an explicit streamed command completes | `fwd up --stop-after -- pytest -q` |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
 it again and it picks up where it left off rather than starting over or duplicating anything. Pass `--new` when the
@@ -312,6 +332,7 @@ fwd up codex                        # sync Codex settings/skills and auto-attach
 fwd up --no-attach codex            # start Codex persistently but stay in the local terminal
 fwd up -a work python train.py      # run the command in the primary pane and attach directly
 fwd up -- python train.py --epochs 10  # stream a durable task; '--' protects its flags
+fwd up --stop-after -- pytest -q    # stream tests, then stop remotely even if this laptop disconnects
 ```
 
 By default, an explicit arbitrary command runs as a durable task after provisioning: fwd streams its output, returns
@@ -319,6 +340,10 @@ its exit status, and shows Ctrl-C to cancel or Ctrl-B to background after two se
 remains a login shell, so the session stays attachable after a finite command completes. Pass `--attach/-a` to run
 the command in the primary pane and enter tmux directly; after a successful finite attached command, that pane falls
 through to a login shell, while a nonzero exit remains visible as a launch failure.
+
+`--stop-after` is valid only for an explicit streamed command, because bare shells, direct attachments, and
+interactive agents have no objective completion point. For agent work, use `fwd send agent --stop-after "MESSAGE"`,
+queue `fwd send stopafter`, or tell the remote agent to run `stopafter` as its final action.
 
 Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
 all three values. Without an exact name, matching is scoped to the current project. A sole saved match is

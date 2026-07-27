@@ -33,7 +33,7 @@ from typing import NoReturn
 
 import typer
 
-from fwd import remote, ui
+from fwd import agents, remote, stop_after as stop_after_ops, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.sshexec import SSHEndpoint
@@ -68,6 +68,16 @@ def _restart_allocation(backend, endpoint: SSHEndpoint, session: SessionState) -
     """
     tool_prefix = session.flags.get("tool_prefix")
     startup_cmd = launch_ops.startup_command_for(session)
+    agent = agents.resolve(launch_ops.initial_command_for(session))
+    if agent is not None:
+        try:
+            action = stop_after_ops.prepare(endpoint, backend, session, agent_guidance=True)
+            startup_cmd = stop_after_ops.with_agent_environment(startup_cmd, action)
+            session.flags["stop_after_script"] = action
+        except stop_after_ops.StopAfterUnsupported as exc:
+            ui.warn(str(exc))
+        except Exception as exc:
+            ui.warn(f"could not install the remote stopafter helper for {agent.name}: {exc}")
     with ui.step("Killing the stale tmux session"):
         remote.tmux_kill(endpoint, session.tmux_session)
     with ui.step("Requesting a new allocation"):
@@ -85,7 +95,7 @@ def _restart_allocation(backend, endpoint: SSHEndpoint, session: SessionState) -
     job_ids = launch_ops.track_job_id(backend, endpoint, session.name)
     if job_ids:
         session.backend_ids = {**session.backend_ids, **job_ids}
-        launch_ops.store().update(session.name, backend_ids=session.backend_ids)
+    launch_ops.store().update(session.name, backend_ids=session.backend_ids, flags=session.flags)
 
 
 def _tmux_alive(endpoint: SSHEndpoint, tmux_session: str) -> bool:

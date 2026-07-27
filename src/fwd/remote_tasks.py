@@ -51,14 +51,15 @@ def start(endpoint: SSHEndpoint, session_name: str, remote_dir: str, task: SendT
     """Start ``task.command`` in a new durable window and initialize its log files."""
     ensure_manager(endpoint, session_name)
     directory = task_dir(session_name, task.id)
-    dependency = task_dir(session_name, task.depends_on) if task.depends_on else None
-    initial_state = "queued" if dependency else "running"
-    wait = f'while [ ! -f "{dependency}/exit" ]; do sleep 0.2; done; printf "running\\n" > "$task_dir/state"; ' if dependency else ""
+    dependencies = [task_dir(session_name, dependency) for dependency in task.dependency_ids]
+    initial_state = "queued" if dependencies else "running"
+    incomplete = " || ".join(f'[ ! -f "{dependency}/exit" ]' for dependency in dependencies)
+    wait = f'while {incomplete}; do sleep 0.2; done; printf "running\\n" > "$task_dir/state"; ' if dependencies else ""
     command = shlex.join(task.command)
     body = (
         f'task_dir="{directory}"; mkdir -p "$task_dir"; : > "$task_dir/output"; rm -f "$task_dir/exit"; printf "{initial_state}\\n" > "$task_dir/state"; '
         f"{wait}"
-        f"{remote._source_env()}cd {shlex.quote(remote_dir)} && {command}; "
+        f'{remote._source_env()}export FWD_TASK_DIR="$task_dir"; cd {shlex.quote(remote_dir)} && {command}; '
         f'rc=$?; printf "%s\\n" "$rc" > "$task_dir/exit"; printf "done\\n" > "$task_dir/state"; exit "$rc"'
     )
     window = shlex.join(

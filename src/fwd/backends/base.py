@@ -231,6 +231,14 @@ class Backend(ABC):
         Must be safe to call on an already-stopped or already-gone target.
         """
 
+    def remote_stop_command(self, session: SessionState) -> str | None:
+        """Return a shell command that reproduces the provider half of :meth:`stop` from the remote endpoint.
+
+        Stop-after executes after the local computer may be gone, so it cannot call a local SDK or CLI. Backends that can safely self-stop return a non-interactive command; unsupported third-party backends inherit ``None`` and the CLI rejects ``--stop-after`` before starting work.
+        """
+        del session
+        return None
+
     @abstractmethod
     def destroy(self, session: SessionState) -> None:
         """Permanently delete the target and its volumes. Callers confirm with the user first."""

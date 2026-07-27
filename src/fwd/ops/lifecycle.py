@@ -22,7 +22,7 @@ from pathlib import Path
 
 import typer
 
-from fwd import command_docs, remote, remote_tasks, ui
+from fwd import command_docs, remote, remote_tasks, stop_after as stop_after_ops, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.output import OutputFormat
@@ -104,6 +104,28 @@ def _live_status(session: SessionState) -> TargetStatus | str:
         return UNKNOWN_STATUS
 
 
+def _stop_after_summary(session: SessionState, status: TargetStatus | str, tasks: list) -> str:
+    """Describe queued remote shutdown and reconcile it once the backend confirms that compute stopped."""
+    scheduled = [task for task in tasks if task.session == session.name and task.kind == "stopafter" and task.active]
+    if status in (TargetStatus.STOPPED, TargetStatus.JOB_ENDED, TargetStatus.GONE):
+        for task in scheduled:
+            try:
+                task_store().update(task.id, status="completed", exit_code=0, finished_at=datetime.now(UTC).isoformat())
+            except Exception:
+                pass
+        return "-"
+    if scheduled:
+        return ", ".join(f"{task.id} ({task.status})" for task in scheduled)
+    if status != TargetStatus.RUNNING or not session.flags.get("stop_after_script"):
+        return "-"
+    try:
+        backend = launch_ops.backend_for(session)
+        marker = stop_after_ops.status(backend.endpoint(session), session)
+    except Exception:
+        return "-"
+    return f"agent ({marker})" if marker in {"scheduled", "stopping"} else "-"
+
+
 def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: bool = False) -> None:
     """List current-project sessions by default, or every local session with ``all_projects``, using live status."""
     tracked_sessions = launch_ops.store().all()
@@ -112,6 +134,11 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
     other_sessions = [session for session in tracked_sessions if Path(session.local_cwd).expanduser().resolve() != current_project]
     sessions = tracked_sessions if all_projects else current_sessions
     now = datetime.now(UTC)
+    try:
+        tasks = task_store().all()
+    except Exception:
+        # Session listing is the recovery UI and must remain usable even when optional task metadata is unreadable.
+        tasks = []
     rows = []
     session_statuses: list[tuple[SessionState, TargetStatus | str]] = []
     for session in sessions:
@@ -122,6 +149,7 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
                 session.name,
                 session.backend,
                 status,
+                _stop_after_summary(session, status, tasks),
                 _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
                 session.tmux_session,
                 session.local_cwd,
@@ -131,7 +159,7 @@ def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: b
         )
     ui.table(
         f"{ui.command()} sessions ({len(rows)} active)",
-        ["name", "backend", "status", "running", "tmux", "local dir", "last attached", "ids"],
+        ["name", "backend", "status", "stop after", "running", "tmux", "local dir", "last attached", "ids"],
         rows,
         output_format=output_format,
     )

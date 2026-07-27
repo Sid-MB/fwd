@@ -234,6 +234,7 @@ def _run_up(
     handoff: bool = False,
     user_config: bool = False,
     creds: bool = False,
+    stop_after: bool = False,
     create_argv: tuple[str, ...] | None = None,
 ) -> int | None:
     """Shared launch/reuse implementation, returning an explicit streamed-command exit code when applicable."""
@@ -281,10 +282,14 @@ def _run_up(
         )
 
     initial_command = selector.initial_command
+    if stop_after and selector.command is None:
+        ui.die(f"--stop-after requires an explicit command, for example {ui.command('up --stop-after -- pytest -q')!r}; a general shell or interactive agent has no completion point")
     if reuse:
         effective_attach = True
     else:
         effective_attach = _should_attach(_configured_command(config, selector), attach=attach, no_attach=no_attach)
+    if stop_after and effective_attach:
+        ui.die(f"--stop-after cannot be combined with attachment; omit --attach so {ui.command('up')!r} can track the command as a durable task")
 
     launch_name = selector.name
     launch_new = new
@@ -311,7 +316,7 @@ def _run_up(
     if stream_command:
         from fwd.ops import send as send_ops
 
-        return send_ops.run_command(initial_command or (), name=state.name)
+        return send_ops.run_command(initial_command or (), name=state.name, stop_after=stop_after)
     return None
 
 
@@ -331,6 +336,7 @@ def _up(
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
     creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
+    stop_after: Annotated[bool, typer.Option("--stop-after", help="After an explicit streamed command finishes, stop the remote session from the server even if this computer disconnects.", rich_help_panel=PANEL_TARGET)] = False,
 ) -> None:
     """Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
 
@@ -357,6 +363,7 @@ def _up(
         handoff=handoff,
         user_config=user_config,
         creds=creds,
+        stop_after=stop_after,
         create_argv=_argv_without_reuse(ctx),
     )
     if code is not None:
@@ -368,7 +375,7 @@ UP_HELP = f"""{command_docs.UP.summary}
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
 in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
 Explicit commands stream back with Ctrl-C to cancel and Ctrl-B to background; pass --attach to enter their session
-directly. Successful finite commands leave a login shell in the session. Use '--' before remote command flags.
+directly, or --stop-after to stop remote compute after the tracked command. Use '--' before remote command flags.
 
 To add a new target, run {ui.command('setup')!r}.
 """
@@ -424,6 +431,7 @@ app.command("a", hidden=True)(_attach)
 
 
 def _send(
+    ctx: typer.Context,
     arguments: Annotated[list[str] | None, typer.Argument(help="Remote command after '--', agent plus message, or an existing task id.", autocompletion=complete_send_subject)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
     timeout: Annotated[float | None, typer.Option("--timeout", help="Cancel the remote task if it exceeds this many seconds.")] = None,
@@ -431,6 +439,7 @@ def _send(
     wait: Annotated[bool, typer.Option("--wait", help="Stream until completion; this is the default unless --detach is passed.")] = False,
     stop: Annotated[bool, typer.Option("--stop", help="Cancel the selected task; with an agent message, cancel the active turn and send the replacement.")] = False,
     immediate: Annotated[bool, typer.Option("--immediate", help="Agent shorthand for --stop MESSAGE: cancel the active turn and immediately send this message.")] = False,
+    stop_after: Annotated[bool, typer.Option("--stop-after", help="Queue a remote-owned stop action after the new command or agent turn finishes.")] = False,
     list_only: Annotated[bool, typer.Option("--ls", help="List send tasks instead of starting one.")] = False,
     include_all: Annotated[bool, typer.Option("--all", help="With --ls, include completed, failed, and canceled tasks.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="With --ls, choose Rich, Markdown, or JSON output.", autocompletion=complete_output_format)] = OutputFormat.auto,
@@ -448,6 +457,9 @@ def _send(
         ui.die("--wait and --detach are mutually exclusive")
     if include_all and not list_only:
         ui.die("--all is only valid with --ls")
+    root = ctx.find_root()
+    raw_argv = tuple(root.meta.get("fwd_canonical_argv") or root.meta.get("fwd_invocation_argv") or ())
+    literal_command = "--" in raw_argv
     code = send_ops.dispatch(
         tuple(arguments or ()),
         name=name,
@@ -455,8 +467,10 @@ def _send(
         detach=detach,
         stop=stop,
         immediate=immediate,
+        stop_after=stop_after,
         list_only=list_only,
         include_all=include_all,
+        literal_command=literal_command,
         output_format=_selected_output_format(output_format, json_output=json_output),
     )
     raise typer.Exit(code)
@@ -465,8 +479,10 @@ def _send(
 SEND_HELP = f"""{command_docs.SEND.summary}
 
 Every command and agent turn runs in remote tmux and receives a task id. During streams, Ctrl-C cancels and Ctrl-B
-backgrounds. Reattach with {ui.command('send TASK_ID')!r}, cancel with {ui.command('send TASK_ID --stop')!r}, and list
-with {ui.command('send --ls')!r}. Never starts or restarts compute. Use '--' before raw commands:
+backgrounds. Add --stop-after to stop compute remotely when new work finishes; {ui.command('send stopafter')!r}
+queues it after current work and {ui.command('send cancel stopafter')!r} cancels it. Reattach with
+{ui.command('send TASK_ID')!r}, cancel queued work with {ui.command('send cancel [TASK_ID|all]')!r}, and list with
+{ui.command('send --ls')!r}. Never starts or restarts compute. Use '--' before raw commands:
 {ui.command('send -- python train.py --epochs 10')}
 """
 

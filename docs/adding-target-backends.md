@@ -88,6 +88,12 @@ Do not automatically make a provider zero-config merely because its dataclass ha
 
 Create `src/fwd/backends/<provider>.py` with one backend class inheriting `Backend`. The abstract base class rejects incomplete implementations at instantiation time.
 
+Backends may additionally implement `remote_stop_command(session) -> str | None`. It must return a non-interactive
+shell command that performs the provider half of `stop(session)` from the remote endpoint, without depending on the
+local fwd process or copying broad local credentials. This enables `fwd up/send --stop-after`; leaving the default
+`None` keeps the backend valid but makes those forms fail clearly. fwd itself handles delayed execution, task
+dependencies, primary tmux cleanup, cancellation, and task-manager cleanup.
+
 ```python
 class GcpBackend(Backend):
     """Manage the GCE VM associated with an fwd session."""

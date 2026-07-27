@@ -195,6 +195,11 @@ class SshHostBackend(Backend):
             # Stop must be safe on an unreachable host: there is nothing left to kill if we cannot connect.
             pass
 
+    def remote_stop_command(self, session: SessionState) -> str:
+        """Plain SSH owns no machine lifecycle; common stop-after tmux cleanup exactly matches :meth:`stop`."""
+        del session
+        return "true"
+
     def destroy(self, session: SessionState) -> None:
         """Remove the remote project directory; never touches the host itself.
 

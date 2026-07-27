@@ -23,6 +23,7 @@ fwd up claude                           # remote Claude with transcript transfer
 fwd up --new codex                     # separate session/resource for the same project and target
 fwd up -- python train.py --epochs 10   # stream an arbitrary durable command
 fwd up -a -- python train.py            # run it in the primary pane and attach directly
+fwd up --stop-after -- pytest -q        # stop remotely when this tracked command finishes
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 ```
 
@@ -48,13 +49,25 @@ fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
 fwd send --name work -- pytest -q
 fwd send --detach -- python train.py
+fwd send --stop-after -- pytest -q
 fwd send -- bash -lc 'cat outputs/*.json | jq .'
 fwd send --ls --json
 fwd send TASK_ID
 fwd send TASK_ID --stop
+fwd send stopafter
+fwd send cancel
+fwd send cancel TASK_ID
+fwd send cancel stopafter
+fwd send cancel all
 ```
 
 Streaming commands print `(Press Ctrl-C to cancel, Ctrl-B to background)` after two seconds. Ctrl-C cancels the remote task; Ctrl-B detaches the viewer and leaves it running. `--detach` backgrounds immediately. Invoke a shell explicitly for pipes, redirects, globs, or other shell syntax. On Slurm, `send` runs on the login node; use `srun` when the command belongs in an allocation.
+
+`--stop-after` atomically creates a stop task before new work starts. The stop task depends on that work's exit marker,
+then executes entirely remotely; local sleep, connectivity, and process lifetime are irrelevant. `fwd send stopafter`
+depends on every active task instead. `fwd send cancel` with no selector cancels every queued task, an exact task ID
+cancels that task whether queued or running, `stopafter` disarms shutdown, and `all` cancels every active task.
+`fwd send --ls` exposes task dependencies and `fwd ls` exposes active stop-after state.
 
 Agent sessions add conversation-aware forms:
 
@@ -63,9 +76,14 @@ fwd send agent "continue the implementation"
 fwd send agent --stop
 fwd send agent --stop "replace the current approach"
 fwd send agent --immediate "replace the current approach"
+fwd send agent --stop-after "finish and stop compute"
 ```
 
 Normal agent follow-ups serialize. `--stop MESSAGE` and `--immediate MESSAGE` both cancel the active turn and send the replacement. `--stop` alone leaves the agent conversation, tmux session, and remote resource alive.
+
+Registered remote agents can also run the literal `stopafter` helper as their final tool action. Launch installs a
+small managed instruction block in `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md`, the documented user-level guidance
+locations, and keeps the executable under fwd's tool prefix. This does not modify the project sync domain.
 
 ## Synchronization
 

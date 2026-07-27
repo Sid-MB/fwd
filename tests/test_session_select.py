@@ -197,7 +197,7 @@ def test_explicit_up_command_streams_by_default_or_attaches_directly(tmp_path: P
     from fwd.ops import send as send_ops
 
     monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: launched.append(kwargs) or state)
-    monkeypatch.setattr(send_ops, "run_command", lambda arguments, *, name=None: streamed.append((arguments, name)) or 7)
+    monkeypatch.setattr(send_ops, "run_command", lambda arguments, *, name=None, stop_after=False: streamed.append((arguments, name)) or 7)
 
     result = cli._run_up(("echo", "hi"), attach=attach)
 
@@ -206,6 +206,36 @@ def test_explicit_up_command_streams_by_default_or_attaches_directly(tmp_path: P
     assert launched[0]["attach"] is attach
     assert streamed == ([(("echo", "hi"), "demo")] if expected_stream else [])
     assert result == (7 if expected_stream else None)
+
+
+def test_explicit_up_stop_after_is_forwarded_to_durable_command(tmp_path: Path, monkeypatch) -> None:
+    selector = session_select.SessionSelector(command=("pytest", "-q"))
+    selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(), cwd=tmp_path, matches=())
+    state = _session("demo", tmp_path, command=("pytest", "-q"))
+    streamed: list[dict[str, object]] = []
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
+    from fwd.ops import launch as launch_ops
+    from fwd.ops import send as send_ops
+
+    monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: state)
+    monkeypatch.setattr(send_ops, "run_command", lambda arguments, **kwargs: streamed.append({"arguments": arguments, **kwargs}) or 0)
+
+    assert cli._run_up(("pytest", "-q"), stop_after=True) == 0
+    assert streamed == [{"arguments": ("pytest", "-q"), "name": "demo", "stop_after": True}]
+
+
+def test_up_stop_after_rejects_agent_and_direct_attachment(tmp_path: Path, monkeypatch) -> None:
+    from fwd.ops import session_select
+
+    agent_selection = session_select.CurrentSelection(selector=session_select.SessionSelector(agent="codex"), config=Config(), sessions=(), cwd=tmp_path, matches=())
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: agent_selection)
+    with pytest.raises(typer.Exit):
+        cli._run_up(("codex",), stop_after=True)
+
+    command_selection = session_select.CurrentSelection(selector=session_select.SessionSelector(command=("pytest",)), config=Config(), sessions=(), cwd=tmp_path, matches=())
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: command_selection)
+    with pytest.raises(typer.Exit):
+        cli._run_up(("pytest",), stop_after=True, attach=True)
 
 
 def test_bare_selector_flags_forward_to_reuse_dispatch(monkeypatch) -> None:

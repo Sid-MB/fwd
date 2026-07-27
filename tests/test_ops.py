@@ -34,6 +34,7 @@ from fwd.config import Config, RunpodTargetConfig, SshTargetConfig, SyncConfig
 from fwd.ops import attach as attach_ops
 from fwd.ops import launch as launch_ops
 from fwd.ops import lifecycle, transfer
+from fwd.send_tasks import SendTask, SendTaskStore
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState, StateStore, endpoint_to_dict
 from fwd.tooling import ToolchainPlan
@@ -534,6 +535,22 @@ def test_streamed_up_command_keeps_primary_session_as_shell(project, state_store
     assert launch_ops.startup_command_for(state) == launch_ops.REMOTE_SHELL_COMMAND
 
 
+def test_registered_agent_receives_remote_stopafter_helper_and_environment(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
+    prepared: list[tuple[str, bool]] = []
+
+    def prepare(endpoint, backend, session, *, agent_guidance=False):
+        prepared.append((session.name, agent_guidance))
+        return "/workspace/.fwd-tools/stop-after/demo/action"
+
+    monkeypatch.setattr(launch_ops.stop_after_ops, "prepare", prepare)
+
+    state = launch_ops.launch(initial_command=("codex",), attach=False)
+
+    assert prepared == [(state.name, True)]
+    assert "FWD_STOP_AFTER_SCRIPT=/workspace/.fwd-tools/stop-after/demo/action" in stub_world["tmux_new"][0][3]
+    assert state.flags["stop_after_script"] == "/workspace/.fwd-tools/stop-after/demo/action"
+
+
 def test_launch_uses_tar_when_rsync_unsupported(project, state_store, config, calls, stub_world, monkeypatch) -> None:
     """A proxy transport must transparently fall back to tar-over-ssh."""
     backend = FakeBackend(calls, endpoint=SSHEndpoint(host="proxy", user="root", supports_rsync=False))
@@ -877,6 +894,20 @@ def test_ls_json_exposes_named_rows(project, state_store, config, calls, monkeyp
     assert payload["rows"][0]["status"] == "running"
     assert payload["rows"][0]["running"] == "1h2m"
     assert payload["rows"][0]["last attached"] == f"{last_attached.isoformat().replace('T', ' ')[:16]} (4d3h2m)"
+
+
+def test_ls_json_exposes_queued_stop_after(project, state_store, config, calls, monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setattr(launch_ops.backends, "make_backend", lambda target, config: FakeBackend(calls, status=TargetStatus.RUNNING))
+    tasks = SendTaskStore(tmp_path / "tasks.json")
+    tasks.upsert(SendTask(id="stp-demo", session="myproject-abc123", kind="stopafter", command=["stop"], label="stop", status="queued"))
+    monkeypatch.setattr(lifecycle, "task_store", lambda: tasks)
+    monkeypatch.setattr(lifecycle.stop_after_ops, "status", lambda endpoint, session: "idle")
+    _seed(state_store, project)
+
+    lifecycle.ls(output_format="json")
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rows"][0]["stop after"] == "stp-demo (queued)"
 
 
 def test_stop_kills_tmux_then_backend(project, state_store, config, fake_backend, stub_world, calls) -> None:

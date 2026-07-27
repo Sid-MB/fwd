@@ -67,7 +67,7 @@ Attaching connects the human terminal to this primary tmux session. Detaching le
 
 ### Send tasks
 
-A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Canceling a task stops only that work, while `fwd stop` affects the entire session and target.
+A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. `--stop-after` adds a remotely owned lifecycle task after new work; `fwd send stopafter` queues it after all current work, and `fwd send cancel stopafter` disarms it. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
 
 ### Synchronization
 
@@ -86,8 +86,12 @@ fwd up --new --target runpod           # provision a separate session instead of
 fwd up --target work_cluster --agent codex     # sync Codex settings/skills and start remote Codex
 fwd up work_cluster claude                     # positional target + agent; transfer the Claude transcript
 fwd up -- pytest -q                    # provision, stream a durable task, and return its exit status
+fwd up --stop-after -- pytest -q       # run tests, then stop remotely even if the local computer disconnects
 fwd up -a -- bash                      # provision and attach directly to the primary pane
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
+fwd send --stop-after -- pytest -q     # queue remote stop after this task
+fwd send stopafter                     # queue remote stop after all active tasks
+fwd send cancel stopafter              # cancel queued remote shutdown
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
