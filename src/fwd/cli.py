@@ -357,7 +357,8 @@ UP_HELP = f"""{command_docs.UP.summary}
 
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
 in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
-Startup is persistent in tmux. Use --no-attach for an agent background launch and '--' before remote command flags.
+Startup is persistent in tmux; a successful finite command leaves a login shell in its pane. Use --no-attach for an
+agent background launch and '--' before remote command flags.
 
 To add a new target, run {ui.command('setup')!r}.
 """

@@ -147,7 +147,8 @@ def _verify_tmux_alive(endpoint: SSHEndpoint, session: str, command: str) -> Non
     where = found.stdout.strip() if found.returncode == 0 else "not found on PATH"
     raise SSHError(
         f"remote tmux session {session!r} exited immediately after starting {command!r} "
-        f"({binary}: {where}). The remote tooling is probably missing or broken — re-run with a fresh bootstrap."
+        f"({binary}: {where}). The startup command failed or exited unexpectedly — check its arguments and remote "
+        "dependencies, then re-run the launch."
     )
 
 

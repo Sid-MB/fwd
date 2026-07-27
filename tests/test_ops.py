@@ -515,6 +515,9 @@ def test_arbitrary_command_without_project_toolchain_bootstraps_no_unrelated_too
     assert "ensure_tools" not in calls
     assert "run_dep_install" not in calls
     assert "export_bundle" not in calls
+    tmux_command = stub_world["tmux_new"][0][3]
+    assert "echo ready" in tmux_command
+    assert 'exec "${SHELL:-bash}" -l' in tmux_command
 
 
 def test_launch_uses_tar_when_rsync_unsupported(project, state_store, config, calls, stub_world, monkeypatch) -> None:

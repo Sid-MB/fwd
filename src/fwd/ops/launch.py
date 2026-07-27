@@ -367,14 +367,31 @@ def initial_command_for(session: SessionState) -> tuple[str, ...]:
     return tuple(str(part) for part in recorded)
 
 
+def build_standard_startup_command(initial_command: tuple[str, ...]) -> str:
+    """Build the persistent tmux command for a shell, registered agent, or arbitrary argv.
+
+    Registered agents already own a long-lived interactive process and must remain the pane's direct command. A
+    successful finite arbitrary command instead falls through to a login shell so commands such as ``fwd up echo hi``
+    do not make tmux disappear before launch verification; its output remains in the pane scrollback and the session
+    stays useful. A non-zero command exits without the fallback shell so the liveness check still reports genuine
+    startup failures rather than disguising them as ready sessions.
+    """
+    if not initial_command:
+        return REMOTE_SHELL_COMMAND
+    agent = agents.resolve(initial_command)
+    if agent is not None:
+        return shlex.join(agent.command)
+    command = shlex.join(initial_command)
+    persistent = f"({command}); status=$?; if [ \"$status\" -eq 0 ]; then exec \"${{SHELL:-bash}}\" -l; fi; exit \"$status\""
+    return shlex.join(["bash", "-lc", persistent])
+
+
 def startup_command_for(session: SessionState) -> str:
     """Rebuild the persistent tmux command for restart and allocation-recovery paths."""
     initial = initial_command_for(session)
     if initial == MAGIC_CLAUDE_COMMAND:
         return claude_command_for(session)
-    if not initial:
-        return REMOTE_SHELL_COMMAND
-    return shlex.join(initial)
+    return build_standard_startup_command(initial)
 
 
 def _resolve_claude_flags(
@@ -732,7 +749,7 @@ def _launch(
     startup_cmd = (
         build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
         if is_claude
-        else (REMOTE_SHELL_COMMAND if not initial_command else shlex.join(agent.command if agent is not None else initial_command))
+        else build_standard_startup_command(initial_command)
     )
     # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
     flags["resume_id"] = resume_id

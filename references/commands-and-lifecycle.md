@@ -25,6 +25,10 @@ fwd up -- python train.py --epochs 10   # arbitrary persistent command
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 ```
 
+Arbitrary commands remain in the foreground while running. A successful finite command falls through to a login
+shell in the same tmux pane, preserving its output and keeping the session attachable. A nonzero exit still fails the
+launch health check.
+
 Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--name` provide unambiguous flag forms. Exact session names win, then target/backend names, then registered agents or arbitrary command argv. Target names win target-agent collisions with an actionable warning. All supplied selectors match conjunctively and unnamed searches stay in the current project.
 
 `fwd up -r/--reuse` attaches to an unambiguous matching session. A sole saved match wins; with several matches, the sole running or pending target wins only when every other candidate's status is known. Otherwise pass an exact session name. A human terminal creates and attaches when no match exists; non-interactive mode does neither and prints the exact creation command without `--reuse`. Bare `fwd` is `fwd up --reuse`, while root selectors such as `fwd runpod` rewrite to `fwd up --reuse runpod`. `fwd attach` uses the same parser and matching rules.

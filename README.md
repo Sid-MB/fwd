@@ -314,6 +314,10 @@ fwd up -a work python train.py      # choose a target, start an arbitrary comman
 fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
 ```
 
+An arbitrary command remains the session's foreground process while it runs. If it finishes successfully, fwd opens
+a login shell in the same pane so its output remains visible and the session stays attachable; a nonzero exit fails
+startup instead of disguising a broken command as a ready session.
+
 Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
 all three values. Without an exact name, matching is scoped to the current project. A sole saved match is
 unambiguous; if several match, the sole session whose target is running or pending wins only when every other status
