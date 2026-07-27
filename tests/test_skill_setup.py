@@ -58,7 +58,7 @@ def test_offer_records_decline_and_never_prompts_again(tmp_path: Path, monkeypat
     skill_setup.offer_once()
     skill_setup.offer_once()
 
-    assert prompts == ["Install the fwd skill for Codex and Claude from this local fwd package?"]
+    assert prompts == [f"Install the {skill_setup.ui.accent('fwd')} skill for Codex and Claude using {skill_setup.ui.accent('npx skills')}?"]
     assert marker.read_text(encoding="utf-8") == "declined\n"
 
 

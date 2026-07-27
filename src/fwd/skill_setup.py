@@ -86,7 +86,7 @@ def offer_once() -> None:
     """Offer one local, global Codex/Claude skill install while retaining the installer's terminal."""
     if SKILL_PROMPT_PATH.exists():
         return
-    if not ui.confirm("Install the fwd skill for Codex and Claude from this local fwd package?", default=True):
+    if not ui.confirm(f"Install the {ui.accent('fwd')} skill for Codex and Claude using {ui.accent('npx skills')}?", default=True):
         _record("declined")
         return
     npx = shutil.which("npx")

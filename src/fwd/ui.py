@@ -142,6 +142,15 @@ def record(title: str, fields: Sequence[tuple[str, object]], *, output_format: O
     render(RecordElement(title, tuple(fields)), output_format=output_format, console=console)
 
 
+def accent(text: str) -> str:
+    """Return a bold cyan terminal label for command names and other short prompt anchors.
+
+    Typer's prompts are implemented by Click rather than Rich, so Rich markup such as ``[bold cyan]`` would be shown
+    literally. Typer's ANSI styling is understood by Click and is automatically stripped when color is unavailable.
+    """
+    return typer.style(text, fg=typer.colors.CYAN, bold=True)
+
+
 def confirm(prompt: str, *, default: bool = False) -> bool:
     """Ask for yes/no confirmation.
 
