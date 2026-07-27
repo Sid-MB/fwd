@@ -39,7 +39,7 @@ RSYNC_BASE: tuple[str, ...] = ("rsync", "-az", "--no-owner", "--no-group")
 
 # rsync exit codes that mean "the transfer happened, but some files were skipped": 23 = partial transfer due to error
 # (a permission fixup, an unreadable file), 24 = source files vanished mid-run (normal when a build is running).
-# Treating these as fatal aborts a launch after the pod has already been rented, for files that did transfer.
+# Treating these as fatal aborts a launch after the pod has already been provisioned, for files that did transfer.
 RSYNC_PARTIAL_EXITS: frozenset[int] = frozenset({23, 24})
 
 # macOS bsdtar stores extended attributes as AppleDouble "._name" sidecar files, which arrive as visible junk in every
@@ -81,7 +81,7 @@ def _run(argv: Sequence[str], *, what: str) -> None:
     """Run a transfer subprocess with output streamed, raising :class:`SSHError` on a genuine failure.
 
     Partial-transfer exits are downgraded to a warning: they mean the bytes arrived but some per-file operation was
-    refused, and aborting there would kill a launch (and waste an already-rented pod) over something cosmetic.
+    refused, and aborting there would kill a launch (and waste an already-provisioned pod) over something cosmetic.
     """
     proc = subprocess.run(list(argv), check=False)
     if proc.returncode in RSYNC_PARTIAL_EXITS:

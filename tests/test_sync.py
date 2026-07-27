@@ -197,7 +197,7 @@ def test_rsync_base_is_archive_compressed_and_skips_ownership() -> None:
 
 
 def test_partial_transfer_exits_are_warnings_not_failures(monkeypatch, capsys) -> None:
-    """rsync 23/24 mean the bytes arrived but some per-file operation was refused; aborting there wastes a rented pod."""
+    """rsync 23/24 mean the bytes arrived but some per-file operation was refused; aborting there wastes a provisioned pod."""
     import subprocess as sp
 
     from fwd import sync as sync_mod

@@ -37,7 +37,7 @@ CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 app = typer.Typer(
     name="fwd",
     help="Forward your Claude Code session to a remote machine: provision, sync, carry the transcript, attach.",
-    epilog=f"Bare 'fwd' attaches to this directory's session, or launches its saved default. For a first zero-config launch, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'.",
+    epilog=f"Bare 'fwd' attaches to this directory's session, launches its saved default, or starts setup on first use. For a zero-config launch, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -50,9 +50,9 @@ def main(
     ctx: typer.Context,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
-    """Attach to this directory's session, launching its saved default if no session exists yet.
+    """Attach to this directory's session, launching its saved default or starting setup on first use.
 
-    For a first launch without saved config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias; bare 'fwd' never writes configuration.
+    For a launch without saving config, use 'fwd up --target runpod', 'fwd up --target user@host', or an SSH alias.
     """
     if ctx.invoked_subcommand is not None:
         return

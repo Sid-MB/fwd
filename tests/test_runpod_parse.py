@@ -148,7 +148,7 @@ class TestPodStatus:
         assert pod_status(parse_pod(fixture("pod-get-running.json"))) is TargetStatus.RUNNING
 
     def test_running_without_address_is_pending(self) -> None:
-        # desiredStatus flips to RUNNING the instant the pod is rented, minutes before sshd answers.
+        # desiredStatus flips to RUNNING the instant the pod is provisioned, minutes before sshd answers.
         assert pod_status(parse_pod(fixture("pod-create.json"))) is TargetStatus.PENDING
 
     def test_exited_is_stopped(self) -> None:

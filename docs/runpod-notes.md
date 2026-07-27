@@ -77,7 +77,7 @@ out of `~/.runpod/config.toml` into its own memory, where it could reach a log l
   substring behaviour change upstream cannot make fwd adopt the wrong pod.
 - `pod create`, `pod start` and `pod stop` all return the **same single-pod document** as `pod get`, so one parser
   (`parse_pod`) covers all four.
-- `desiredStatus` is RunPod's *intent*, not liveness: it reads `RUNNING` the instant the pod is rented, ~30–60 s
+- `desiredStatus` is RunPod's *intent*, not liveness: it reads `RUNNING` the instant the pod is provisioned, ~30–60 s
   before sshd answers. `pod_status()` therefore downgrades `RUNNING` to `PENDING` until the `ssh` block has an
   address. Ready-time observed: ~5 s (secure CPU) to ~30 s (community GPU) for the address, plus sshd startup.
 - **`pod get` replays a stale ssh block right after `pod start`.** For roughly the first 20–30 s after a restart,

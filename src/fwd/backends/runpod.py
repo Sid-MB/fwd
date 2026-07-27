@@ -192,7 +192,7 @@ def parse_proxy_target(payload: dict[str, Any]) -> str | None:
 def pod_status(payload: dict[str, Any]) -> TargetStatus:
     """Map a pod document to a :class:`~fwd.backends.base.TargetStatus`.
 
-    ``desiredStatus`` is RunPod's *intent*, not its liveness: a pod reads ``RUNNING`` from the instant it is rented,
+    ``desiredStatus`` is RunPod's *intent*, not its liveness: a pod reads ``RUNNING`` from the instant it is provisioned,
     minutes before sshd answers. We therefore downgrade RUNNING to ``PENDING`` until the ``ssh`` block carries a
     real address, which is the only signal RunPod gives that the container is actually up.
     """

@@ -117,7 +117,7 @@ otherwise ~10 s repair.
 - `fwd stop` → kills remote tmux, `pod stop`; `runpodctl pod get` → `desiredStatus: EXITED`. **PASS.**
 - `fwd attach` against the stopped pod: the STOPPED branch is reached and it *restarts* the pod. Note for scripted use:
   `ui.confirm` (src/fwd/ui.py:121) returns the **default** when stdin is not a tty, and the restart prompt defaults to
-  `True`, so a non-interactive `fwd attach` silently rents the pod again. Defensible, but worth knowing.
+  `True`, so a non-interactive `fwd attach` silently provisions the pod again. Defensible, but worth knowing.
 - Port churn confirmed exactly as docs/runpod-notes.md predicts: `20660 → 20663` (IP unchanged). `fwd up` re-resolved
   it, `wait_for_ssh` succeeded on the new port, and `~/.fwd/state.json` was rewritten with `"port": 20663`. **PASS.**
 - Re-sync + dep audit after the wipe: **PASS** (`/workspace` survived, `uv sync` audited 1 package).
@@ -172,7 +172,7 @@ rsync: [generator] chown "/workspace/proj/.git" failed: Operation not permitted 
 SSHError: rsync push failed (exit 23)
 ```
 
-  and the whole launch aborts — after the pod has been rented, HANDOFF generated and ssh established — printing a raw
+  and the whole launch aborts — after the pod has been provisioned, HANDOFF generated and ssh established — printing a raw
   Rich traceback rather than a `ui.die` message.
 - **Expected:** the push succeeds. The files *do* transfer; only the ownership fixups fail.
 - **Cause:** `-a` implies `-o -g`. The remote is root, but the mfs volume refuses `chown` to a foreign uid. Verified

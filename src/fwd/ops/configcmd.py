@@ -266,7 +266,7 @@ def render_example(which: str = "all") -> str:
         "# Commented-out lines are optional fields shown with a plausible value, not defaults being applied.",
         "# Inspect what your own files actually resolve to with 'fwd config'.",
         "#",
-        "# You may not need any of this: 'fwd up --target runpod' rents a GPU pod from built-in defaults, and",
+        "# You may not need any of this: 'fwd up --target runpod' provisions a GPU pod from built-in defaults, and",
         "# 'fwd up --target user@host' (or any Host alias in ~/.ssh/config) works with no config file at all.",
         "",
         f'default_target = "{EXAMPLE_TARGET_NAMES[backends[0]]}"  # used when --target is omitted',

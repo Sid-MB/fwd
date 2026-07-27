@@ -493,7 +493,7 @@ def no_tty(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("status", [TargetStatus.STOPPED, TargetStatus.JOB_ENDED])
 def test_attach_never_auto_restarts_without_a_tty(project, state_store, config, attach_world, calls, monkeypatch, no_tty, status) -> None:
-    """The live-e2e hazard: a scripted attach must never silently re-rent billable hardware.
+    """The live-e2e hazard: a scripted attach must never silently reprovision billable hardware.
 
     ui.confirm returns its *default* (yes) when there is no tty, so without this guard a cron job attaching to a
     stopped pod would start charging money with nobody watching.
@@ -525,7 +525,7 @@ def test_attach_restart_flag_authorizes_non_interactive_restart(project, state_s
 
 
 def test_attach_dead_tmux_also_gated_without_tty(project, state_store, config, attach_world, calls, monkeypatch, no_tty) -> None:
-    """Rerunning the launch pipeline is cheaper than renting hardware, but still goes through the same gate."""
+    """Rerunning the launch pipeline is cheaper than provisioning hardware, but still goes through the same gate."""
     monkeypatch.setattr(remote, "tmux_exists", lambda *a, **k: False)
     monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: pytest.fail("must not relaunch without a tty"))
     _seed(state_store, project)

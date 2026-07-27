@@ -105,7 +105,7 @@ def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
 
     The live e2e run (docs/live-e2e-report.md) caught the hazard this exists to close: :func:`fwd.ui.confirm` returns
     its *default* when there is no tty, and these prompts default to yes, so a scripted ``fwd attach`` against a
-    stopped pod silently re-rented hardware at $0.25/hr with nobody watching. Spending money is the one decision that
+    stopped pod silently reprovisioned hardware at $0.25/hr with nobody watching. Spending money is the one decision that
     must never be made by a default.
 
     So the rule is: an explicit ``--restart`` always authorizes, an interactive user is asked, and a non-interactive
@@ -202,16 +202,16 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
 
 
 def smart_default(*, restart: bool = False) -> NoReturn:
-    """Implement bare ``fwd``: attach to this directory's session, else launch a deliberately saved default.
+    """Implement bare ``fwd``: attach, launch a saved default, or enter first-time setup.
 
-    First-use provider selection belongs to ``fwd up --target ...`` because a bare command cannot safely choose between
-    an existing SSH machine and billable compute. Once a session or default exists, one word still gets back to work.
+    Setup remains the safe boundary for choosing between an existing SSH machine and billable compute. Its own mode
+    detection prompts humans while giving agents exact required flags rather than attempting an interactive exchange.
     """
     session = launch_ops.resolve_session(None, required=False)
     if session is not None:
         # Returned rather than called bare: attach never returns in production, but if it ever did, falling through
         # would launch a second machine for a directory that already has one.
         return attach(session.name, restart=restart)
-    ui.info(f"no fwd session for {Path.cwd().name}; looking for a saved default target")
+    ui.info(f"no fwd session for {Path.cwd().name}; looking for a saved target")
     launch_ops.launch()
     raise typer.Exit(0)

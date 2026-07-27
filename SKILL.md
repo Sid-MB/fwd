@@ -53,7 +53,7 @@ host = "gpu.example.com"
 user = "sid"
 remote_base = "~/fwd"
 
-[targets.pod]                 # runpod — rent a GPU per session
+[targets.pod]                 # runpod — provision a GPU per session
 backend = "runpod"
 compute_type = "gpu"          # gpu | cpu; cpu pods get NO persistent volume
 cloud_type = "community"      # community is cheaper and fully works

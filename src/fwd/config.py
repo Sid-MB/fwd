@@ -336,7 +336,7 @@ class Config:
             raise ConfigError(
                 "No target is configured or selected.\n\n"
                 "Launch now without a config file:\n"
-                "  fwd up --target runpod       Rent a GPU pod\n"
+                "  fwd up --target runpod       Provision a GPU pod\n"
                 "  fwd up --target user@host    Use an existing SSH machine\n\n"
                 "To save a default, run 'fwd setup'. To configure manually, run 'fwd config --example' and add "
                 f"[targets.<name>] to {GLOBAL_CONFIG_PATH}."

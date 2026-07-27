@@ -294,19 +294,27 @@ def _resolve_target(cfg: Config, requested: str | None, existing: SessionState |
     return cfg.target(None)
 
 
-def _resolve_target_or_die(cfg: Config, requested: str | None, existing: SessionState | None) -> TargetConfig:
-    """Resolve a configured or explicitly inferred target and surface configuration errors without side effects.
+def _resolve_target_or_setup(cfg: Config, requested: str | None, existing: SessionState | None, local_cwd: Path) -> TargetConfig:
+    """Resolve a target, running first-time setup when bare ``fwd`` has no configured choice.
 
-    Target selection happens when the user names one with ``fwd up --target ...`` or has deliberately saved a default.
-    A bare ``fwd`` must never open the setup wizard or write ``~/.fwd/config.toml``: without a target name it cannot
-    safely choose between an existing SSH machine and a billable provider. Explicit inferable targets such as
-    ``runpod``, ``user@host``, and SSH config aliases are synthesized in memory by :meth:`Config.target`; only
-    ``fwd setup`` persists configuration.
+    Setup is attempted only when no target was requested, no targets exist, and ordinary resolution failed. Explicit
+    ``fwd up --target ...`` calls continue to use in-memory inference without writing config, while typos and ambiguous
+    configured targets keep their specific errors. The wizard chooses its own interaction mode: terminals prompt,
+    whereas agents and redirected callers receive actionable missing-flag errors instead of blocking.
     """
     try:
         return _resolve_target(cfg, requested, existing)
     except ConfigError as exc:
-        ui.die(str(exc))
+        if requested or cfg.targets:
+            ui.die(str(exc))
+        from fwd import wizard
+
+        ui.info("no saved target found; starting first-time setup")
+        wizard.run_wizard()
+        try:
+            return _resolve_target(load_config(local_cwd), requested, existing)
+        except ConfigError as retry_exc:
+            ui.die(str(retry_exc))
 
 
 def _fresh_handoff(local_cwd: Path) -> Path | None:
@@ -419,7 +427,7 @@ def launch(
     if existing is not None:
         session_name = existing.name
 
-    target_cfg = _resolve_target_or_die(cfg, target, existing)
+    target_cfg = _resolve_target_or_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
     flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds)
 

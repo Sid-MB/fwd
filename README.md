@@ -37,23 +37,21 @@ installed by `fwd` on first launch.
 
 ## Install as a Claude Code skill
 
-`fwd` ships a `SKILL.md` at the repo root, so Claude can drive it for you — ask it to "continue this on a GPU machine"
-and it will launch, sync and hand the session back:
+`fwd` ships a `SKILL.md` so your agent can drive it for you: ask it to "Continue my work on a GPU machine" and it will launch, sync and hand the session back:
 
 ```sh
 npx skills add Sid-MB/fwd
 ```
 
-That installs the skill into your agent's skills directory (`.claude/skills/fwd/` for Claude Code); pass
-`-a claude-code -y` for a non-interactive install, or `--all` when installing into several agents. The skill teaches
+The skill teaches
 Claude the safe subset of the CLI — it uses `fwd up --no-attach` since attaching is an interactive terminal takeover,
-and hands `fwd`/`fwd attach` back to you. Installing the skill does not install the `fwd` binary; do that above.
+and hands `fwd`/`fwd attach` back to you.
 
 ## Quickstart
 
 ```sh
-fwd setup                 # prompts in a terminal; flag-only for agents and scripts
 cd ~/code/my-project
+fwd setup                 # prompts in a terminal; flag-only for agents and scripts
 fwd                       # launch, sync, bootstrap, and attach
 ```
 
@@ -75,7 +73,7 @@ of opening a prompt. Run `fwd setup --help` for every field, or pass `--interact
 
 ```sh
 fwd setup --backend ssh --host my-box --target-name work
-fwd setup --backend slurm --login-host login.example.edu --user sid --remote-base /scratch/sid/fwd
+fwd setup --backend slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
 ```
 
 ## Commands
@@ -137,7 +135,7 @@ Two extras, both opt-in because they touch files you may not want leaving your l
   hard exclusion list: `settings.local.json`, `.credentials.json` and history are never included, even if you ask.
 - **`--creds`** ⚠️ lifts your Claude OAuth token out of the macOS Keychain and writes it to
   `~/.claude/.credentials.json` on the remote machine (mode 600). **This places a live credential on a machine you may
-  not control** — a shared cluster login node, or a rented pod whose disk you do not own. Prefer logging in inside the
+  not control** — a shared cluster login node, or a provisioned pod whose disk you do not own. Prefer logging in inside the
   remote session. `fwd` warns every time this flag is used.
 
 Set defaults for any of these under `[claude]` in your config.
@@ -160,7 +158,7 @@ override a single field of a globally-declared target without restating the rest
 You may not need a config file at all. A `--target` that is not in your config is inferred when it is unambiguous:
 
 ```sh
-fwd up --target runpod              # rents a GPU pod using the built-in RunPod defaults
+fwd up --target runpod              # provisions a GPU pod using the built-in RunPod defaults
 fwd up --target sid@gpu.example.com # a machine you already have
 fwd up --target my-box              # any Host alias in ~/.ssh/config
 ```
@@ -184,7 +182,7 @@ proxy_jump = "sid@bastion.example"   # optional
 remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 ```
 
-### RunPod — rent a GPU per session
+### RunPod — provision a GPU per session
 
 ```toml
 [targets.pod]
@@ -224,10 +222,10 @@ because that transport cannot run rsync — it warns, and pushes get slower.
 [targets.hpc]
 backend = "slurm"
 login_host = "login.hpc.example.edu"
-user = "sid"
-proxy_jump = "sid@bastion.example.edu"        # omit if the login node is directly reachable
+user = "me"
+proxy_jump = "me@ext.example.edu"            # omit if the login node is directly reachable
 key_path = "~/.ssh/id_ed25519_hpc"
-remote_base = "/scratch/sid/fwd"              # MUST be scratch, never $HOME
+remote_base = "/scratch/me/fwd"              # MUST be scratch, never $HOME
 alloc = "--time=04:00:00 --cpus-per-task=8 --mem=32G"
 partition = "gpu"
 account = "cs-research"
@@ -242,7 +240,7 @@ Per-project override in `.fwd/config.toml` — inherits everything above, change
 
 ```toml
 [targets.hpc]
-alloc = "--time=08:00:00 --cpus-per-task=16 --mem=64G --gres=gpu:a100:1"
+alloc = "--time=48:00:00 --cpus-per-task=16 --mem=64G --gres=gpu:a100:1"
 ```
 
 Notes specific to Slurm (`docs/slurm-notes.md`):
@@ -288,7 +286,7 @@ excluded: the remote session needs history to diff, blame and commit.
   additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet.
 - **Destructive and billable actions never happen on a default.** `fwd rm` needs `--force` when non-interactive: its
   prompt defaults to `no`, so a scripted `fwd rm` safely does nothing. Likewise `fwd attach` will **refuse to restart
-  stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start renting
+  stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning
   hardware again. Pass `--restart` (`-y`) to authorize it explicitly:
 
   ```sh
@@ -301,40 +299,4 @@ excluded: the remote session needs history to diff, blame and commit.
   and reuse them by name.
 
 ## Development
-
-```sh
-uv sync
-uv run pytest
-uv run fwd --help
-```
-
-Design notes for the trickier subsystems live in `docs/`: `session-transfer-notes.md` (how transcript relocation was
-verified), `runpod-notes.md` (runpodctl behaviour and the volume trap), `slurm-notes.md` (job.sh, login pinning, the
-`fwd-env.sh` contract).
-
-CI runs `uv sync --frozen` + `pytest` on 3.12 and 3.13 for every push and PR to `main`
-(`.github/workflows/ci.yml`). `--frozen` means a dependency bump must land with its `uv.lock` update.
-
-### Publishing
-
-`.github/workflows/publish.yml` publishes to PyPI over **OIDC trusted publishing** — there is no API token in this
-repo and none should be added. It runs when a GitHub release is *published*, or manually via `workflow_dispatch`. The
-`build` job runs `uv build` (sdist + wheel, checked to contain `bootstrap.sh`) and uploads the artifact; a separate
-`publish` job holds `id-token: write` and the `pypi` environment, and does nothing but download that artifact and
-upload it. Splitting them keeps the job that can mint a PyPI credential away from any project code.
-
-One-time setup on pypi.org, under *Publishing* → *Add a new pending publisher*:
-
-| Field | Value |
-| --- | --- |
-| PyPI project name | must match `project.name` in `pyproject.toml` (currently `fwd`) |
-| Owner / repository | `Sid-MB` / `fwd` |
-| Workflow name | `publish.yml` |
-| Environment name | `pypi` |
-
-Then create a matching `pypi` environment in the repo settings (a required-reviewer rule there gates every upload).
-
-**The published version comes from `version` in `pyproject.toml`, not from the git tag.** PyPI will not overwrite an
-existing version, so bump `pyproject.toml` in the same commit you tag — otherwise the `publish` job fails at the upload
-step. None of this is wired into the install instructions above: until a release actually happens, the git install is
-the real one.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
