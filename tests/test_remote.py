@@ -13,6 +13,7 @@ from pathlib import Path
 from fwd.remote import (
     BOOTSTRAP_PATH,
     detect_dep_commands,
+    run_bootstrap,
     tmux_attach_argv,
 )
 from fwd.sshexec import SSHEndpoint
@@ -257,6 +258,27 @@ def test_tmux_new_succeeds_when_the_session_stays_alive(monkeypatch) -> None:
 # --------------------------------------------------------------------------------------------------------------
 
 
+def test_run_bootstrap_passes_requested_agent_to_script(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_script(self, script, **kwargs):  # noqa: ANN001 - endpoint-shaped test double
+        captured["script"] = script
+        captured.update(kwargs)
+
+    monkeypatch.setattr(SSHEndpoint, "run_script", fake_run_script)
+    run_bootstrap(_endpoint(), tool_prefix="/tools", remote_dir="/project", scratch="/cache", agent="codex")
+
+    assert captured["script"] == BOOTSTRAP_PATH
+    assert captured["env"] == {
+        "FWD_TOOL_PREFIX": "/tools",
+        "FWD_REMOTE_DIR": "/project",
+        "FWD_SCRATCH": "/cache",
+        "FWD_AGENT": "codex",
+    }
+    assert captured["check"] is True
+    assert captured["stream"] is True
+
+
 def test_bootstrap_minimal_mode_writes_env_file_and_marker(tmp_path: Path) -> None:
     """FWD_BOOTSTRAP_MINIMAL=1 must produce a complete environment with zero network access."""
     prefix = tmp_path / "tools"
@@ -387,6 +409,31 @@ def test_bootstrap_marker_is_not_trusted_when_a_tool_is_missing(tmp_path: Path) 
     assert third.returncode == 0, third.stderr
     assert "already applied" not in third.stdout
     assert "claude" in third.stderr
+
+
+def test_bootstrap_codex_mode_validates_codex_without_requiring_claude(tmp_path: Path) -> None:
+    """A Codex launch must not install or validate Claude, which may legitimately be absent on a fresh target."""
+    prefix = tmp_path / "tools"
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin = tmp_path / "fakebin"
+    for tool in ("uv", "codex", "tmux"):
+        _fake_tool(fake_bin, tool)
+    env = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "FWD_TOOL_PREFIX": str(prefix),
+        "FWD_REMOTE_DIR": str(tmp_path / "proj"),
+        "FWD_AGENT": "codex",
+    }
+
+    first = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
+    second = subprocess.run(["bash", str(BOOTSTRAP_PATH)], env=env, capture_output=True, text=True)
+
+    assert first.returncode == 0, first.stderr
+    assert "codex present" in first.stdout
+    assert "claude" not in first.stdout
+    assert "already applied" in second.stdout
 
 
 def test_bootstrap_requires_its_contract_vars(tmp_path: Path) -> None:

@@ -47,6 +47,25 @@ app = typer.Typer(
 )
 
 
+def _interactive_terminal() -> bool:
+    """Return whether attaching can safely take over this process.
+
+    Both streams must be terminals because tmux needs interactive input and users still need to see its output.
+    Known agent environments are treated as non-interactive even when their command runner happens to allocate a
+    pseudo-terminal: replacing an agent tool call with ``ssh -t`` would strand the caller inside tmux.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty() and not any(os.environ.get(name) for name in ("CLAUDECODE", "CODEX_AGENT"))
+
+
+def _should_attach(command: tuple[str, ...], *, attach: bool, no_attach: bool) -> bool:
+    """Resolve explicit attach flags and the interactive default for registered coding agents."""
+    from fwd import agents
+
+    if attach and no_attach:
+        ui.die("--attach and --no-attach are mutually exclusive")
+    return attach or (agents.resolve(command) is not None and _interactive_terminal() and not no_attach)
+
+
 def _version_callback(value: bool) -> None:
     """Print the version before command dispatch, making ``fwd -V`` safe even though bare ``fwd`` performs work."""
     if value:
@@ -90,13 +109,8 @@ def _up(
     """
     from fwd.ops import launch as launch_ops
 
-    from fwd import agents
-
     initial_command = tuple(command or ())
-    if attach and no_attach:
-        ui.die("--attach and --no-attach are mutually exclusive")
-    interactive = sys.stdin.isatty() and sys.stdout.isatty() and not any(os.environ.get(name) for name in ("CLAUDECODE", "CODEX_AGENT"))
-    effective_attach = attach or (agents.resolve(initial_command) is not None and interactive and not no_attach)
+    effective_attach = _should_attach(initial_command, attach=attach, no_attach=no_attach)
     launch_ops.launch(
         target=target,
         gpu=gpu,

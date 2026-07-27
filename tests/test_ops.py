@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 import typer
 
-from fwd import claude_state, remote, sshexec, sync, ui
+from fwd import claude_state, codex_state, remote, sshexec, sync, ui
 from fwd.backends.base import TargetInfo, TargetStatus
 from fwd.config import Config, SshTargetConfig, SyncConfig
 from fwd.ops import attach as attach_ops
@@ -393,6 +393,21 @@ def test_launch_skips_secret_bearing_steps_by_default(project, state_store, conf
     assert "upload_user_config" not in calls
     assert "read_keychain_creds" not in calls
     assert "upload_creds" not in calls
+
+
+def test_codex_launch_syncs_settings_selects_codex_bootstrap_and_starts_codex(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+    """The registry must drive all three integration points without activating Claude transcript or credential work."""
+    monkeypatch.setattr(codex_state, "upload_user_config", lambda endpoint: calls.append("upload_codex_config"))
+
+    state = launch_ops.launch(initial_command=("codex",), attach=False)
+
+    assert "upload_codex_config" in calls
+    assert "export_bundle" not in calls
+    assert "import_bundle" not in calls
+    assert "read_keychain_creds" not in calls
+    assert stub_world["run_bootstrap"][1]["agent"] == "codex"
+    assert stub_world["tmux_new"][0][3].endswith("exec codex'")
+    assert state.flags["initial_command"] == ["codex"]
 
 
 def test_launch_uses_tar_when_rsync_unsupported(project, state_store, config, calls, stub_world, monkeypatch) -> None:
