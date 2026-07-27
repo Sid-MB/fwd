@@ -52,10 +52,29 @@ class RecordElement:
 
 OutputElement = TableElement | RecordElement
 
+# Experimental ordered format preference used only by automatic rendering. Unknown names are intentionally ignored so
+# callers can share one preference list across tools with different renderer sets.
+FORMAT_PREFERENCE_ENV = "FORMATPREF"
+FORMAT_PREFERENCE_NAMES = {
+    "json": OutputFormat.json,
+    "md": OutputFormat.markdown,
+    "markdown": OutputFormat.markdown,
+    "rich": OutputFormat.rich,
+}
+
 
 def is_machine_environment() -> bool:
     """Return whether an agent marker requests stable non-interactive output despite a possible pseudo-terminal."""
     return any(os.environ.get(name) for name in ("CLAUDECODE", "CODEX_AGENT"))
+
+
+def preferred_format() -> OutputFormat | None:
+    """Return the first supported concrete format in the experimental ordered environment preference."""
+    for name in os.environ.get(FORMAT_PREFERENCE_ENV, "").split(","):
+        supported = FORMAT_PREFERENCE_NAMES.get(name.strip().lower())
+        if supported is not None:
+            return supported
+    return None
 
 
 def resolve_format(requested: OutputFormat | str, *, terminal: bool) -> OutputFormat:
@@ -63,6 +82,9 @@ def resolve_format(requested: OutputFormat | str, *, terminal: bool) -> OutputFo
     value = requested if isinstance(requested, OutputFormat) else OutputFormat(requested)
     if value is not OutputFormat.auto:
         return value
+    preference = preferred_format()
+    if preference is not None:
+        return preference
     return OutputFormat.rich if terminal and not is_machine_environment() else OutputFormat.markdown
 
 

@@ -23,7 +23,7 @@ After launch, communicate with the running remote conversation through durable s
 
 ```sh
 fwd send agent --detach "run the tests and fix failures"
-fwd send --ls --format json
+fwd send --ls --json
 fwd send TASK_ID
 fwd send TASK_ID --stop
 ```
@@ -48,9 +48,9 @@ receive the original machine-readable event stream.
 Use JSON output and non-attaching commands when Codex is driving fwd:
 
 ```sh
-fwd doctor --format json
+fwd doctor --json
 fwd up codex --target TARGET
-fwd ls --format json
+fwd ls --json
 fwd diff -q TARGET
 ```
 

@@ -38,6 +38,7 @@ from fwd.output import OutputFormat
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
 PANEL_TARGET = "Target & session"
 PANEL_CLAUDE = "Claude context"
+JsonOutputOption = Annotated[bool, typer.Option("--json", help="Render structured output as JSON; shorthand for --format json.")]
 CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "a": ("attach",),
@@ -91,6 +92,15 @@ def _version_callback(value: bool) -> None:
     if value:
         ui.console.print(__version__)
         raise typer.Exit()
+
+
+def _selected_output_format(output_format: OutputFormat, *, json_output: bool) -> OutputFormat:
+    """Apply the reusable ``--json`` shortcut while rejecting contradictory explicit rendering requests."""
+    if not json_output:
+        return output_format
+    if output_format not in (OutputFormat.auto, OutputFormat.json):
+        ui.die(f"--json conflicts with --format {output_format.value}; pass only one output format")
+    return OutputFormat.json
 
 
 def _announce_root_alias(ctx: typer.Context, *, target: str | None, agent: str | None, name: str | None, restart: bool) -> None:
@@ -390,6 +400,7 @@ def _send(
     list_only: Annotated[bool, typer.Option("--ls", help="List send tasks instead of starting one.")] = False,
     include_all: Annotated[bool, typer.Option("--all", help="With --ls, include completed, failed, and canceled tasks.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="With --ls, choose Rich, Markdown, or JSON output.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
 ) -> None:
     """Start, follow, background, list, or cancel durable remote tasks.
 
@@ -412,7 +423,7 @@ def _send(
         immediate=immediate,
         list_only=list_only,
         include_all=include_all,
-        output_format=output_format,
+        output_format=_selected_output_format(output_format, json_output=json_output),
     )
     raise typer.Exit(code)
 
@@ -434,11 +445,12 @@ app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignor
 def ls_cmd(
     all_projects: Annotated[bool, typer.Option("--all-projects", help="Show sessions from every locally tracked project instead of only the current project.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
 ) -> None:
     """List this project's managed sessions with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
 
-    lifecycle.ls(output_format=output_format, all_projects=all_projects)
+    lifecycle.ls(output_format=_selected_output_format(output_format, json_output=json_output), all_projects=all_projects)
 
 
 @app.command("push")
@@ -703,6 +715,7 @@ def setup_cmd(
 def doctor_cmd(
     target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target instead of every configured one.", autocompletion=complete_target)] = None,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
 ) -> None:
     """Check local prerequisites (ssh, rsync, backend CLIs) and the reachability of each configured target.
 
@@ -710,12 +723,13 @@ def doctor_cmd(
     """
     from fwd import doctor
 
-    raise typer.Exit(doctor.run_doctor(target, output_format=output_format))
+    raise typer.Exit(doctor.run_doctor(target, output_format=_selected_output_format(output_format, json_output=json_output)))
 
 
 @app.command("info")
 def info_cmd(
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
 ) -> None:
     """Print installed version and the local paths used for configuration and session state."""
     from fwd.config import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_RELPATH
@@ -729,7 +743,7 @@ def info_cmd(
             ("project config", f"<project>/{PROJECT_CONFIG_RELPATH}"),
             ("session state", str(STATE_PATH)),
         ),
-        output_format=output_format,
+        output_format=_selected_output_format(output_format, json_output=json_output),
     )
 
 

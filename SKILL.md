@@ -19,15 +19,15 @@ Treat the text following the skill name as the user's intent. Do not require rig
 
 ## Core workflow
 
-1. Run `fwd doctor --format json` when diagnosing prerequisites or a failed target.
+1. Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 2. Determine the requested target, compute type, and initial command. CPU is the default unless the user asks for a GPU.
 3. Discover configuration with `fwd config`, `fwd config --schema`, or `fwd config --example BACKEND`; never guess fields.
 4. Launch non-interactively with `fwd up --target TARGET --agent AGENT` or `fwd up TARGET -- COMMAND...`. Exact `claude` and `codex` agents enable their agent-specific synchronization.
-5. Verify state with `fwd ls --format json` and synchronization with `fwd diff -q [TARGET]`.
+5. Verify state with `fwd ls --json` and synchronization with `fwd diff -q [TARGET]`.
 6. Tell the user how to attach or retrieve results. Do not take over the agent's terminal.
 
 Use `fwd send -- COMMAND` for a durable remote command without starting or restarting compute. It streams by default;
-use `--detach` for background work, `fwd send --ls --format json` to discover task IDs, `fwd send TASK_ID` to follow,
+use `--detach` for background work, `fwd send --ls --json` to discover task IDs, `fwd send TASK_ID` to follow,
 and `fwd send TASK_ID --stop` to cancel only that task.
 
 Use `fwd send agent MESSAGE` to continue the Claude/Codex conversation already running in the selected session.
@@ -36,7 +36,7 @@ replacement; `--stop` alone cancels without ending the agent session.
 
 ## Agent safety rules
 
-- Prefer `--format json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
+- Prefer `--json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
 - Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --connect`, or `fwd up --attach` as a tool call because connect/attach forms take over a human terminal. In non-interactive mode `--connect` deliberately errors instead of provisioning.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
@@ -54,13 +54,13 @@ fwd up --target work --agent codex     # sync Codex settings/skills and start re
 fwd up work claude                     # positional target + agent; transfer the Claude transcript
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
-fwd send --ls --format json            # inspect active command and agent tasks
+fwd send --ls --json                   # inspect active command and agent tasks
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
 fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
 fwd pull outputs/                      # retrieve selected remote results
-fwd ls --format json                   # inspect live sessions
-fwd ls --all-projects --format json    # inspect sessions across every local project
+fwd ls --json                          # inspect live sessions
+fwd ls --all-projects --json           # inspect sessions across every local project
 fwd stop                               # stop the session and suspend supported compute
 ```
 

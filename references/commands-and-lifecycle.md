@@ -40,7 +40,7 @@ fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
 fwd send --detach -- python train.py
 fwd send -- bash -lc 'cat outputs/*.json | jq .'
-fwd send --ls --format json
+fwd send --ls --json
 fwd send TASK_ID
 fwd send TASK_ID --stop
 ```
@@ -74,10 +74,10 @@ fwd pull outputs/ logs/   # additive path-scoped download
 ## Session inspection
 
 ```sh
-fwd ls --format json                 # current project
-fwd ls --all-projects --format json  # every locally tracked project
-fwd doctor --format json
-fwd info --format json
+fwd ls --json                 # current project
+fwd ls --all-projects --json  # every locally tracked project
+fwd doctor --json
+fwd info --json
 ```
 
 Machine-readable stdout is stable; progress and errors use stderr. In a human terminal, current-project `fwd ls`

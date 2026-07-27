@@ -121,6 +121,7 @@ tables or records, then select a renderer:
 ```sh
 fwd ls                         # Rich table in a terminal; Markdown when piped or run by an agent
 fwd ls --all-projects          # include sessions belonging to every local project
+fwd ls --json                  # structured JSON shortcut
 fwd ls --format markdown       # stable GitHub-flavored Markdown table
 fwd ls --format json           # JSON object with title, columns, and named row objects
 fwd doctor --format json
@@ -130,6 +131,7 @@ fwd info --format json
 `--format auto` is the default. It uses Markdown whenever stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
 set, even if an agent runner allocated a pseudo-terminal. Progress and errors remain on stderr; outside an interactive
 terminal they use stable `info:`, `ok:`, `warning:`, and `error:` prefixes instead of terminal glyphs and styling.
+`--json` is shorthand for `--format json` on `fwd ls`, `fwd doctor`, `fwd info`, and `fwd send --ls`.
 Configuration output remains TOML (`fwd config` / `--example`) or JSON Schema (`fwd config --schema`) because those
 formats are already directly machine-readable.
 
@@ -177,7 +179,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
 | `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
-| `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls` |
+| `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls --json` |
 | `fwd ls [--all-projects]` | List this project's sessions, or every locally tracked project, with live backend status | `fwd ls --all-projects` |
 | `fwd push` | Re-sync local changes up | `fwd push` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
@@ -185,7 +187,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
 | `fwd rm [name]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm --all` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
-| `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --format json` |
+| `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
 | `fwd config` | Print the effective merged config, annotated with where each value came from | `fwd config` |
 | `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` | `fwd config set sync.delete false` |
@@ -193,7 +195,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd config --example [backend]` | Print a commented reference config generated from the schema | `fwd config --example runpod` |
 | `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling | `fwd config --schema` |
 | `fwd -V` | Print the installed version | `fwd -V` |
-| `fwd info` | Print version plus config and state paths | `fwd info --format json` |
+| `fwd info` | Print version plus config and state paths | `fwd info --json` |
 
 ### Durable remote tasks
 
