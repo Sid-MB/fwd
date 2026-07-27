@@ -11,12 +11,37 @@ from typing import ClassVar
 
 from typer import _click as click
 from typer.core import TyperGroup
+from typer._click.shell_completion import CompletionItem
 
 
 class AliasHelpGroup(TyperGroup):
     """Render hidden command aliases beside their canonical command."""
 
     aliases: ClassVar[dict[str, tuple[str, ...]]] = {"attach": ("a",), "send": ("s",)}
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        """Resolve registered commands first, then configured target/backend shorthand commands."""
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+        from fwd.ops import target_alias
+
+        if not target_alias.recognized(cmd_name):
+            return None
+        return click.Command(
+            name=cmd_name,
+            help=f"Launch the default command on target/backend {cmd_name!r} and attach.",
+            callback=lambda: target_alias.forward(cmd_name),
+        )
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> list[CompletionItem]:
+        """Add dynamic target/backend commands to Click's normal root command completion."""
+        results = super().shell_complete(ctx, incomplete)
+        existing = {item.value for item in results}
+        from fwd.ops import target_alias
+
+        results.extend(CompletionItem(value, help=help_text) for value, help_text in target_alias.completion_candidates() if value.startswith(incomplete) and value not in existing)
+        return results
 
     @classmethod
     def display_name(cls, command_name: str) -> str:

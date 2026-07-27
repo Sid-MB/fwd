@@ -43,6 +43,7 @@ MODULES = [
     "fwd.ops.launch",
     "fwd.ops.attach",
     "fwd.ops.lifecycle",
+    "fwd.ops.target_alias",
     "fwd.ops.transfer",
 ]
 

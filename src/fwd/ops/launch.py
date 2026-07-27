@@ -484,6 +484,8 @@ def launch(
         ui.warn(note)
     endpoint = info.endpoint
     remote_dir = info.remote_dir
+    provider_identity = " ".join(f"{key}={value}" for key, value in sorted(info.backend_ids.items()))
+    ui.info(f"resolved target {target_cfg.name!r} to {target_cfg.backend} instance {endpoint.ssh_target()}:{endpoint.port}" + (f" ({provider_identity})" if provider_identity else ""))
 
     # 2. Wait for sshd, then multiplex every later stage over a single connection.
     with ui.step(f"Waiting for SSH on {endpoint.host}:{endpoint.port}"):

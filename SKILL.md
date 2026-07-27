@@ -42,6 +42,10 @@ fwd up --target sid@vm.example.com      # a host the user already has
 fwd up --target my-box                  # any Host alias in ~/.ssh/config
 ```
 
+For a human terminal, `fwd <configured-target>` launches that target's configured default command and attaches.
+`fwd <backend>` (for example `fwd ssh`) selects the most recently used configured target of that backend. These
+attach-taking shorthands intentionally fail in agent/non-interactive environments; use `fwd up --target NAME` there.
+
 Configured targets always win over inferred ones. Slurm is deliberately not inferable (site-specific login host, scratch path and allocation) — for a cluster, tell the user to run `fwd setup`, or write a config using `fwd config --example slurm`.
 
 Bare `fwd` launches Claude when no session exists unless the user changes its command. Prefer the mutation commands over hand-editing:

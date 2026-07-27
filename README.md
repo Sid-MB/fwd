@@ -52,6 +52,8 @@ The skill teaches Claude the safe subset of the CLI — it uses the non-attachin
 cd ~/code/my-project
 fwd setup                 # prompts in a terminal; flag-only for agents and scripts
 fwd                       # launch, sync, bootstrap, and attach
+fwd work                  # launch configured target "work" and attach
+fwd ssh                   # use the most recently used configured SSH target
 ```
 
 That is the whole loop. Inside the session you are in a normal `claude` REPL on the remote machine. Detach with
@@ -128,6 +130,7 @@ never prompt. The explicit `fwd --install-completion` command remains available 
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |
+| `fwd TARGET` / `fwd BACKEND` | Launch that target's configured default and attach; a backend selects its most recently used configured target |
 | `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching |
 | `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first |
 | `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status |

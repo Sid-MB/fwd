@@ -305,6 +305,14 @@ def test_launch_persists_state(project, state_store, config, fake_backend, stub_
     assert saved.flags["target"] == "dev"
 
 
+def test_launch_prints_exact_resolved_instance(project, state_store, config, fake_backend, stub_world, capsys: pytest.CaptureFixture[str]) -> None:
+    """Users selecting a generic backend alias must still see the concrete target, endpoint, port, and provider id."""
+    launch_ops.launch(attach=False)
+    output = capsys.readouterr().err
+    assert "resolved target 'dev' to ssh instance root@10.0.0.5:2222" in output
+    assert "pod_id=abc123" in output
+
+
 def test_launch_plumbs_gpu_and_name(project, state_store, config, fake_backend, stub_world) -> None:
     launch_ops.launch(gpu="A100", name="custom", attach=False)
     assert fake_backend.provision_args == ("custom", "myproject", "A100")
