@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from fwd.backends.base import TargetStatus
 from fwd.ops import diff as diff_ops
 from fwd.state import SessionState, StateStore
 
@@ -77,11 +78,16 @@ def test_diff_path_rejects_project_escape(value: str) -> None:
         diff_ops._relative_path(value)
 
 
-def test_diff_selector_resolves_target_then_backend_by_recency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_diff_selector_resolves_target_then_backend_to_sole_active_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = StateStore(tmp_path / "state.json")
     store.upsert(_session("old", "work", "ssh", "2026-01-01T00:00:00+00:00"))
     store.upsert(_session("new", "work", "ssh", "2026-01-02T00:00:00+00:00", attached="2026-01-03T00:00:00+00:00"))
     monkeypatch.setattr(diff_ops.launch_ops, "store", lambda: store)
+    monkeypatch.setattr(
+        diff_ops.launch_ops,
+        "_selection_status",
+        lambda session: TargetStatus.RUNNING if session.name == "new" else TargetStatus.STOPPED,
+    )
 
     assert diff_ops.resolve_session("old").name == "old"
     assert diff_ops.resolve_session("work").name == "new"

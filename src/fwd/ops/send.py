@@ -198,6 +198,8 @@ def dispatch(
     if list_only:
         if arguments or stop or immediate or detach:
             ui.die("--ls cannot be combined with a task, command, --stop, --immediate, or --detach")
+        if name is not None:
+            name = launch_ops.resolve_session(name).name
         list_tasks(output_format=output_format, include_all=include_all, session_name=name)
         return 0
 

@@ -79,21 +79,32 @@ def complete_session_selector(ctx: _click.Context, args: list[str], incomplete: 
     return _matches(candidates.items(), incomplete)
 
 
-def complete_diff_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
-    """Complete diff selectors: exact sessions plus their target labels and backend shorthands."""
+def complete_existing_session(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete exact sessions plus target-label and backend aliases for commands that manage existing sessions."""
     del ctx, args
     try:
         sessions = _session_store().all()
     except Exception:
         return []
     candidates: dict[str, str] = {}
+    target_sessions: dict[str, list[str]] = {}
+    backend_sessions: dict[str, list[str]] = {}
     for session in sessions:
         candidates[session.name] = _session_help(session)
         target = str(session.flags.get("target") or "")
         if target:
-            candidates.setdefault(target, f"configured target · most recent session: {session.name}")
-        candidates.setdefault(session.backend, f"{session.backend} backend · most recent session: {session.name}")
+            target_sessions.setdefault(target, []).append(session.name)
+        backend_sessions.setdefault(session.backend, []).append(session.name)
+    for target, names in target_sessions.items():
+        detail = f"session={names[0]}" if len(names) == 1 else f"{len(names)} saved sessions"
+        candidates.setdefault(target, f"configured target alias · {detail}")
+    for backend, names in backend_sessions.items():
+        detail = f"session={names[0]}" if len(names) == 1 else f"{len(names)} saved sessions"
+        candidates.setdefault(backend, f"{backend} backend alias · {detail}")
     return _matches(candidates.items(), incomplete)
+
+
+complete_diff_target = complete_existing_session
 
 
 def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:

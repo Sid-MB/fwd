@@ -48,7 +48,7 @@ def push(name: str | None = None) -> None:
     """Re-sync the local working directory up to an existing session's remote directory.
 
     Args:
-        name: Session name; ``None`` uses the session for the current directory.
+        name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
     """
     session = launch_ops.resolve_session(name)
     local_cwd = Path(session.local_cwd).expanduser()
@@ -70,7 +70,7 @@ def pull(name: str | None = None, paths: Sequence[str] = ()) -> None:
     """Bring remote changes back down.
 
     Args:
-        name: Session name; ``None`` uses the session for the current directory.
+        name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
         paths: Specific remote-relative paths to fetch; empty pulls the whole tree minus excludes.
     """
     session = launch_ops.resolve_session(name)

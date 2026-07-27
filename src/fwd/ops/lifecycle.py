@@ -193,7 +193,7 @@ def stop(name: str | None = None) -> None:
     and letting its failure abort the run would leave a billing pod alive — the expensive half must always execute.
 
     Args:
-        name: Session name; ``None`` uses the session for the current directory.
+        name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
     """
     session = launch_ops.resolve_session(name)
     backend = launch_ops.backend_for(session)
@@ -245,7 +245,7 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
     target explicitly rather than asking a generic "are you sure?".
 
     Args:
-        name: Session name; ``None`` uses the session for the current directory.
+        name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
         force: Skip the confirmation prompt.
     """
     session = launch_ops.resolve_session(name)

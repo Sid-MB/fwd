@@ -173,18 +173,18 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd TARGET/BACKEND/AGENT` | Connect by positional selector using the same grammar | `fwd runpod` |
 | `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
 | `fwd up -r [selectors...]` | Reuse and attach when all selectors match; otherwise create only in a human terminal | `fwd up -r work codex` |
-| `fwd attach` / `fwd a [selectors...]` | Attach to the newest session matching every selector | `fwd a work codex` |
+| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector | `fwd a work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
 | `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
 | `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls --json` |
 | `fwd ls [--all-projects]` | List this project's sessions, or every locally tracked project, with live backend status | `fwd ls --all-projects` |
-| `fwd push` | Re-sync local changes up | `fwd push` |
-| `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
+| `fwd push` | Re-sync local changes up | `fwd push --name work` |
+| `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull --name work outputs/` |
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
-| `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
-| `fwd rm [name]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm --all` |
+| `fwd stop [session/target/backend]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop work` |
+| `fwd rm [session/target/backend]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm work` |
 | `fwd uninstall` | Remove local data, skills, completions, and temporary logs, then print the package-manager removal command | `fwd uninstall` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
@@ -267,8 +267,8 @@ fwd diff -q pod               # no diff text; inspect only the exit status
 ```
 
 Exit `0` means identical, `1` means differences were found, and `2` means resolution, transfer, or comparison failed.
-Differences are normal unified recursive diff text on stdout; progress and errors stay on stderr. Target labels and
-backend names select their most recently used saved session, while an exact session name wins. The comparison uses
+Differences are normal unified recursive diff text on stdout; progress and errors stay on stderr. Exact session names,
+target labels, and backend names use the same safe existing-session resolver as lifecycle and transfer commands. The comparison uses
 the same `.gitignore`, `.fwdignore`, and configured exclusions as sync, so intentionally unsynced environments and
 build caches do not produce false differences. Both sides are copied into temporary snapshots; neither the checkout
 nor the remote project is modified.
@@ -315,8 +315,10 @@ fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; 
 ```
 
 Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
-all three values. Without an exact name, matching is scoped to the current project and the most recently used match
-wins. `fwd attach` and `fwd a` use this identical parser and precedence.
+all three values. Without an exact name, matching is scoped to the current project. A sole saved match is
+unambiguous; if several match, the sole session whose target is running or pending wins only when every other status
+is known. Otherwise fwd asks for an exact session name. `fwd attach` and `fwd a` use this identical parser and
+precedence.
 
 An exact stored session name is recognized first. Otherwise a configured target or backend consumes the first
 positional, followed by an agent or arbitrary command. If a target and agent have the same name, the target wins and
@@ -327,6 +329,11 @@ Backend selectors such as `ssh`, `runpod`, and `slurm` use the most recently use
 sole target is unambiguous before it has history. If several targets share a backend and history cannot choose, fwd
 asks for an exact target. In non-interactive mode, `--reuse` always errors with either an exact attach instruction or
 the corresponding creation command without `--reuse`.
+
+Commands that operate on an existing session accept the same target-label and backend aliases wherever they accept a
+session selector: `attach`, `stop`, `rm`, and `diff` positionally, and `send`, `push`, and `pull` through `--name`.
+Exact session names always win. Aliases search all saved projects outside the project-scoped reuse/attach grammar and
+use the same sole-active-session disambiguation rule described above.
 
 `fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
 profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.

@@ -40,7 +40,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Sequence
 
 from fwd import agents, backends, claude_state, remote, sshexec, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
@@ -148,22 +148,78 @@ def tmux_session_name(session_name: str) -> str:
     return f"fwd-{session_name}"
 
 
+def _alias_matches(sessions: Sequence[SessionState], selector: str) -> list[SessionState]:
+    """Return sessions matching a target label, falling back to a backend name only when no target label matches."""
+    target_matches = [session for session in sessions if session.flags.get("target") == selector]
+    return target_matches or [session for session in sessions if session.backend == selector]
+
+
+def _selection_status(session: SessionState) -> TargetStatus:
+    """Query status for alias disambiguation without emitting a misleading configuration error.
+
+    Alias resolution only needs status when several saved sessions match. Reconstruct the backend from the config
+    belonging to each session's project so cross-project aliases work, but return ``UNKNOWN`` when a target was
+    renamed, deleted, or is otherwise ambiguous. An uncertain candidate must remain part of the ambiguity because it
+    could still be running and billing.
+    """
+    try:
+        cfg = load_config(Path(session.local_cwd))
+        target_name = session.flags.get("target")
+        target = cfg.targets.get(target_name) if isinstance(target_name, str) else None
+        if target is None or target.backend != session.backend:
+            backend_targets = [candidate for candidate in cfg.targets.values() if candidate.backend == session.backend]
+            if len(backend_targets) != 1:
+                return TargetStatus.UNKNOWN
+            target = backend_targets[0]
+        return status_of(backends.make_backend(target, cfg), session)
+    except Exception:
+        return TargetStatus.UNKNOWN
+
+
+def choose_session(candidates: Sequence[SessionState], selector: str) -> SessionState:
+    """Resolve an already-matched alias safely, preferring the sole active session instead of arbitrary recency.
+
+    A single saved match is unambiguous even when stopped, which keeps ``attach --restart`` and ``rm`` useful. When
+    several saved sessions match, one running or pending target may disambiguate them only if every other status is
+    known not to be active. Otherwise require an exact session name; destructive and billing-sensitive commands must
+    never guess which resource the user meant.
+    """
+    if not candidates:
+        raise ValueError("choose_session requires at least one candidate")
+    if len(candidates) == 1:
+        return candidates[0]
+    statuses = [(session, _selection_status(session)) for session in candidates]
+    active = [session for session, status in statuses if status in (TargetStatus.RUNNING, TargetStatus.PENDING)]
+    uncertain = any(status == TargetStatus.UNKNOWN for _, status in statuses)
+    if len(active) == 1 and not uncertain:
+        return active[0]
+    details = ", ".join(f"{session.name} ({status.value})" for session, status in statuses)
+    ui.die(
+        f"{selector!r} matches multiple sessions: {details}. "
+        f"Pass an exact session name; inspect all sessions with {ui.command('ls --all-projects')!r}."
+    )
+
+
 def resolve_session(name: str | None, *, required: bool = True) -> SessionState | None:
-    """Look up a session by explicit name, else by the current working directory.
+    """Look up an exact session, target/backend alias, or the current directory's session.
 
     The shared entry point for every command that operates on an existing session, so ``attach``, ``push``, ``stop``
-    and ``rm`` all agree on what "this directory's session" means.
+    and ``rm`` all agree on both aliases and what "this directory's session" means.
 
     Args:
-        name: Explicit session name, or ``None`` to look up by cwd.
+        name: Session name, target label, or backend name; ``None`` looks up by cwd.
         required: Abort with an actionable message when nothing is found.
     """
     st = store()
     session = st.get(name) if name else st.get_for_cwd(Path.cwd())
+    if session is None and name:
+        matches = _alias_matches(st.all(), name)
+        if matches:
+            session = choose_session(matches, name)
     if session is None and required:
         if name:
             known = ", ".join(s.name for s in st.all()) or "none"
-            ui.die(f"no session named {name!r} (known sessions: {known})")
+            ui.die(f"no session, target, or backend matches {name!r} (known sessions: {known})")
         ui.die(f"no {ui.command()} sessions for this directory; run {ui.command('up')!r} to create one")
     return session
 

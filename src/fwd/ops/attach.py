@@ -135,7 +135,7 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
     """Attach to an existing session's remote tmux, reconciling live status first.
 
     Args:
-        name: Session name; ``None`` resolves the session registered for the current directory.
+        name: Session name, target label, or backend name; ``None`` resolves the session registered for the current directory.
         restart: Authorize restarting stopped compute without prompting. Required for any restart in a
             non-interactive run, since the alternative is silently spending money.
 

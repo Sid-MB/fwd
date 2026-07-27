@@ -64,7 +64,7 @@ Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSS
 
 A session is one locally tracked remote project runtime created by `fwd up`. It binds a local project directory to a target, provider resource or SSH endpoint, synchronized remote directory, and primary tmux session. Its session name identifies that concrete runtime; pass `--name NAME` to choose one or `--new` to create another instead of reusing the current project's saved session.
 
-Use `fwd ls --json` to discover session names and live state. Use exact session names for lifecycle or task commands when ambiguity is possible. Stopping a session ends its primary process and suspends supported compute; removing it destroys its remote resource and local tracking.
+Use `fwd ls --json` to discover session names and live state. Existing-session commands accept target labels and backend names as aliases: `attach`, `stop`, `rm`, and `diff` accept them positionally, while `send`, `push`, and `pull` accept them through `--name`. Exact session names win. A sole saved alias match is unambiguous; with several matches, fwd selects the sole running or pending target only when every other candidate's status is known, otherwise it requires an exact session name. Stopping a session ends its primary process and suspends supported compute; removing it destroys its remote resource and local tracking.
 
 ### Startup processes and agents
 

@@ -22,26 +22,9 @@ from fwd.ops.transfer import _endpoint_for
 from fwd.state import SessionState
 
 
-def _recency(session: SessionState) -> str:
-    """Use last attachment when available, otherwise creation time, for deterministic target/backend selection."""
-    return session.last_attached or session.created_at
-
-
 def resolve_session(selector: str | None) -> SessionState:
-    """Resolve cwd, exact session name, target label, or backend name in that precedence order."""
-    if selector is None:
-        return launch_ops.resolve_session(None)
-    store = launch_ops.store()
-    exact = store.get(selector)
-    if exact is not None:
-        return exact
-    sessions = store.all()
-    target_matches = [session for session in sessions if session.flags.get("target") == selector]
-    matches = target_matches or [session for session in sessions if session.backend == selector]
-    if not matches:
-        known = ", ".join(session.name for session in sessions) or "none"
-        ui.die(f"no saved session, target, or backend matches {selector!r} (saved sessions: {known})", code=2)
-    return max(matches, key=_recency)
+    """Resolve through the shared exact-session, target-label, backend, or current-directory rules."""
+    return launch_ops.resolve_session(selector)
 
 
 def _relative_path(value: str | None) -> Path | None:

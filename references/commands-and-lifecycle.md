@@ -27,7 +27,7 @@ fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 
 Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--name` provide unambiguous flag forms. Exact session names win, then target/backend names, then registered agents or arbitrary command argv. Target names win target-agent collisions with an actionable warning. All supplied selectors match conjunctively and unnamed searches stay in the current project.
 
-`fwd up -r/--reuse` attaches to the most recently used matching session. A human terminal creates and attaches when no match exists; non-interactive mode does neither and prints the exact creation command without `--reuse`. Bare `fwd` is `fwd up --reuse`, while root selectors such as `fwd runpod` rewrite to `fwd up --reuse runpod`. `fwd attach` uses the same parser and matching rules.
+`fwd up -r/--reuse` attaches to an unambiguous matching session. A sole saved match wins; with several matches, the sole running or pending target wins only when every other candidate's status is known. Otherwise pass an exact session name. A human terminal creates and attaches when no match exists; non-interactive mode does neither and prints the exact creation command without `--reuse`. Bare `fwd` is `fwd up --reuse`, while root selectors such as `fwd runpod` rewrite to `fwd up --reuse runpod`. `fwd attach` uses the same parser and matching rules.
 
 `fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. `--new` opts out of reuse, generates a unique session/provider name, and retains the existing session's target unless `--target` overrides it; it cannot be combined with `--name`. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
 
@@ -39,6 +39,7 @@ Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--nam
 fwd send -- pwd
 fwd s -- python train.py --epochs 10
 fwd send --name my-session --timeout 30 -- cat results.json
+fwd send --name work -- pytest -q
 fwd send --detach -- python train.py
 fwd send -- bash -lc 'cat outputs/*.json | jq .'
 fwd send --ls --json
@@ -72,6 +73,12 @@ fwd pull outputs/ logs/   # additive path-scoped download
 
 `fwd diff` compares temporary filtered snapshots and changes neither side. Prefer it before choosing push or pull.
 
+Every existing-session operation accepts an exact session name, target label, or backend name. Use selectors
+positionally with `attach`, `stop`, `rm`, and `diff`, and through `--name` with `send`, `push`, and `pull`. Exact
+session names win. A sole alias match wins even when stopped so it remains restartable or removable; when several
+saved sessions match, fwd selects the sole running or pending target only if every other candidate's status is known.
+Otherwise it reports every candidate and requires an exact session name.
+
 ## Session inspection
 
 ```sh
@@ -98,8 +105,8 @@ Detach with tmux `ctrl-b d`.
 ## Stop and destroy
 
 ```sh
-fwd stop SESSION
-fwd rm --force SESSION
+fwd stop SESSION_OR_TARGET
+fwd rm --force SESSION_OR_TARGET
 fwd rm --all --force
 ```
 

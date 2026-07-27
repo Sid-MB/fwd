@@ -31,7 +31,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
-from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_session_selector, complete_ssh_host, complete_target
+from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_existing_session, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_session_selector, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
@@ -52,7 +52,7 @@ app = typer.Typer(
     cls=AliasHelpGroup,
     name=ui.COMMAND_NAME,
     help="Move coding work to remote compute: provision or reuse a target, sync the project, and run a persistent shell, command, Claude Code, or Codex.",
-    epilog=f"Bare {ui.command()!r} means {ui.command('up --reuse')!r}: attach to the most recent matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar. For a non-attaching launch, omit --reuse: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
+    epilog=f"Bare {ui.command()!r} means {ui.command('up --reuse')!r}: attach to the unambiguous matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar. For a non-attaching launch, omit --reuse: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -260,9 +260,10 @@ def _run_up(
     if new and selector.name is not None:
         ui.die("--new and --name are mutually exclusive")
     matches = selection.matches
+    chosen_match = launch_ops.choose_session(matches, selector.describe()) if matches else None
 
-    if reuse and matches:
-        chosen = matches[0]
+    if reuse and chosen_match is not None:
+        chosen = chosen_match
         ui.info(f"selectors matched session {chosen.name!r}; attaching")
         if not _interactive_terminal():
             ui.die(
@@ -287,8 +288,8 @@ def _run_up(
 
     launch_name = selector.name
     launch_new = new
-    if not new and launch_name is None and matches:
-        launch_name = matches[0].name
+    if not new and launch_name is None and chosen_match is not None:
+        launch_name = chosen_match.name
     elif not new and launch_name is None and selector.constrained:
         has_project_session = any(Path(candidate.local_cwd).expanduser().resolve() == cwd for candidate in sessions)
         launch_new = has_project_session
@@ -373,7 +374,7 @@ def _attach(
     name: Annotated[str | None, typer.Option("--name", "-n", help="Require this exact session name.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
-    """Attach to the most recent session matching every supplied selector.
+    """Attach to the unambiguous session matching every supplied selector.
 
     Replaces this process with 'ssh -t', so the remote session owns the terminal outright: resize, mouse reporting and ctrl-C behave exactly as a hand-typed ssh would. Detach with tmux's ctrl-b d; the session keeps running.
     """
@@ -390,7 +391,7 @@ def _attach(
     )
     if not selection.matches:
         ui.die(f"no session matches {selection.selector.describe()}; inspect available sessions with {ui.command('ls')!r}")
-    chosen = selection.matches[0]
+    chosen = launch_ops.choose_session(selection.matches, selection.selector.describe())
     if not _interactive_terminal():
         ui.die(
             f"session {chosen.name!r} matches, but attaching requires an interactive terminal. "
@@ -407,7 +408,7 @@ app.command("a", hidden=True)(_attach)
 
 def _send(
     arguments: Annotated[list[str] | None, typer.Argument(help="Remote command after '--', agent plus message, or an existing task id.", autocompletion=complete_send_subject)] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
     timeout: Annotated[float | None, typer.Option("--timeout", help="Cancel the remote task if it exceeds this many seconds.")] = None,
     detach: Annotated[bool, typer.Option("--detach", "-d", help="Start the task in the background and return immediately.")] = False,
     wait: Annotated[bool, typer.Option("--wait", help="Stream until completion; this is the default unless --detach is passed.")] = False,
@@ -471,7 +472,7 @@ def ls_cmd(
 
 @app.command("push")
 def push_cmd(
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
 ) -> None:
     """Mirror local changes up to the remote session; remote-only files are deleted unless sync.delete is off."""
     from fwd.ops import transfer
@@ -482,7 +483,7 @@ def push_cmd(
 @app.command("pull")
 def pull_cmd(
     paths: Annotated[list[str] | None, typer.Argument(help="Remote-relative paths to fetch; omit to pull the whole remote directory.")] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
 ) -> None:
     """Bring remote changes back down to the local directory, additively — a pull never deletes local files."""
     from fwd.ops import transfer
@@ -511,7 +512,7 @@ def diff_cmd(
 
 @app.command("stop", help=f"Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.")
 def stop_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
 ) -> None:
     """Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.
 
@@ -524,7 +525,7 @@ def stop_cmd(
 
 @app.command("rm", help=f"Destroy one session target, or every tracked target with --all, and forget their state. Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
 def rm_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.", autocompletion=complete_session)] = None,
+    name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
     all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with a session name.")] = False,
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
 ) -> None:
