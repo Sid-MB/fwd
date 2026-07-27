@@ -30,7 +30,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
-from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
+from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
@@ -214,6 +214,25 @@ def pull_cmd(
     from fwd.ops import transfer
 
     transfer.pull(name, tuple(paths or ()))
+
+
+@app.command("diff")
+def diff_cmd(
+    target: Annotated[str | None, typer.Argument(help="Session name, configured target, or backend; defaults to this directory's session.", autocompletion=complete_diff_target)] = None,
+    path: Annotated[str | None, typer.Argument(help="Project-relative file or directory; omit to compare the entire synced project.")] = None,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Print no diff; communicate identical/different/error through exit status only.")] = False,
+) -> None:
+    """Compare local and remote content: exit 0 if identical, 1 if different, and 2 on errors."""
+    from fwd.ops import diff as diff_ops
+
+    try:
+        code = diff_ops.diff(target, path, quiet=quiet)
+    except typer.Exit as exc:
+        raise typer.Exit(max(2, exc.exit_code)) from exc
+    except Exception as exc:
+        ui.error(f"diff failed: {exc}")
+        raise typer.Exit(2) from exc
+    raise typer.Exit(code)
 
 
 @app.command("stop")

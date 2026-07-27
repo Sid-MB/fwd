@@ -139,6 +139,8 @@ def sync_down(
     local_dir: str | Path,
     paths: Sequence[str] = (),
     sync_cfg: SyncConfig | None = None,
+    *,
+    filter_dir: str | Path | None = None,
 ) -> None:
     """Pull work back from the remote machine.
 
@@ -146,6 +148,7 @@ def sync_down(
 
     Args:
         paths: Specific paths relative to ``remote_dir``; empty means the whole tree (minus excludes).
+        filter_dir: Project directory whose ``.fwdignore`` supplies filters when ``local_dir`` is a temporary snapshot.
     """
     if not endpoint.supports_rsync:
         tar_down(endpoint, remote_dir, local_dir, paths)
@@ -158,7 +161,7 @@ def sync_down(
     if sync_cfg is not None and not paths:
         # Path-scoped pulls are an explicit user request ("give me exactly this file"), so filters only apply to a
         # whole-tree pull where the excludes are what keep .venv/node_modules from coming back down.
-        argv += rsync_filters(sync_cfg, local_dir)
+        argv += rsync_filters(sync_cfg, filter_dir or local_dir)
     if paths:
         # rsync accepts several sources against one host by using the :"a" :"b" form; simplest correct spelling is one
         # source per relative path, all sharing the same remote root.
@@ -195,12 +198,14 @@ def tar_down(
     remote_dir: str,
     local_dir: str | Path,
     paths: Sequence[str] = (),
+    sync_cfg: SyncConfig | None = None,
 ) -> None:
     """Download by streaming a remote tar into a local extract, for transports without rsync."""
     destination = Path(local_dir).expanduser()
     destination.mkdir(parents=True, exist_ok=True)
     members = [shlex.quote(p.lstrip("/")) for p in paths] or ["."]
-    remote = f"tar czf - -C {shlex.quote(remote_dir.rstrip('/'))} {' '.join(members)}"
+    excludes = _tar_excludes(sync_cfg) if sync_cfg is not None and not paths else []
+    remote = f"tar czf - {' '.join(shlex.quote(flag) for flag in excludes)} -C {shlex.quote(remote_dir.rstrip('/'))} {' '.join(members)}"
     _pipe([*endpoint.ssh_argv(), remote], ["tar", "xzf", "-", "-C", str(destination)], what="tar pull")
 
 

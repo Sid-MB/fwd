@@ -149,6 +149,7 @@ never prompt. The explicit `fwd --install-completion` command remains available 
 | `fwd ls` | List sessions with live status queried from each backend | `fwd ls --format json` |
 | `fwd push` | Re-sync local changes up | `fwd push` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
+| `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
 | `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) | `fwd rm demo` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
@@ -184,6 +185,25 @@ fwd send -- bash -lc 'cat outputs/*.json | jq .'
 
 For Slurm targets, one-shot commands run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
 when a command must run inside an allocation.
+
+### Comparing local and remote content
+
+`fwd diff` is a read-only synchronization check with the same exit contract as the standard `diff` command:
+
+```sh
+fwd diff                      # current directory's session; compare the entire synced project
+fwd diff pod                  # exact session, target label, or backend selector
+fwd diff pod src/model.py     # compare one project-relative file
+fwd diff pod outputs/         # compare one directory recursively
+fwd diff -q pod               # no diff text; inspect only the exit status
+```
+
+Exit `0` means identical, `1` means differences were found, and `2` means resolution, transfer, or comparison failed.
+Differences are normal unified recursive diff text on stdout; progress and errors stay on stderr. Target labels and
+backend names select their most recently used saved session, while an exact session name wins. The comparison uses
+the same `.gitignore`, `.fwdignore`, and configured exclusions as sync, so intentionally unsynced environments and
+build caches do not produce false differences. Both sides are copied into temporary snapshots; neither the checkout
+nor the remote project is modified.
 
 ### `fwd up` flags
 

@@ -125,6 +125,21 @@ fwd send --name my-session --timeout 30 -- cat results.json
 
 It runs from the remote project directory, streams stdout/stderr, and returns the remote exit code. It never starts or restarts compute. Arguments are literal; for pipes, redirects, globs, or other shell syntax, invoke a shell explicitly: `fwd send -- bash -lc 'cat outputs/*.json | jq .'`. On Slurm the command runs on the login node; use `srun` explicitly when work belongs inside an allocation.
 
+### Checking whether local and remote are synchronized
+
+Use the read-only `fwd diff [target] [path]` command. It compares temporary snapshots filtered exactly like sync and
+never changes either side:
+
+```sh
+fwd diff                 # current session, whole project
+fwd diff pod src/        # target/session/backend selector plus one path
+fwd diff -q pod          # exit status only
+```
+
+Exit 0 means identical, 1 means differences, and 2 means an operational error. Unified diff text is stdout; progress
+and diagnostics are stderr. This exit contract makes `fwd diff -q` the preferred agent check before deciding whether
+to push or pull.
+
 Context transfer for `fwd up claude`:
 - **Default (`--session`)** moves the real transcript, so the remote session resumes with genuine context. This is already on; only pass `--session` explicitly if the user's config set `session = false`.
 - **`--handoff`** instead has the local `claude -p` write `HANDOFF.md` and points the remote session at it. Passing it *replaces* the transcript transfer. Use it only when the user asks for a summary handoff or the conversation is long and only conclusions matter. It costs ~65s; an existing `HANDOFF.md` under 15 minutes old is reused.

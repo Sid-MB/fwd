@@ -65,6 +65,23 @@ def complete_session(ctx: _click.Context, args: list[str], incomplete: str) -> l
     return _matches(((session.name, _session_help(session)) for session in sessions), incomplete)
 
 
+def complete_diff_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete diff selectors: exact sessions plus their target labels and backend shorthands."""
+    del ctx, args
+    try:
+        sessions = _session_store().all()
+    except Exception:
+        return []
+    candidates: dict[str, str] = {}
+    for session in sessions:
+        candidates[session.name] = _session_help(session)
+        target = str(session.flags.get("target") or "")
+        if target:
+            candidates.setdefault(target, f"configured target · most recent session: {session.name}")
+        candidates.setdefault(session.backend, f"{session.backend} backend · most recent session: {session.name}")
+    return _matches(candidates.items(), incomplete)
+
+
 def _target_help(target: SshTargetConfig | RunpodTargetConfig | SlurmTargetConfig) -> str:
     """Describe a configured target with the fields that most clearly distinguish it."""
     if isinstance(target, SshTargetConfig):

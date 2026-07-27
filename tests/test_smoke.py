@@ -43,11 +43,12 @@ MODULES = [
     "fwd.ops.launch",
     "fwd.ops.attach",
     "fwd.ops.lifecycle",
+    "fwd.ops.diff",
     "fwd.ops.target_alias",
     "fwd.ops.transfer",
 ]
 
-EXPECTED_COMMANDS = {"up", "launch", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor", "version", "config", "default"}
+EXPECTED_COMMANDS = {"up", "launch", "attach", "ls", "push", "pull", "diff", "stop", "rm", "setup", "doctor", "version", "config", "default"}
 
 
 @pytest.mark.parametrize("module", MODULES)
