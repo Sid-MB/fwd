@@ -136,6 +136,15 @@ def test_up_cli_passes_positional_and_flag_selectors_to_shared_dispatch(monkeypa
     assert options["create_argv"] == ("fwd", "up", "--target", "pod", "--agent", "codex", "--name", "demo")
 
 
+def test_up_cli_returns_streamed_command_exit_status(monkeypatch) -> None:
+    """A remote command failure must remain scriptable instead of being hidden behind successful provisioning."""
+    monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: 7)
+
+    result = CliRunner().invoke(cli.app, ["up", "echo", "hi"])
+
+    assert result.exit_code == 7
+
+
 @pytest.mark.parametrize(("retired", "replacement"), [("--connect", "--reuse"), ("-c", "-r")])
 def test_retired_connect_option_fails_instead_of_becoming_a_remote_command(monkeypatch, retired: str, replacement: str) -> None:
     dispatched = []
@@ -173,6 +182,30 @@ def test_registered_agent_launch_auto_attaches_only_through_shared_policy(tmp_pa
 
     assert launched[0]["initial_command"] == ("codex",)
     assert launched[0]["attach"] is True
+
+
+@pytest.mark.parametrize(("attach", "expected_stream"), [(False, True), (True, False)])
+def test_explicit_up_command_streams_by_default_or_attaches_directly(tmp_path: Path, monkeypatch, attach: bool, expected_stream: bool) -> None:
+    """Explicit command argv must use the durable task streamer unless the caller requests direct tmux attachment."""
+    selector = session_select.SessionSelector(command=("echo", "hi"))
+    selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(), cwd=tmp_path, matches=())
+    launched: list[dict[str, object]] = []
+    streamed: list[tuple[tuple[str, ...], str | None]] = []
+    state = _session("demo", tmp_path, command=("echo", "hi"))
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
+    from fwd.ops import launch as launch_ops
+    from fwd.ops import send as send_ops
+
+    monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: launched.append(kwargs) or state)
+    monkeypatch.setattr(send_ops, "run_command", lambda arguments, *, name=None: streamed.append((arguments, name)) or 7)
+
+    result = cli._run_up(("echo", "hi"), attach=attach)
+
+    assert launched[0]["initial_command"] == ("echo", "hi")
+    assert launched[0]["run_command_as_task"] is expected_stream
+    assert launched[0]["attach"] is attach
+    assert streamed == ([(("echo", "hi"), "demo")] if expected_stream else [])
+    assert result == (7 if expected_stream else None)
 
 
 def test_bare_selector_flags_forward_to_reuse_dispatch(monkeypatch) -> None:

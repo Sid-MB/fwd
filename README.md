@@ -277,7 +277,7 @@ nor the remote project is modified.
 
 | Flag | Effect | Example |
 | --- | --- | --- |
-| `[TARGET] [AGENT\|COMMAND...]` | Optional target/backend, then a registered agent or arbitrary startup command; omit the command to use layered `default_command` | `fwd up pod codex` |
+| `[TARGET] [AGENT\|COMMAND...]` | Optional target/backend, then a registered agent or streamed durable command; omit the command to use layered `default_command` | `fwd up pod codex` |
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
 | `--agent NAME` | Select a registered coding agent without positional ambiguity | `fwd up --agent codex` |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
@@ -288,7 +288,7 @@ nor the remote project is modified.
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
-| `--attach/-a` | Attach after startup | `fwd up -a` |
+| `--attach/-a` | Attach directly after startup instead of streaming an explicit command | `fwd up -a -- bash` |
 | `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --no-attach codex` |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
@@ -310,13 +310,15 @@ fwd up --target work --agent codex  # the fully explicit spelling
 fwd up claude                       # transfer this conversation and auto-attach in a human terminal
 fwd up codex                        # sync Codex settings/skills and auto-attach in a human terminal
 fwd up --no-attach codex            # start Codex persistently but stay in the local terminal
-fwd up -a work python train.py      # choose a target, start an arbitrary command, and attach
-fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
+fwd up -a work python train.py      # run the command in the primary pane and attach directly
+fwd up -- python train.py --epochs 10  # stream a durable task; '--' protects its flags
 ```
 
-An arbitrary command remains the session's foreground process while it runs. If it finishes successfully, fwd opens
-a login shell in the same pane so its output remains visible and the session stays attachable; a nonzero exit fails
-startup instead of disguising a broken command as a ready session.
+By default, an explicit arbitrary command runs as a durable task after provisioning: fwd streams its output, returns
+its exit status, and shows Ctrl-C to cancel or Ctrl-B to background after two seconds. The session's primary pane
+remains a login shell, so the session stays attachable after a finite command completes. Pass `--attach/-a` to run
+the command in the primary pane and enter tmux directly; after a successful finite attached command, that pane falls
+through to a login shell, while a nonzero exit remains visible as a launch failure.
 
 Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
 all three values. Without an exact name, matching is scoped to the current project. A sole saved match is

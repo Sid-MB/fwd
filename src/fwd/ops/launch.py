@@ -388,6 +388,8 @@ def build_standard_startup_command(initial_command: tuple[str, ...]) -> str:
 
 def startup_command_for(session: SessionState) -> str:
     """Rebuild the persistent tmux command for restart and allocation-recovery paths."""
+    if session.flags.get("command_via_send"):
+        return REMOTE_SHELL_COMMAND
     initial = initial_command_for(session)
     if initial == MAGIC_CLAUDE_COMMAND:
         return claude_command_for(session)
@@ -549,6 +551,7 @@ def launch(
     creds: bool = False,
     attach: bool = False,
     push_only: bool = False,
+    run_command_as_task: bool = False,
 ) -> SessionState:
     """Run the launch pipeline and safely clean up invocation-owned resources on Ctrl-C."""
     cleanup = _InterruptCleanup(store=store(), session_name=name or derive_session_name(Path.cwd()))
@@ -565,6 +568,7 @@ def launch(
             creds=creds,
             attach=attach,
             push_only=push_only,
+            run_command_as_task=run_command_as_task,
             interrupt_cleanup=cleanup,
         )
     except KeyboardInterrupt:
@@ -585,6 +589,7 @@ def _launch(
     creds: bool = False,
     attach: bool = False,
     push_only: bool = False,
+    run_command_as_task: bool = False,
     interrupt_cleanup: _InterruptCleanup,
 ) -> SessionState:
     """Provision, sync and bootstrap a target, then start a persistent shell, command, or Claude session.
@@ -603,6 +608,8 @@ def _launch(
         creds: Lift local Claude credentials to the remote machine (warns).
         attach: Exec into the remote tmux session when everything is ready.
         push_only: Stop after syncing files, before bootstrap.
+        run_command_as_task: Start a shell as the primary pane so the caller can run and stream ``initial_command``
+            through the durable task manager after launch while retaining the original argv in session metadata.
 
     Returns:
         The persisted :class:`~fwd.state.SessionState`. Does not return when ``attach`` is ``True``, since the
@@ -648,6 +655,7 @@ def _launch(
         "creds": False,
     }
     flags["initial_command"] = list(initial_command)
+    flags["command_via_send"] = run_command_as_task
 
     if new:
         replaced = f" instead of reusing {directory_session.name!r}" if directory_session is not None else ""
@@ -746,11 +754,12 @@ def _launch(
         else:
             ui.warn(f"could not install the transcript remotely; starting a fresh session (try {ui.command('up --handoff')!r})")
 
-    startup_cmd = (
-        build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
-        if is_claude
-        else build_standard_startup_command(initial_command)
-    )
+    if run_command_as_task:
+        startup_cmd = REMOTE_SHELL_COMMAND
+    elif is_claude:
+        startup_cmd = build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
+    else:
+        startup_cmd = build_standard_startup_command(initial_command)
     # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
     flags["resume_id"] = resume_id
     flags["gpu"] = gpu

@@ -182,6 +182,31 @@ def _stop_task(task: SendTask, endpoint: SSHEndpoint) -> None:
     ui.ok(f"Canceled task {task.id}; the {ui.command()} session is still running")
 
 
+def _run_command_task(session: SessionState, endpoint: SSHEndpoint, arguments: tuple[str, ...], *, detach: bool, timeout: float | None) -> int:
+    """Create and run one literal command task against an already-resolved live session."""
+    task = SendTask(
+        id=new_task_id("command"),
+        session=session.name,
+        kind="command",
+        command=list(arguments),
+        label=shlex.join(arguments),
+    )
+    try:
+        return _start_task(session, endpoint, task, detach=detach, timeout=timeout)
+    except SSHError as exc:
+        ui.die(str(exc))
+    except Exception as exc:
+        ui.die(f"could not start task on session {session.name!r}: {exc}")
+
+
+def run_command(arguments: tuple[str, ...], *, name: str | None = None, detach: bool = False, timeout: float | None = None) -> int:
+    """Run literal argv through the durable task streamer without reinterpreting its first token as a task ID."""
+    if not arguments:
+        ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}")
+    session, endpoint = _running_endpoint(name)
+    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout)
+
+
 def dispatch(
     arguments: tuple[str, ...],
     *,
@@ -288,16 +313,4 @@ def dispatch(
         ui.die(f"no send task named {subject!r}; run {ui.command('send --ls')!r} to see active task ids")
     if not arguments:
         ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}, {ui.command('send agent MESSAGE')!r}, or {ui.command('send --ls')!r}")
-    task = SendTask(
-        id=new_task_id("command"),
-        session=session.name,
-        kind="command",
-        command=list(arguments),
-        label=shlex.join(arguments),
-    )
-    try:
-        return _start_task(session, endpoint, task, detach=detach, timeout=timeout)
-    except SSHError as exc:
-        ui.die(str(exc))
-    except Exception as exc:
-        ui.die(f"could not start task on session {session.name!r}: {exc}")
+    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout)

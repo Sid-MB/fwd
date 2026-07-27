@@ -21,13 +21,16 @@ fwd up --target pod --agent codex       # equivalent explicit flags
 fwd up codex                            # remote Codex with portable settings and skills
 fwd up claude                           # remote Claude with transcript transfer
 fwd up --new codex                     # separate session/resource for the same project and target
-fwd up -- python train.py --epochs 10   # arbitrary persistent command
+fwd up -- python train.py --epochs 10   # stream an arbitrary durable command
+fwd up -a -- python train.py            # run it in the primary pane and attach directly
 fwd up -t pod --gpu "NVIDIA A100 80GB PCIe" -- python train.py
 ```
 
-Arbitrary commands remain in the foreground while running. A successful finite command falls through to a login
-shell in the same tmux pane, preserving its output and keeping the session attachable. A nonzero exit still fails the
-launch health check.
+Explicit arbitrary commands run as durable tasks by default. fwd streams their output and exit status; after two
+seconds, Ctrl-C cancels the task while Ctrl-B backgrounds it for a later `fwd send TASK_ID` attachment. The primary
+session stays as a login shell throughout. With `--attach/-a`, the command instead runs in the primary tmux pane and
+fwd attaches directly; a successful finite command falls through to a login shell, while a nonzero exit still fails
+the launch health check.
 
 Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--name` provide unambiguous flag forms. Exact session names win, then target/backend names, then registered agents or arbitrary command argv. Target names win target-agent collisions with an actionable warning. All supplied selectors match conjunctively and unnamed searches stay in the current project.
 

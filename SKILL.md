@@ -61,7 +61,7 @@ Use `fwd ls --json` to discover session names and live state. Existing-session c
 
 ### Startup processes and agents
 
-Every session has one primary persistent process started by `fwd up`. It may be a shell, an arbitrary command, the layered `default_command`, or a registered agent. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
+Every session has one primary persistent process started by `fwd up`. It may be a shell, the layered `default_command`, or a registered agent. An explicit arbitrary command streams as a durable task by default while the primary pane remains a shell; `--attach` instead runs that command in the primary pane and enters tmux. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
 
 Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running.
 
@@ -85,6 +85,8 @@ fwd up --target runpod                 # CPU RunPod, layered default command, st
 fwd up --new --target runpod           # provision a separate session instead of reusing this project
 fwd up --target work_cluster --agent codex     # sync Codex settings/skills and start remote Codex
 fwd up work_cluster claude                     # positional target + agent; transfer the Claude transcript
+fwd up -- pytest -q                    # provision, stream a durable task, and return its exit status
+fwd up -a -- bash                      # provision and attach directly to the primary pane
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks

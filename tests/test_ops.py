@@ -520,6 +520,20 @@ def test_arbitrary_command_without_project_toolchain_bootstraps_no_unrelated_too
     assert 'exec "${SHELL:-bash}" -l' in tmux_command
 
 
+def test_streamed_up_command_keeps_primary_session_as_shell(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
+    """The CLI's streamed command path must reserve the primary tmux pane for later attachment and restart."""
+    monkeypatch.setattr(remote, "detect_toolchain_plan", lambda local_dir: ToolchainPlan())
+
+    state = launch_ops.launch(initial_command=("echo", "ready"), run_command_as_task=True, attach=False)
+
+    tmux_command = stub_world["tmux_new"][0][3]
+    assert "echo ready" not in tmux_command
+    assert 'exec "${SHELL:-bash}" -l' in tmux_command
+    assert state.flags["initial_command"] == ["echo", "ready"]
+    assert state.flags["command_via_send"] is True
+    assert launch_ops.startup_command_for(state) == launch_ops.REMOTE_SHELL_COMMAND
+
+
 def test_launch_uses_tar_when_rsync_unsupported(project, state_store, config, calls, stub_world, monkeypatch) -> None:
     """A proxy transport must transparently fall back to tar-over-ssh."""
     backend = FakeBackend(calls, endpoint=SSHEndpoint(host="proxy", user="root", supports_rsync=False))

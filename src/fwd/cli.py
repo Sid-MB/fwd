@@ -235,8 +235,8 @@ def _run_up(
     user_config: bool = False,
     creds: bool = False,
     create_argv: tuple[str, ...] | None = None,
-) -> None:
-    """Shared launch/reuse implementation used by explicit ``up`` and bare/root-selector invocations."""
+) -> int | None:
+    """Shared launch/reuse implementation, returning an explicit streamed-command exit code when applicable."""
     from fwd.ops import attach as attach_ops
     from fwd.ops import launch as launch_ops
     from fwd.ops import session_select
@@ -294,18 +294,25 @@ def _run_up(
         has_project_session = any(Path(candidate.local_cwd).expanduser().resolve() == cwd for candidate in sessions)
         launch_new = has_project_session
 
-    launch_ops.launch(
+    stream_command = selector.command is not None and not effective_attach
+    state = launch_ops.launch(
         target=selector.target.launch_name if selector.target else None,
         gpu=gpu,
         name=launch_name,
         new=launch_new,
         initial_command=initial_command,
+        run_command_as_task=stream_command,
         session=session,
         handoff=handoff,
         user_config=user_config,
         creds=creds,
         attach=effective_attach,
     )
+    if stream_command:
+        from fwd.ops import send as send_ops
+
+        return send_ops.run_command(initial_command or (), name=state.name)
+    return None
 
 
 def _up(
@@ -318,7 +325,7 @@ def _up(
     new: Annotated[bool, typer.Option("--new", help="Create a fresh session instead of reusing this directory's existing session. Cannot be combined with --name.", rich_help_panel=PANEL_TARGET)] = False,
     reuse: Annotated[bool, typer.Option("--reuse", "-r", help="Reuse and attach to a matching session; create it only in an interactive terminal when no match exists.", rich_help_panel=PANEL_TARGET)] = False,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="With --reuse, authorize restarting stopped billable compute without prompting.", rich_help_panel=PANEL_TARGET)] = False,
-    attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
+    attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach directly after startup instead of streaming an explicit command as a durable task.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
@@ -329,12 +336,13 @@ def _up(
 
     Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
     in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
-    Startup is persistent in tmux. Use --no-attach for an agent background launch and '--' before remote command flags.
+    Explicit commands stream as durable tasks; pass --attach to enter the primary tmux session instead. Use
+    --no-attach for an agent background launch and '--' before remote command flags.
 
     To add a new target, run 'fwd setup'.
     """
     _reject_retired_connect_option(ctx)
-    _run_up(
+    code = _run_up(
         tuple(selectors or ()),
         target=target,
         agent=agent,
@@ -351,14 +359,16 @@ def _up(
         creds=creds,
         create_argv=_argv_without_reuse(ctx),
     )
+    if code is not None:
+        raise typer.Exit(code)
 
 
 UP_HELP = f"""{command_docs.UP.summary}
 
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
 in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
-Startup is persistent in tmux; a successful finite command leaves a login shell in its pane. Use --no-attach for an
-agent background launch and '--' before remote command flags.
+Explicit commands stream back with Ctrl-C to cancel and Ctrl-B to background; pass --attach to enter their session
+directly. Successful finite commands leave a login shell in the session. Use '--' before remote command flags.
 
 To add a new target, run {ui.command('setup')!r}.
 """
