@@ -91,7 +91,7 @@ def _example_command(action: str, session_name: str | None) -> str:
 
 def _send_example(session_name: str | None) -> str:
     """Build a durable-command example, retaining an unfenced ``<name>`` placeholder for an empty table."""
-    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "COMMAND"]) if session_name else ui.command("send --name <name> -- COMMAND")
+    return shlex.join([ui.COMMAND_NAME, "send", "--name", session_name, "--", "echo", "hello"]) if session_name else ui.command("send --name <name> -- echo hello")
 
 
 def _manage_examples(session_statuses: list[tuple[SessionState, TargetStatus | str]]) -> tuple[tuple[str, str], ...]:
