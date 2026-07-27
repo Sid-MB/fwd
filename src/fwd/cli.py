@@ -5,7 +5,7 @@ Design intent
 Two things make this module unusual and both are deliberate:
 
 1. ``invoke_without_command=True`` plus a callback that dispatches through the same selector engine as ``up`` and
-   ``attach`` implements bare ``fwd`` as ``fwd up --connect``. ``no_args_is_help`` is therefore off — printing help
+   ``attach`` implements bare ``fwd`` as ``fwd up --reuse``. ``no_args_is_help`` is therefore off — printing help
    would defeat the default command.
 2. Every ``ops`` import happens *inside* the command body. Imports at module scope would make ``fwd --help`` pay for
    loading every operation and, while the backends are being built in parallel, would let one teammate's broken module
@@ -52,7 +52,7 @@ app = typer.Typer(
     cls=AliasHelpGroup,
     name=ui.COMMAND_NAME,
     help="Move coding work to remote compute: provision or reuse a target, sync the project, and run a persistent shell, command, Claude Code, or Codex.",
-    epilog=f"Bare {ui.command()!r} means {ui.command('up --connect')!r}: attach to the most recent matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar. For a non-attaching launch, omit --connect: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
+    epilog=f"Bare {ui.command()!r} means {ui.command('up --reuse')!r}: attach to the most recent matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar. For a non-attaching launch, omit --reuse: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -109,7 +109,7 @@ def _announce_root_alias(ctx: typer.Context, *, target: str | None, agent: str |
     metadata = getattr(ctx, "meta", {})
     selector_rewrite = tuple(metadata.get("fwd_selector_rewrite", ()))
     if selector_rewrite:
-        canonical = tuple(metadata.get("fwd_canonical_argv", ("up", "--connect", *selector_rewrite)))
+        canonical = tuple(metadata.get("fwd_canonical_argv", ("up", "--reuse", *selector_rewrite)))
         ui.announce_alias(shlex.join([ui.COMMAND_NAME, *canonical]), invoked=shlex.join([ui.COMMAND_NAME, *selector_rewrite]))
         return
     if invoked in COMMAND_ALIASES:
@@ -120,7 +120,7 @@ def _announce_root_alias(ctx: typer.Context, *, target: str | None, agent: str |
         ui.announce_alias(shlex.join(actual_argv), invoked=shlex.join(invoked_argv))
         return
     if invoked is None:
-        arguments = [ui.COMMAND_NAME, "up", "--connect"]
+        arguments = [ui.COMMAND_NAME, "up", "--reuse"]
         if target:
             arguments.extend(("--target", target))
         if agent:
@@ -135,15 +135,15 @@ def _announce_root_alias(ctx: typer.Context, *, target: str | None, agent: str |
 @app.callback()
 def main(
     ctx: typer.Context,
-    target: Annotated[str | None, typer.Option("--target", "-t", help="Bare-command target/backend selector; equivalent to fwd up --connect --target NAME.", autocompletion=complete_target)] = None,
-    agent: Annotated[str | None, typer.Option("--agent", help="Bare-command coding-agent selector; equivalent to fwd up --connect --agent NAME.", autocompletion=complete_agent)] = None,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Bare-command target/backend selector; equivalent to fwd up --reuse --target NAME.", autocompletion=complete_target)] = None,
+    agent: Annotated[str | None, typer.Option("--agent", help="Bare-command coding-agent selector; equivalent to fwd up --reuse --agent NAME.", autocompletion=complete_agent)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Bare-command session name; attach if it exists, otherwise create it interactively.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
     version: Annotated[bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help=f"Print the installed {ui.command()} version and exit.")] = False,
 ) -> None:
     """Connect to a matching session, creating and attaching interactively when none exists.
 
-    Equivalent to 'fwd up --connect' with the same --target, --agent, and --name selectors.
+    Equivalent to 'fwd up --reuse' with the same --target, --agent, and --name selectors.
     """
     if not ctx.resilient_parsing:
         _announce_root_alias(ctx, target=target, agent=agent, name=name, restart=restart)
@@ -167,14 +167,14 @@ def main(
         target=target,
         agent=agent,
         name=name,
-        connect=True,
+        reuse=True,
         restart=restart,
         create_argv=tuple(create_argv),
     )
 
 
-def _argv_without_connect(ctx: typer.Context) -> tuple[str, ...]:
-    """Return the canonical ``fwd up`` invocation with ``--connect`` removed for actionable non-interactive errors."""
+def _argv_without_reuse(ctx: typer.Context) -> tuple[str, ...]:
+    """Return the canonical ``fwd up`` invocation with ``--reuse`` removed for actionable non-interactive errors."""
     root = ctx.find_root()
     raw = tuple(root.meta.get("fwd_canonical_argv") or root.meta.get("fwd_invocation_argv") or ("up",))
     if not raw or raw[0] != "up":
@@ -185,11 +185,26 @@ def _argv_without_connect(ctx: typer.Context) -> tuple[str, ...]:
     for argument in raw:
         if argument == "--":
             remote_argv = True
-        if not remote_argv and not removed and argument in ("--connect", "-c"):
+        if not remote_argv and not removed and argument in ("--reuse", "-r"):
             removed = True
             continue
         filtered.append(argument)
     return (ui.COMMAND_NAME, *filtered)
+
+
+def _reject_retired_connect_option(ctx: typer.Context) -> None:
+    """Fail safely when the former reuse flag appears before the remote-command separator.
+
+    ``fwd up`` deliberately accepts unknown options after ``--`` for remote commands. Without this migration guard,
+    the removed ``--connect`` option would be interpreted as a remote command and could provision a new session.
+    """
+    root = ctx.find_root()
+    raw = tuple(root.meta.get("fwd_canonical_argv") or root.meta.get("fwd_invocation_argv") or ())
+    for argument in raw:
+        if argument == "--":
+            return
+        if argument in ("--connect", "-c"):
+            ui.die(f"{argument} was renamed to {'--reuse' if argument == '--connect' else '-r'}; run {ui.command('up --reuse')!r} to reuse and attach to a matching session")
 
 
 def _configured_command(config, selector) -> tuple[str, ...]:
@@ -211,7 +226,7 @@ def _run_up(
     name: str | None = None,
     gpu: str | None = None,
     new: bool = False,
-    connect: bool = False,
+    reuse: bool = False,
     restart: bool = False,
     attach: bool = False,
     no_attach: bool = False,
@@ -221,15 +236,15 @@ def _run_up(
     creds: bool = False,
     create_argv: tuple[str, ...] | None = None,
 ) -> None:
-    """Shared launch/connect implementation used by explicit ``up`` and bare/root-selector invocations."""
+    """Shared launch/reuse implementation used by explicit ``up`` and bare/root-selector invocations."""
     from fwd.ops import attach as attach_ops
     from fwd.ops import launch as launch_ops
     from fwd.ops import session_select
 
-    if connect and new:
-        ui.die("--connect and --new are mutually exclusive")
-    if connect and no_attach:
-        ui.die("--connect and --no-attach are mutually exclusive")
+    if reuse and new:
+        ui.die("--reuse and --new are mutually exclusive")
+    if reuse and no_attach:
+        ui.die("--reuse and --no-attach are mutually exclusive")
     selection = session_select.select_current(
         positional,
         target=target,
@@ -246,7 +261,7 @@ def _run_up(
         ui.die("--new and --name are mutually exclusive")
     matches = selection.matches
 
-    if connect and matches:
+    if reuse and matches:
         chosen = matches[0]
         ui.info(f"selectors matched session {chosen.name!r}; attaching")
         if not _interactive_terminal():
@@ -257,15 +272,15 @@ def _run_up(
         attach_ops.attach(chosen.name, restart=restart)
         return
 
-    if connect and not matches and not _interactive_terminal():
+    if reuse and not matches and not _interactive_terminal():
         creation = shlex.join(create_argv or (ui.COMMAND_NAME, "up"))
         ui.die(
-            f"no session matches {selector.describe()}. This is non-interactive mode, so --connect will not provision. "
-            f"Create it explicitly without --connect: `{creation}`"
+            f"no session matches {selector.describe()}. This is non-interactive mode, so --reuse will not provision. "
+            f"Create it explicitly without --reuse: `{creation}`"
         )
 
     initial_command = selector.initial_command
-    if connect:
+    if reuse:
         effective_attach = True
     else:
         effective_attach = _should_attach(_configured_command(config, selector), attach=attach, no_attach=no_attach)
@@ -300,8 +315,8 @@ def _up(
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", autocompletion=complete_gpu, rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
     new: Annotated[bool, typer.Option("--new", help="Create a fresh session instead of reusing this directory's existing session. Cannot be combined with --name.", rich_help_panel=PANEL_TARGET)] = False,
-    connect: Annotated[bool, typer.Option("--connect", "-c", help="Attach to a matching session; create it only in an interactive terminal when no match exists.", rich_help_panel=PANEL_TARGET)] = False,
-    restart: Annotated[bool, typer.Option("--restart", "-y", help="With --connect, authorize restarting stopped billable compute without prompting.", rich_help_panel=PANEL_TARGET)] = False,
+    reuse: Annotated[bool, typer.Option("--reuse", "-r", help="Reuse and attach to a matching session; create it only in an interactive terminal when no match exists.", rich_help_panel=PANEL_TARGET)] = False,
+    restart: Annotated[bool, typer.Option("--restart", "-y", help="With --reuse, authorize restarting stopped billable compute without prompting.", rich_help_panel=PANEL_TARGET)] = False,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
@@ -312,11 +327,12 @@ def _up(
     """Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
 
     Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
-    in an interactive terminal. --connect attaches to a matching session, or creates one only in a human terminal.
+    in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
     Startup is persistent in tmux. Use --no-attach for an agent background launch and '--' before remote command flags.
 
     To add a new target, run 'fwd setup'.
     """
+    _reject_retired_connect_option(ctx)
     _run_up(
         tuple(selectors or ()),
         target=target,
@@ -324,7 +340,7 @@ def _up(
         gpu=gpu,
         name=name,
         new=new,
-        connect=connect,
+        reuse=reuse,
         restart=restart,
         attach=attach,
         no_attach=no_attach,
@@ -332,14 +348,14 @@ def _up(
         handoff=handoff,
         user_config=user_config,
         creds=creds,
-        create_argv=_argv_without_connect(ctx),
+        create_argv=_argv_without_reuse(ctx),
     )
 
 
 UP_HELP = f"""Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
 
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
-in an interactive terminal. --connect attaches to a matching session, or creates one only in a human terminal.
+in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
 Startup is persistent in tmux. Use --no-attach for an agent background launch and '--' before remote command flags.
 
 To add a new target, run {ui.command('setup')!r}.

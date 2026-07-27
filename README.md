@@ -73,18 +73,18 @@ fwd codex                 # connect to this project's Codex session; otherwise l
 fwd --name demo           # connect to the exact session; otherwise create that name interactively
 ```
 
-Bare `fwd` is exactly `fwd up --connect`; root selectors such as `fwd runpod` and `fwd codex` are the corresponding
-`fwd up --connect …` forms. They are intended for a human terminal: when all selectors match an existing session they
+Bare `fwd` is exactly `fwd up --reuse`; root selectors such as `fwd runpod` and `fwd codex` are the corresponding
+`fwd up --reuse …` forms. They are intended for a human terminal: when all selectors match an existing session they
 attach, and when none matches they create and attach. Inside the session, detach with `ctrl-b d` (tmux); the command
-keeps running. Type the same connect form later to reattach.
+keeps running. Type the same reuse form later to reattach.
 
-`--connect` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
-Instead it prints the exact `fwd up` command without `--connect` that an agent or script can use to create the session.
+`--reuse` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
+Instead it prints the exact `fwd up` command without `--reuse` that an agent or script can use to create the session.
 Agents should launch explicitly, for example `fwd up runpod codex` or `fwd up --target work --agent codex`, then hand
 an exact `fwd attach NAME` command back to the human.
 
 You do **not** need to run `fwd setup` before `fwd`. Setup only creates or updates saved target configuration; it never
-provisions, syncs, launches, or attaches. Bare `fwd` is the complete connect workflow: it finds a matching session or
+provisions, syncs, launches, or attaches. Bare `fwd` is the complete reuse workflow: it finds a matching session or
 launches the layered default command, and runs first-time setup automatically when no target exists. Use `fwd setup`
 by itself when you want to add or edit a target without launching it yet.
 
@@ -169,10 +169,10 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 
 | Command | What it does | Example |
 | --- | --- | --- |
-| `fwd [selector flags]` | Alias for `fwd up --connect`: attach to a match, or create interactively | `fwd --agent codex` |
+| `fwd [selector flags]` | Alias for `fwd up --reuse`: attach to a match, or create interactively | `fwd --agent codex` |
 | `fwd TARGET/BACKEND/AGENT` | Connect by positional selector using the same grammar | `fwd runpod` |
 | `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
-| `fwd up -c [selectors...]` | Attach when all selectors match; otherwise create only in a human terminal | `fwd up -c work codex` |
+| `fwd up -r [selectors...]` | Reuse and attach when all selectors match; otherwise create only in a human terminal | `fwd up -r work codex` |
 | `fwd attach` / `fwd a [selectors...]` | Attach to the newest session matching every selector | `fwd a work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
@@ -283,8 +283,8 @@ nor the remote project is modified.
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
 | `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
 | `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
-| `--connect/-c` | Attach to a conjunctive match; create only interactively when none exists | `fwd up -c pod codex` |
-| `--restart/-y` | With `--connect`, authorize restarting stopped billable compute | `fwd up -c -y demo` |
+| `--reuse/-r` | Reuse and attach to a conjunctive match; create only interactively when none exists | `fwd up -r pod codex` |
+| `--restart/-y` | With `--reuse`, authorize restarting stopped billable compute | `fwd up -r -y demo` |
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
@@ -299,8 +299,8 @@ session available. `--new` inherits the current directory session's target unles
 The startup forms are:
 
 ```sh
-fwd                               # equivalent to: fwd up --connect
-fwd runpod                        # equivalent to: fwd up --connect runpod
+fwd                               # equivalent to: fwd up --reuse
+fwd runpod                        # equivalent to: fwd up --reuse runpod
 fwd --agent codex                 # connect to this project's Codex session, or create it interactively
 fwd --name demo                   # connect to exact name, or create it interactively
 fwd up                            # launch layered default_command and use default_target
@@ -314,7 +314,7 @@ fwd up -a work python train.py      # choose a target, start an arbitrary comman
 fwd up -- python train.py --epochs 10  # start an arbitrary persistent command; '--' protects its flags
 ```
 
-Selectors are conjunctive: `fwd up -c --name demo --target work --agent codex` attaches only when one session matches
+Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
 all three values. Without an exact name, matching is scoped to the current project and the most recently used match
 wins. `fwd attach` and `fwd a` use this identical parser and precedence.
 
@@ -325,8 +325,8 @@ always have higher priority, so a target called `stop` cannot shadow `fwd stop`.
 
 Backend selectors such as `ssh`, `runpod`, and `slurm` use the most recently used configured target of that type; a
 sole target is unambiguous before it has history. If several targets share a backend and history cannot choose, fwd
-asks for an exact target. In non-interactive mode, `--connect` always errors with either an exact attach instruction or
-the corresponding creation command without `--connect`.
+asks for an exact target. In non-interactive mode, `--reuse` always errors with either an exact attach instruction or
+the corresponding creation command without `--reuse`.
 
 `fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
 profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.
@@ -454,7 +454,7 @@ fwd ssh                             # attach through the recent SSH target, or c
 fwd pod                             # exact configured target; attach a match or create interactively
 ```
 
-For a background launch without writing config, omit `--connect` and pass an inferable target:
+For a background launch without writing config, omit `--reuse` and pass an inferable target:
 
 ```sh
 fwd up runpod                       # unsaved CPU pod using built-in defaults; run default_command

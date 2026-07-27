@@ -1,6 +1,6 @@
 """Legacy target/backend selection helpers plus root completion metadata.
 
-Root invocation now rewrites selectors to ``fwd up --connect`` and delegates parsing to :mod:`fwd.ops.session_select`;
+Root invocation now rewrites selectors to ``fwd up --reuse`` and delegates parsing to :mod:`fwd.ops.session_select`;
 the compatibility functions here remain for callers and focused backend setup tests. Root completion still consumes
 ``completion_candidates``. Registered commands always win before dynamic selectors, so a target named ``stop`` cannot
 shadow ``fwd stop``.

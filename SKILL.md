@@ -38,7 +38,7 @@ replacement; `--stop` alone cancels without ending the agent session.
 ## Agent safety rules
 
 - Prefer `--json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
-- Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --connect`, or `fwd up --attach` as a tool call because connect/attach forms take over a human terminal. In non-interactive mode `--connect` deliberately errors instead of provisioning.
+- Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --reuse`, or `fwd up --attach` as a tool call because reuse/attach forms take over a human terminal. In non-interactive mode `--reuse` deliberately errors instead of provisioning.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.

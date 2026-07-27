@@ -159,7 +159,7 @@ def test_bare_command_prints_resolved_canonical_invocation_first(monkeypatch: py
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == "info: fwd → fwd up --connect"
+    assert result.output.splitlines()[0] == "info: fwd → fwd up --reuse"
 
 
 def test_up_help_explains_how_to_add_a_target() -> None:
@@ -169,6 +169,9 @@ def test_up_help_explains_how_to_add_a_target() -> None:
     result = CliRunner().invoke(app, ["up", "--help"])
     assert result.exit_code == 0
     assert "To add a new target, run 'fwd setup'." in result.output
+    assert "--reuse" in result.output
+    assert "-r" in result.output
+    assert "--connect" not in result.output
 
 
 def test_default_and_config_set_write_the_same_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

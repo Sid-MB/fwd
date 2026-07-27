@@ -34,7 +34,7 @@ fwd up --target my-box                  # Host alias from ~/.ssh/config
 
 Configured target names win over inferred forms. Slurm is not inferred because its login host, allocation, and scratch paths are site-specific.
 
-In a human terminal, `fwd TARGET` means `fwd up --connect TARGET`: attach to a matching project session or create and attach when none exists. `fwd BACKEND` matches the most recently used target of that backend or offers setup when creation needs configuration. Do not use connect forms from an agent tool call; use `fwd up --target NAME` without `--connect`.
+In a human terminal, `fwd TARGET` means `fwd up --reuse TARGET`: attach to a matching project session or create and attach when none exists. `fwd BACKEND` matches the most recently used target of that backend or offers setup when creation needs configuration. Do not use reuse/attach forms from an agent tool call; use `fwd up --target NAME` without `--reuse`.
 
 ## First-time setup
 

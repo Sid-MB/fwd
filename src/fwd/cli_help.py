@@ -4,9 +4,9 @@ Typer models aliases as separate commands, which normally renders duplicate rows
 the alias commands hidden and teaches the root group to annotate the canonical row as ``attach (a)``. Invocation and
 completion still use the real command names; only help presentation changes.
 
-Unknown root tokens that are valid sessions, targets, backends, or agents are rewritten to ``up --connect`` before
+Unknown root tokens that are valid sessions, targets, backends, or agents are rewritten to ``up --reuse`` before
 Click dispatch. This makes ``fwd runpod`` and ``fwd codex`` use the exact same parser and matching logic as explicit
-``fwd up --connect runpod`` rather than maintaining dynamic one-off command callbacks.
+``fwd up --reuse runpod`` rather than maintaining dynamic one-off command callbacks.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ class AliasHelpGroup(TyperGroup):
     aliases: ClassVar[dict[str, tuple[str, ...]]] = {"attach": ("a",), "send": ("s",)}
 
     def resolve_command(self, ctx: click.Context, args: list[str]) -> tuple[str | None, click.Command | None, list[str]]:
-        """Retain original argv and rewrite root selectors to the canonical connect command."""
+        """Retain original argv and rewrite root selectors to the canonical reuse command."""
         original = tuple(args)
         if args and super().get_command(ctx, args[0]) is None:
             from fwd.ops.session_select import recognized_root_selector
 
             if recognized_root_selector(args[0]):
-                rewritten = ["up", "--connect", *args]
+                rewritten = ["up", "--reuse", *args]
                 ctx.meta["fwd_selector_rewrite"] = original
                 ctx.meta["fwd_canonical_argv"] = tuple(rewritten)
                 args = rewritten
@@ -51,7 +51,7 @@ class AliasHelpGroup(TyperGroup):
         from fwd.state import StateStore
 
         candidates = dict(target_alias.completion_candidates())
-        candidates.update({name: f"{name} coding agent · connect or launch for this project" for name in agents.AGENTS})
+        candidates.update({name: f"{name} coding agent · reuse or launch for this project" for name in agents.AGENTS})
         try:
             candidates.update({session.name: f"{session.backend} session · {session.flags.get('target', 'unknown target')}" for session in StateStore().all()})
         except Exception:

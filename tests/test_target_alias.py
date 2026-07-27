@@ -187,8 +187,8 @@ def test_recognized_dynamic_alias_is_invocable_through_root_cli(monkeypatch: pyt
 
     assert result.exit_code == 0, result.output
     assert dispatched[0][0] == ("work",)
-    assert dispatched[0][1]["connect"] is True
-    assert result.output.splitlines()[0] == "info: fwd work → fwd up --connect work"
+    assert dispatched[0][1]["reuse"] is True
+    assert result.output.splitlines()[0] == "info: fwd work → fwd up --reuse work"
 
 
 def test_unknown_name_remains_a_normal_click_error(monkeypatch: pytest.MonkeyPatch) -> None:

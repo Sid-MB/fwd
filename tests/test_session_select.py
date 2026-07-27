@@ -1,4 +1,4 @@
-"""Shared selector grammar and connect-policy tests."""
+"""Shared selector grammar and reuse-policy tests."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def test_gpu_is_a_conjunctive_launch_selector(tmp_path: Path) -> None:
     assert session_select.matching_sessions([cpu, gpu], selector, cwd=tmp_path) == [gpu]
 
 
-def test_up_connect_attaches_matching_session_in_interactive_terminal(tmp_path: Path, monkeypatch) -> None:
+def test_up_reuse_attaches_matching_session_in_interactive_terminal(tmp_path: Path, monkeypatch) -> None:
     matched = _session("demo", tmp_path, command=("codex",))
     selector = session_select.SessionSelector(agent="codex")
     attached = []
@@ -99,19 +99,19 @@ def test_up_connect_attaches_matching_session_in_interactive_terminal(tmp_path: 
 
     monkeypatch.setattr(attach_ops, "attach", lambda name, **kwargs: attached.append((name, kwargs)))
 
-    cli._run_up(("codex",), connect=True)
+    cli._run_up(("codex",), reuse=True)
 
     assert attached == [("demo", {"restart": False})]
 
 
-def test_up_connect_noninteractive_no_match_prints_exact_creation_command(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_up_reuse_noninteractive_no_match_prints_exact_creation_command(tmp_path: Path, monkeypatch, capsys) -> None:
     selector = session_select.SessionSelector(target=session_select.TargetSelector("runpod", "runpod", backend="runpod"), agent="codex")
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: False)
     selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(), cwd=tmp_path, matches=())
     monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
 
     with pytest.raises(typer.Exit):
-        cli._run_up(("runpod", "codex"), connect=True, create_argv=("fwd", "up", "runpod", "codex"))
+        cli._run_up(("runpod", "codex"), reuse=True, create_argv=("fwd", "up", "runpod", "codex"))
 
     output = capsys.readouterr().err
     assert "non-interactive mode" in output
@@ -119,11 +119,12 @@ def test_up_connect_noninteractive_no_match_prints_exact_creation_command(tmp_pa
     assert output.rstrip().endswith("`fwd up runpod codex`")
 
 
-def test_up_cli_passes_positional_and_flag_selectors_to_shared_dispatch(monkeypatch) -> None:
+@pytest.mark.parametrize("reuse_flag", ["--reuse", "-r"])
+def test_up_cli_passes_positional_and_flag_selectors_to_shared_dispatch(monkeypatch, reuse_flag: str) -> None:
     dispatched = []
     monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: dispatched.append((positional, kwargs)))
 
-    result = CliRunner().invoke(cli.app, ["up", "--connect", "--target", "pod", "--agent", "codex", "--name", "demo"])
+    result = CliRunner().invoke(cli.app, ["up", reuse_flag, "--target", "pod", "--agent", "codex", "--name", "demo"])
 
     assert result.exit_code == 0, result.output
     positional, options = dispatched[0]
@@ -131,15 +132,27 @@ def test_up_cli_passes_positional_and_flag_selectors_to_shared_dispatch(monkeypa
     assert options["target"] == "pod"
     assert options["agent"] == "codex"
     assert options["name"] == "demo"
-    assert options["connect"] is True
+    assert options["reuse"] is True
     assert options["create_argv"] == ("fwd", "up", "--target", "pod", "--agent", "codex", "--name", "demo")
 
 
-def test_connect_creation_command_preserves_remote_short_flags_after_separator(monkeypatch) -> None:
+@pytest.mark.parametrize(("retired", "replacement"), [("--connect", "--reuse"), ("-c", "-r")])
+def test_retired_connect_option_fails_instead_of_becoming_a_remote_command(monkeypatch, retired: str, replacement: str) -> None:
     dispatched = []
     monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: dispatched.append((positional, kwargs)))
 
-    result = CliRunner().invoke(cli.app, ["up", "--connect", "--", "bash", "-c", "echo hello"])
+    result = CliRunner().invoke(cli.app, ["up", retired])
+
+    assert result.exit_code != 0
+    assert f"{retired} was renamed to {replacement}" in result.output
+    assert dispatched == []
+
+
+def test_reuse_creation_command_preserves_remote_short_flags_after_separator(monkeypatch) -> None:
+    dispatched = []
+    monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: dispatched.append((positional, kwargs)))
+
+    result = CliRunner().invoke(cli.app, ["up", "--reuse", "--", "bash", "-c", "echo hello"])
 
     assert result.exit_code == 0, result.output
     assert dispatched[0][0] == ("bash", "-c", "echo hello")
@@ -162,7 +175,7 @@ def test_registered_agent_launch_auto_attaches_only_through_shared_policy(tmp_pa
     assert launched[0]["attach"] is True
 
 
-def test_bare_selector_flags_forward_to_connect_dispatch(monkeypatch) -> None:
+def test_bare_selector_flags_forward_to_reuse_dispatch(monkeypatch) -> None:
     dispatched = []
     monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: dispatched.append((positional, kwargs)))
 
@@ -173,4 +186,4 @@ def test_bare_selector_flags_forward_to_connect_dispatch(monkeypatch) -> None:
     assert dispatched[0][1]["target"] == "pod"
     assert dispatched[0][1]["agent"] == "codex"
     assert dispatched[0][1]["name"] == "demo"
-    assert dispatched[0][1]["connect"] is True
+    assert dispatched[0][1]["reuse"] is True

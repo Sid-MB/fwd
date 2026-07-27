@@ -250,7 +250,7 @@ def select_current(
 
 
 def recognized_root_selector(token: str) -> bool:
-    """Return whether an unknown root token may be rewritten to ``up --connect`` instead of rejected by Click."""
+    """Return whether an unknown root token may be rewritten to ``up --reuse`` instead of rejected by Click."""
     if token in agents.AGENTS or token in TARGET_TYPES:
         return True
     try:
