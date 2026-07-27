@@ -199,3 +199,6 @@ def run_wizard() -> None:
 
     _test_connection(target, existing)
     ui.info("run 'fwd up' in a project directory to launch a session")
+    # The wizard only asks about the fields it needs; point at the rest of the schema rather than pretending it is all.
+    ui.info("'fwd config' shows the effective config and which file each value came from")
+    ui.info("'fwd config --example' lists every available field, with defaults and comments")

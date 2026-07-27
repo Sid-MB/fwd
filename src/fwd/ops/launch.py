@@ -294,6 +294,35 @@ def _resolve_target(cfg: Config, requested: str | None, existing: SessionState |
     return cfg.target(None)
 
 
+def _resolve_target_or_offer_setup(cfg: Config, requested: str | None, existing: SessionState | None, local_cwd: Path) -> TargetConfig:
+    """Resolve the target, offering the setup wizard when the only problem is that nothing is configured yet.
+
+    A first-time user's very first command is usually a bare ``fwd``, and dying with a paragraph about TOML tables is a
+    poor answer when the wizard exists two keystrokes away. The offer is deliberately narrow: it fires only when *no*
+    targets are configured and no ``--target`` was given, because any other failure (a typo, a removed target, an
+    ambiguous default) has a specific message that is more useful than a wizard.
+
+    Non-interactive callers keep the plain error — :func:`ui.confirm` returns its default without prompting when stdin is
+    not a terminal, and the default is ``False``, so a cron job never blocks on input or silently starts a wizard.
+    """
+    try:
+        return _resolve_target(cfg, requested, existing)
+    except ConfigError as exc:
+        if requested or cfg.targets:
+            ui.die(str(exc))
+        ui.warn("no fwd targets are configured yet")
+        if not ui.confirm("Run the setup wizard now?", default=False):
+            ui.die(str(exc))
+        from fwd import wizard
+
+        wizard.run_wizard()
+        # Re-read from disk: the wizard just wrote ~/.fwd/config.toml and the in-memory Config predates it.
+        try:
+            return _resolve_target(load_config(local_cwd), requested, existing)
+        except ConfigError as retry_exc:
+            ui.die(str(retry_exc))
+
+
 def _fresh_handoff(local_cwd: Path) -> Path | None:
     """Return an existing ``HANDOFF.md`` if it is recent enough to reuse, else ``None``.
 
@@ -404,10 +433,7 @@ def launch(
     if existing is not None:
         session_name = existing.name
 
-    try:
-        target_cfg = _resolve_target(cfg, target, existing)
-    except ConfigError as exc:
-        ui.die(str(exc))
+    target_cfg = _resolve_target_or_offer_setup(cfg, target, existing, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
     flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds)
 

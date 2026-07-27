@@ -23,15 +23,13 @@ your project dir  ──── rsync ──────────▶  ~/fwd/pr
 ## Install
 
 ```sh
-uv tool install FWD_PYPI_ID
+uv tool install git+https://github.com/Sid-MB/fwd
 ```
 
-<!-- FWD_PYPI_ID is a placeholder: replace with the real PyPI package id once fwd is published. -->
-
-**Not yet on PyPI** — until it is published, install from source:
+Or try it without installing:
 
 ```sh
-uv tool install git+https://github.com/Sid-MB/fwd
+uvx --from git+https://github.com/Sid-MB/fwd fwd --help
 ```
 
 Requires Python 3.12+, plus `ssh` and `rsync` locally. Everything the *remote* needs (uv, bun, node, claude, tmux) is
@@ -85,6 +83,9 @@ Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every
 | `fwd rm [name]` | Destroy the target and forget the session (confirms first) |
 | `fwd setup` | Interactive wizard writing `~/.fwd/config.toml` |
 | `fwd doctor` | Check local prerequisites and target reachability |
+| `fwd config` | Print the effective merged config, annotated with where each value came from |
+| `fwd config --example [backend]` | Print a commented reference config generated from the schema |
+| `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling |
 
 ### `fwd up` flags
 
@@ -134,8 +135,29 @@ Set defaults for any of these under `[claude]` in your config.
 
 ## Configuration
 
+**Run `fwd config --example` for an always-up-to-date commented reference** — it is generated from `fwd`'s own
+dataclasses, so it lists every field with its real default and cannot drift from the code. `fwd config --example slurm`
+narrows it to one backend, and the output is valid TOML you can redirect straight into a config file. To see what your
+own files currently resolve to, and which file set each value, run `fwd config`. For agents, editors, and validators,
+`fwd config --schema` emits the same contract as JSON Schema Draft 2020-12.
+
 `~/.fwd/config.toml` is the global config; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can
 override a single field of a globally-declared target without restating the rest.
+
+### Zero-config quickstart
+
+You may not need a config file at all. A `--target` that is not in your config is inferred when it is unambiguous:
+
+```sh
+fwd up --target runpod              # rents a GPU pod using the built-in RunPod defaults
+fwd up --target sid@gpu.example.com # a machine you already have
+fwd up --target my-box              # any Host alias in ~/.ssh/config
+```
+
+Configured targets always win — declaring `[targets.runpod]` overrides the built-in rather than competing with it.
+Slurm is deliberately **not** inferable: the login host, scratch path and allocation spec are all site-specific, so
+`fwd` asks you to run `fwd setup` or crib from `fwd config --example slurm` instead of guessing and failing a minute
+into a launch.
 
 ### SSH — a machine you already have
 
@@ -291,7 +313,7 @@ One-time setup on pypi.org, under *Publishing* → *Add a new pending publisher*
 
 | Field | Value |
 | --- | --- |
-| PyPI project name | `FWD_PYPI_ID` (the name being claimed; must match `project.name` in `pyproject.toml`) |
+| PyPI project name | must match `project.name` in `pyproject.toml` (currently `fwd`) |
 | Owner / repository | `Sid-MB` / `fwd` |
 | Workflow name | `publish.yml` |
 | Environment name | `pypi` |
@@ -300,5 +322,5 @@ Then create a matching `pypi` environment in the repo settings (a required-revie
 
 **The published version comes from `version` in `pyproject.toml`, not from the git tag.** PyPI will not overwrite an
 existing version, so bump `pyproject.toml` in the same commit you tag — otherwise the `publish` job fails at the upload
-step. Both this file and `SKILL.md` still carry the literal `FWD_PYPI_ID` placeholder; replace it with the real package
-id before the first release.
+step. None of this is wired into the install instructions above: until a release actually happens, the git install is
+the real one.

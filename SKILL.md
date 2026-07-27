@@ -12,16 +12,10 @@ description: Forward the current Claude Code session to a remote machine with fw
 If `fwd` is not on PATH:
 
 ```sh
-uv tool install FWD_PYPI_ID
-```
-
-<!-- FWD_PYPI_ID is a placeholder: replace with the real PyPI package id once fwd is published. Until then use the from-source install below. -->
-
-From source (works today):
-
-```sh
 uv tool install git+https://github.com/Sid-MB/fwd
 ```
+
+Or run it once without installing: `uvx --from git+https://github.com/Sid-MB/fwd fwd --help`.
 
 Needs Python 3.12+ locally, plus `ssh` and `rsync`. The RunPod backend additionally needs `runpodctl` >= 2.6.0 configured. Everything the *remote* needs is installed by `fwd` on first launch.
 
@@ -35,6 +29,18 @@ fwd doctor    # checks local prerequisites and every configured target; non-zero
 `fwd setup` is interactive — do not run it yourself; tell the user to run it. `fwd doctor` is safe and non-interactive, so run it first whenever anything misbehaves.
 
 Config: `~/.fwd/config.toml` is global; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can override one field of a global target (commonly the Slurm `alloc`) without restating the rest. Writing config files directly is fine and often faster than the wizard.
+
+**Do not guess config fields.** Run `fwd config --example <ssh|runpod|slurm|all>` to see every available field with its real default and a comment — the output is generated from fwd's own schema, so it matches the installed version. Run `fwd config --schema` for the machine-readable JSON Schema, and `fwd config` to inspect the effective merged config, annotated with which file set each value, before editing anything. The longer configuration guide is https://github.com/Sid-MB/fwd#configuration.
+
+**You often need no config at all.** A `--target` absent from config is inferred when unambiguous, so these work on a clean machine:
+
+```sh
+fwd up --no-attach --target runpod                  # GPU pod from built-in RunPod defaults
+fwd up --no-attach --target sid@gpu.example.com     # a host the user already has
+fwd up --no-attach --target my-box                  # any Host alias in ~/.ssh/config
+```
+
+Configured targets always win over inferred ones. Slurm is deliberately not inferable (site-specific login host, scratch path and allocation) — for a cluster, tell the user to run `fwd setup`, or write a config using `fwd config --example slurm`.
 
 Minimal target per backend:
 

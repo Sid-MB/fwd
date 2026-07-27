@@ -22,6 +22,7 @@ travels with it — and a single flat list of eight options buries that distinct
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated
 
 import typer
@@ -31,11 +32,12 @@ from fwd import __version__, ui
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
 PANEL_TARGET = "Target & session"
 PANEL_CLAUDE = "Claude context"
+CONFIG_DOCS_URL = "https://github.com/Sid-MB/fwd#configuration"
 
 app = typer.Typer(
     name="fwd",
     help="Forward your Claude Code session to a remote machine: provision, sync, carry the transcript, attach.",
-    epilog="Bare 'fwd' attaches to this directory's session, or launches one if there is none. Start with 'fwd setup', diagnose with 'fwd doctor'.",
+    epilog=f"Bare 'fwd' attaches to this directory's session, or launches one if there is none. Learn config with 'fwd config --example' or 'fwd config --schema'; guide: {CONFIG_DOCS_URL}. Diagnose with 'fwd doctor'. Zero config needed for 'fwd up --target runpod' or 'fwd up --target user@host'.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -160,6 +162,34 @@ def rm_cmd(
     from fwd.ops import lifecycle
 
     lifecycle.remove(name, force=force)
+
+
+class ExampleBackend(str, Enum):
+    """Choices for ``fwd config --example``. An Enum so Typer renders and validates the list for free."""
+
+    ssh = "ssh"
+    runpod = "runpod"
+    slurm = "slurm"
+    all = "all"
+
+
+@app.command("config")
+def config_cmd(
+    backend: Annotated[ExampleBackend | None, typer.Argument(help="With --example, which backend to show; defaults to all.")] = None,
+    example: Annotated[bool, typer.Option("--example", help="Print a commented reference config generated from fwd's own schema instead of your effective one.")] = False,
+    schema: Annotated[bool, typer.Option("--schema", help="Print the complete machine-readable JSON Schema for config files.")] = False,
+) -> None:
+    """Show effective config, a commented TOML reference, or machine-readable JSON Schema.
+
+    Outputs go to stdout without terminal formatting. Guide: https://github.com/Sid-MB/fwd#configuration
+    """
+    if example and schema:
+        ui.die("--example and --schema are mutually exclusive")
+    if backend is not None and not example:
+        ui.die(f"'fwd config {backend.value}' is only meaningful with --example; run 'fwd config --example {backend.value}' for a reference, or 'fwd config' for your effective config")
+    from fwd.ops import configcmd
+
+    configcmd.show((backend or ExampleBackend.all).value if example else None, schema=schema)
 
 
 @app.command("setup")
