@@ -30,6 +30,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
+from fwd.output import OutputFormat
 
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
 PANEL_TARGET = "Target & session"
@@ -168,11 +169,13 @@ app.command("s", help="Alias for 'send'.", context_settings={"allow_extra_args":
 
 
 @app.command("ls")
-def ls_cmd() -> None:
+def ls_cmd(
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
+) -> None:
     """List every fwd session with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
 
-    lifecycle.ls()
+    lifecycle.ls(output_format=output_format)
 
 
 @app.command("push")
@@ -322,6 +325,7 @@ def setup_cmd(
 @app.command("doctor")
 def doctor_cmd(
     target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target instead of every configured one.")] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
 ) -> None:
     """Check local prerequisites (ssh, rsync, backend CLIs) and the reachability of each configured target.
 
@@ -329,19 +333,27 @@ def doctor_cmd(
     """
     from fwd import doctor
 
-    raise typer.Exit(doctor.run_doctor(target))
+    raise typer.Exit(doctor.run_doctor(target, output_format=output_format))
 
 
 @app.command("info")
-def info_cmd() -> None:
+def info_cmd(
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
+) -> None:
     """Print installed version and the local paths fwd uses for configuration and session state."""
     from fwd.config import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_RELPATH
     from fwd.state import STATE_PATH
 
-    ui.console.print(f"fwd {__version__}")
-    ui.console.print(f"global config: {GLOBAL_CONFIG_PATH}")
-    ui.console.print(f"project config: <project>/{PROJECT_CONFIG_RELPATH}")
-    ui.console.print(f"session state: {STATE_PATH}")
+    ui.record(
+        "fwd info",
+        (
+            ("version", __version__),
+            ("global config", str(GLOBAL_CONFIG_PATH)),
+            ("project config", f"<project>/{PROJECT_CONFIG_RELPATH}"),
+            ("session state", str(STATE_PATH)),
+        ),
+        output_format=output_format,
+    )
 
 
 @app.command("version", hidden=True)

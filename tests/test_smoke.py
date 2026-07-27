@@ -25,6 +25,7 @@ MODULES = [
     "fwd.sshexec",
     "fwd.sync",
     "fwd.remote",
+    "fwd.output",
     "fwd.claude_state",
     "fwd.doctor",
     "fwd.wizard",

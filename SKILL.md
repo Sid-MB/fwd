@@ -23,7 +23,7 @@ Needs Python 3.12+ locally, plus `ssh` and `rsync`. The RunPod backend additiona
 
 ```sh
 fwd setup     # prompts in a terminal; automatically requires flags under CLAUDECODE/CODEX_AGENT or redirected output
-fwd doctor    # checks local prerequisites and every configured target; non-zero exit on failure
+fwd doctor --format json    # checks prerequisites/targets; structured stdout and non-zero exit on failure
 ```
 
 Agents may run `fwd setup` non-interactively by supplying the fields shown by `fwd setup --help`, for example `fwd setup --backend ssh --host my-box --target-name work`. Missing required fields fail with the exact flags needed and no prompt. `--interactive` forces the wizard and should be left to the user. `fwd doctor` is safe and non-interactive, so run it first whenever anything misbehaves.
@@ -112,7 +112,7 @@ Context transfer for `fwd up claude`:
 ### Checking, syncing, lifecycle
 
 ```sh
-fwd ls                        # sessions with live per-backend status and cost — safe, run this to orient
+fwd ls --format json          # sessions with live per-backend status — stable named records for agents
 fwd push                      # re-sync local changes up (mirrors: deletes remote-only files)
 fwd pull                      # bring the whole remote dir down (additive; never deletes local files)
 fwd pull outputs/ logs/       # path-scoped pull, the usual way to fetch results
@@ -121,6 +121,7 @@ fwd rm --force                # destroy the target and forget the session; irrev
 ```
 
 - `fwd rm` prompts and its prompt defaults to **no**, so a non-interactive `fwd rm` does nothing — pass `--force` when the user has asked for destruction.
+- Read commands use Markdown automatically outside a human terminal. Prefer explicit `--format json` with `fwd ls`, `fwd doctor`, and `fwd info` when consuming their output programmatically; progress and errors stay on stderr.
 - `fwd attach` refuses to restart **stopped, billable** compute without a terminal. `--restart` (`-y`) authorizes it explicitly. Never pass `--restart` on your own initiative; restarting a pod resumes billing.
 - On RunPod, a stop wipes everything outside the volume. On Slurm, when an allocation ends `fwd attach` offers a new allocation in place without re-syncing.
 

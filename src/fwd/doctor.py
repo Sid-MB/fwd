@@ -28,6 +28,7 @@ from fwd import claude_state, ui
 from fwd.backends import make_backend
 from fwd.backends.base import CheckResult
 from fwd.config import Config, ConfigError, TargetConfig, load_config
+from fwd.output import OutputFormat
 from fwd.state import StateStore
 
 # Prefix on CheckResult.detail marking a check that could not run. Encoded in the detail string rather than as a new
@@ -166,7 +167,7 @@ def _target_checks(cfg: Config, target: str | None) -> list[CheckResult]:
     return results
 
 
-def run_doctor(target: str | None = None) -> int:
+def run_doctor(target: str | None = None, *, output_format: OutputFormat | str = OutputFormat.auto) -> int:
     """Run all diagnostics and print a results table.
 
     Args:
@@ -185,15 +186,15 @@ def run_doctor(target: str | None = None) -> int:
     rows = []
     for result in results:
         if _is_skipped(result):
-            mark, detail = "[dim]skip[/]", result.detail[len(SKIP_PREFIX) :].strip()
+            mark, detail = "skip", result.detail[len(SKIP_PREFIX) :].strip()
         elif result.ok:
-            mark, detail = "[green]ok[/]", result.detail
+            mark, detail = "ok", result.detail
         else:
-            mark, detail = "[red]FAIL[/]", result.detail
+            mark, detail = "FAIL", result.detail
             if result.hint:
                 detail = f"{detail} — {result.hint}"
         rows.append([result.name, mark, detail])
-    ui.table("fwd doctor", ["check", "status", "detail"], rows)
+    ui.table("fwd doctor", ["check", "status", "detail"], rows, output_format=output_format)
 
     failures = [r for r in results if not r.ok]
     if failures:

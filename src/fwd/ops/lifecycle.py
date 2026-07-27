@@ -22,6 +22,7 @@ import typer
 from fwd import remote, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
+from fwd.output import OutputFormat
 from fwd.state import SessionState
 
 # Rendered when a backend cannot be reached or has not implemented status yet. Distinct from every real status so the
@@ -64,13 +65,9 @@ def _live_status(session: SessionState) -> str:
         return UNKNOWN_STATUS
 
 
-def ls() -> None:
+def ls(*, output_format: OutputFormat | str = OutputFormat.auto) -> None:
     """List all sessions with live, backend-reconciled status."""
     sessions = launch_ops.store().all()
-    if not sessions:
-        ui.info("no fwd sessions; run 'fwd up' to create one")
-        return
-
     rows = []
     for session in sessions:
         rows.append(
@@ -88,6 +85,7 @@ def ls() -> None:
         "fwd sessions",
         ["name", "backend", "status", "tmux", "local dir", "last attached", "ids"],
         rows,
+        output_format=output_format,
     )
 
 

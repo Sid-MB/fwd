@@ -77,6 +77,25 @@ fwd setup --backend slurm --login-host login.example.edu --user myusername --rem
 
 ## Commands
 
+### Structured output
+
+Read-oriented commands decouple their data from presentation. `fwd ls`, `fwd doctor`, and `fwd info` build structured
+tables or records, then select a renderer:
+
+```sh
+fwd ls                         # Rich table in a terminal; Markdown when piped or run by an agent
+fwd ls --format markdown       # stable GitHub-flavored Markdown table
+fwd ls --format json           # JSON object with title, columns, and named row objects
+fwd doctor --format json
+fwd info --format json
+```
+
+`--format auto` is the default. It uses Markdown whenever stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
+set, even if an agent runner allocated a pseudo-terminal. Progress and errors remain on stderr; outside an interactive
+terminal they use stable `info:`, `ok:`, `warning:`, and `error:` prefixes instead of terminal glyphs and styling.
+Configuration output remains TOML (`fwd config` / `--example`) or JSON Schema (`fwd config --schema`) because those
+formats are already directly machine-readable.
+
 | Command | What it does |
 | --- | --- |
 | `fwd` | Smart default: attach to this directory's session, else launch one |

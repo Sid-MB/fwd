@@ -17,6 +17,7 @@ No test performs real ssh, spawns a process, or writes outside tmp_path.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -717,6 +718,16 @@ def test_ls_shows_live_status(project, state_store, config, calls, monkeypatch, 
     _seed(state_store, project)
     lifecycle.ls()
     assert "stopped" in capsys.readouterr().out
+
+
+def test_ls_json_exposes_named_rows(project, state_store, config, calls, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(launch_ops.backends, "make_backend", lambda target, config: FakeBackend(calls, status=TargetStatus.RUNNING))
+    _seed(state_store, project)
+    lifecycle.ls(output_format="json")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["type"] == "table"
+    assert payload["rows"][0]["name"] == "myproject-abc123"
+    assert payload["rows"][0]["status"] == "running"
 
 
 def test_stop_kills_tmux_then_backend(project, state_store, config, fake_backend, stub_world, calls) -> None:

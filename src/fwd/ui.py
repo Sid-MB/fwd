@@ -32,7 +32,7 @@ from typing import NoReturn
 import typer
 from rich.console import Console
 from rich.markup import escape
-from rich.table import Table
+from fwd.output import OutputFormat, RecordElement, TableElement, render
 
 console = Console()
 err_console = Console(stderr=True)
@@ -71,29 +71,37 @@ def step(message: str, *, quiet: bool = False) -> Iterator[None]:
         try:
             yield
         except BaseException:
-            err_console.print(f"x {safe} failed after {time.monotonic() - started:.1f}s")
+            err_console.print(f"error: {safe} failed after {time.monotonic() - started:.1f}s")
             raise
-    err_console.print(f"[bold green]✓[/] {safe} [dim]{time.monotonic() - started:.1f}s[/]")
+    elapsed = time.monotonic() - started
+    if _tty():
+        err_console.print(f"[bold green]✓[/] {safe} [dim]{elapsed:.1f}s[/]")
+    else:
+        err_console.print(f"ok: {safe} ({elapsed:.1f}s)")
 
 
 def info(message: str) -> None:
     """Print a neutral status line to stderr."""
-    err_console.print(f"[dim]·[/] {escape(message)}")
+    safe = escape(message)
+    err_console.print(f"[dim]·[/] {safe}" if _tty() else f"info: {safe}")
 
 
 def ok(message: str) -> None:
     """Print a success line to stderr."""
-    err_console.print(f"[bold green]✓[/] {escape(message)}")
+    safe = escape(message)
+    err_console.print(f"[bold green]✓[/] {safe}" if _tty() else f"ok: {safe}")
 
 
 def warn(message: str) -> None:
     """Print a warning to stderr. Used for degraded-but-working situations (rsync fallback, ignored config keys)."""
-    err_console.print(f"[bold yellow]![/] {escape(message)}")
+    safe = escape(message)
+    err_console.print(f"[bold yellow]![/] {safe}" if _tty() else f"warning: {safe}")
 
 
 def error(message: str) -> None:
     """Print an error to stderr without exiting."""
-    err_console.print(f"[bold red]x[/] {escape(message)}")
+    safe = escape(message)
+    err_console.print(f"[bold red]x[/] {safe}" if _tty() else f"error: {safe}")
 
 
 def die(message: str, *, code: int = 1) -> NoReturn:
@@ -117,7 +125,7 @@ def raw(text: str) -> None:
     sys.stdout.write(text)
 
 
-def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[str]]) -> None:
+def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[str]], *, output_format: OutputFormat | str = OutputFormat.auto) -> None:
     """Render a table to stdout (it is data, not chrome).
 
     Args:
@@ -125,12 +133,13 @@ def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[str]]) -> 
         columns: Header labels.
         rows: Row values; each row is rendered with ``str()`` applied per cell.
     """
-    tbl = Table(title=title, title_justify="left", header_style="bold")
-    for column in columns:
-        tbl.add_column(column)
-    for row in rows:
-        tbl.add_row(*[str(cell) for cell in row])
-    console.print(tbl)
+    element = TableElement(title, tuple(columns), tuple(tuple(row) for row in rows))
+    render(element, output_format=output_format, console=console)
+
+
+def record(title: str, fields: Sequence[tuple[str, object]], *, output_format: OutputFormat | str = OutputFormat.auto) -> None:
+    """Render a structured key/value record through the same renderer selection as tables."""
+    render(RecordElement(title, tuple(fields)), output_format=output_format, console=console)
 
 
 def confirm(prompt: str, *, default: bool = False) -> bool:
