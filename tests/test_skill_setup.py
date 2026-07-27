@@ -14,6 +14,7 @@ def _marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the persistent onboarding marker away from the real user home."""
     marker = tmp_path / ".fwd" / "skill-prompted"
     monkeypatch.setattr(skill_setup, "SKILL_PROMPT_PATH", marker)
+    monkeypatch.setattr(skill_setup, "LOCAL_SKILL_SOURCE", tmp_path / ".fwd" / "skill-source")
     monkeypatch.setattr(skill_setup, "_current_revision", lambda: "revision-2")
     return marker
 
@@ -27,8 +28,25 @@ def test_offer_installs_through_npx_and_records_success(tmp_path: Path, monkeypa
 
     skill_setup.offer_once()
 
-    assert calls == [(["/usr/local/bin/npx", "skills", "add", "Sid-MB/fwd"], False)]
+    assert calls == [
+        (
+            [
+                "/usr/local/bin/npx",
+                "skills",
+                "add",
+                str(tmp_path / ".fwd" / "skill-source"),
+                "--global",
+                "--agent",
+                "codex",
+                "claude-code",
+                "--skill",
+                "fwd",
+            ],
+            False,
+        )
+    ]
     assert marker.read_text(encoding="utf-8") == "installed:revision-2\n"
+    assert (tmp_path / ".fwd" / "skill-source" / "fwd" / "SKILL.md").is_file()
 
 
 def test_offer_records_decline_and_never_prompts_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,7 +58,7 @@ def test_offer_records_decline_and_never_prompts_again(tmp_path: Path, monkeypat
     skill_setup.offer_once()
     skill_setup.offer_once()
 
-    assert prompts == ["Install the fwd skill for your coding agents with 'npx skills add Sid-MB/fwd'?"]
+    assert prompts == ["Install the fwd skill for Codex and Claude from this local fwd package?"]
     assert marker.read_text(encoding="utf-8") == "declined\n"
 
 
@@ -83,8 +101,44 @@ def test_update_refreshes_an_accepted_skill_once_per_cli_revision(tmp_path: Path
     skill_setup.update_if_needed()
     skill_setup.update_if_needed()
 
-    assert calls == [["/usr/bin/npx", "--yes", "skills", "update", "fwd", "-y"]]
+    assert calls == [
+        [
+            "/usr/bin/npx",
+            "--yes",
+            "skills",
+            "add",
+            str(tmp_path / ".fwd" / "skill-source"),
+            "--global",
+            "--agent",
+            "codex",
+            "claude-code",
+            "--skill",
+            "fwd",
+            "-y",
+        ]
+    ]
     assert marker.read_text(encoding="utf-8") == "installed:revision-2\n"
+
+
+def test_local_skill_source_contains_only_the_agent_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = tmp_path / "package"
+    (payload / "references").mkdir(parents=True)
+    (payload / "agents").mkdir()
+    (payload / "src").mkdir()
+    (payload / "SKILL.md").write_text("# fwd\n", encoding="utf-8")
+    (payload / "references" / "commands.md").write_text("# Commands\n", encoding="utf-8")
+    (payload / "agents" / "openai.yaml").write_text("name: fwd\n", encoding="utf-8")
+    (payload / "src" / "internal.py").write_text("secret = False\n", encoding="utf-8")
+    monkeypatch.setattr(skill_setup, "_payload_root", lambda: payload)
+    monkeypatch.setattr(skill_setup, "LOCAL_SKILL_SOURCE", tmp_path / "source")
+
+    source = skill_setup._materialize_skill_source()
+
+    assert source == tmp_path / "source"
+    assert (source / "fwd" / "SKILL.md").read_text(encoding="utf-8") == "# fwd\n"
+    assert (source / "fwd" / "references" / "commands.md").is_file()
+    assert (source / "fwd" / "agents" / "openai.yaml").is_file()
+    assert not (source / "fwd" / "src").exists()
 
 
 @pytest.mark.parametrize("state", ["declined", "installed:revision-2"])

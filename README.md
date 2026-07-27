@@ -42,17 +42,27 @@ and the requested coding agent. Node/npm is used when present but is not require
 "Continue this project on a remote CPU machine" and it will launch, sync, and hand the session back:
 
 ```sh
-npx skills add Sid-MB/fwd
+fwd
+# Accept: Install the fwd skill for Codex and Claude from this local fwd package?
 ```
 
-The first human terminal invocation also offers to run this command after the shell-completion prompt. Accepting keeps `npx` attached to your terminal for any choices made by the skills installer; declining is remembered independently in `~/.fwd/skill-prompted`. After an accepted install, the first interactive invocation of each updated fwd build automatically runs `npx --yes skills update fwd -y` and reports the refresh without asking again. Missing `npx`, an unavailable `skills` package, or a failed refresh only produces a warning and never blocks the requested fwd command; failed operations remain retryable. Agent, redirected, help/version, and shell-completion invocations never show onboarding prompts.
+The first human terminal invocation offers this after the shell-completion prompt. fwd copies only the bundled
+`SKILL.md`, references, and agent metadata from its installed wheel or editable checkout into
+`~/.fwd/skill-source/fwd`, then runs `npx skills add` against that local directory for global Codex and Claude use.
+No GitHub checkout is involved. Declining is remembered independently in `~/.fwd/skill-prompted`.
+
+After an accepted install, the first interactive invocation of each updated fwd build re-materializes and re-adds
+that same local source non-interactively, so both copied and linked skill installations stay current. Missing `npx`
+or an unavailable `skills` package only produces a warning and never blocks the requested fwd command; failed
+operations remain retryable. Agent, redirected, help/version, and shell-completion invocations never show onboarding
+prompts.
 
 Invoke it explicitly as `/fwd natural-language instructions` in Claude Code, `$fwd natural-language instructions` in
 Codex, or select it from Codex's `/skills` menu. Matching natural-language requests can invoke it implicitly. The
 skill teaches agents the machine-readable, non-attaching CLI workflow and hands `fwd attach` back to you only when an
 interactive terminal is needed. The repository also includes a validated `.codex-plugin/plugin.json`, making the
-same skill package-ready for Codex/OpenAI plugin catalogs; `npx skills add Sid-MB/fwd` remains the direct installation
-path today.
+same skill package ready for Codex/OpenAI plugin catalogs. `npx skills add Sid-MB/fwd` remains an optional
+repository-only installation path for people who have not installed the Python package.
 
 ## Quickstart
 
@@ -144,10 +154,9 @@ On the first interactive invocation, fwd offers to install completion for the de
 installer. Accepting may update the Bash/Zsh startup file; declining is remembered in
 `~/.fwd/completion-prompted`. Agents, redirected commands, help/version output, and shell-completion subprocesses
 never prompt. It then independently offers to install the bundled coding-agent skill with
-`npx skills add Sid-MB/fwd`, remembering that decision in `~/.fwd/skill-prompted`. The explicit
-`fwd --install-completion` and `npx skills add Sid-MB/fwd` commands remain available after a decline. Accepted skill
-installs are automatically refreshed once per updated fwd build with the non-interactive
-`npx --yes skills update fwd -y` command.
+the local installed-package payload, remembering that decision in `~/.fwd/skill-prompted`. The explicit
+`fwd --install-completion` command remains available after a completion decline. Accepted skill installs are
+automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd build, without fetching fwd from GitHub.
 
 | Command | What it does | Example |
 | --- | --- | --- |

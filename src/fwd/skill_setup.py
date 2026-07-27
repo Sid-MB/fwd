@@ -1,6 +1,10 @@
-"""One-time interactive offer to install fwd's bundled coding-agent skill.
+"""Install the coding-agent skill bundled inside the local fwd Python package.
 
-The skill is distributed with the repository and installed through the open ``skills`` CLI, rather than by the Python package installer. Prompting from the first human invocation keeps package installation side-effect free while making the agent-facing documentation discoverable alongside shell-completion onboarding.
+Python package installers should not mutate agent configuration, so the first human ``fwd`` invocation still asks
+before running the open ``skills`` CLI. The source is never GitHub: fwd materializes the wheel/editable install's
+``SKILL.md``, ``references/``, and ``agents/`` into ``~/.fwd/skill-source/fwd`` and gives that filesystem path to
+``skills add``. The narrow staged tree matters because a directory containing a root ``SKILL.md`` is copied as one
+skill; pointing at the Python package or repository root would accidentally install source code, tests, and caches.
 """
 
 from __future__ import annotations
@@ -12,21 +16,56 @@ from pathlib import Path
 
 from fwd import ui
 
-SKILL_SOURCE = "Sid-MB/fwd"
 SKILL_NAME = "fwd"
-SKILL_ADD_COMMAND = ("skills", "add", SKILL_SOURCE)
-SKILL_UPDATE_COMMAND = ("--yes", "skills", "update", SKILL_NAME, "-y")
 SKILL_PROMPT_PATH = Path.home() / ".fwd" / "skill-prompted"
+LOCAL_SKILL_SOURCE = Path.home() / ".fwd" / "skill-source"
+TARGET_AGENTS = ("codex", "claude-code")
+
+
+def _payload_root() -> Path:
+    """Return the directory containing fwd's canonical skill payload in wheels and editable checkouts."""
+    package_dir = Path(__file__).resolve().parent
+    return package_dir if (package_dir / "SKILL.md").is_file() else package_dir.parents[1]
+
+
+def _materialize_skill_source() -> Path:
+    """Copy only the bundled skill payload into a stable local source directory.
+
+    Returns:
+        The parent directory accepted by ``skills add``; it contains exactly one ``fwd/SKILL.md`` skill.
+    """
+    payload_root = _payload_root()
+    target = LOCAL_SKILL_SOURCE / SKILL_NAME
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(payload_root / "SKILL.md", target / "SKILL.md")
+    for directory in ("references", "agents"):
+        source = payload_root / directory
+        if source.is_dir():
+            shutil.copytree(source, target / directory)
+    return LOCAL_SKILL_SOURCE
+
+
+def _add_command(npx: str, source: Path, *, noninteractive: bool) -> list[str]:
+    """Build one local-source install/refresh command for the two agents fwd supports."""
+    command = [npx]
+    if noninteractive:
+        command.append("--yes")
+    command.extend(("skills", "add", str(source), "--global", "--agent", *TARGET_AGENTS, "--skill", SKILL_NAME))
+    if noninteractive:
+        command.append("-y")
+    return command
 
 
 def _current_revision() -> str:
-    """Fingerprint the installed CLI and bundled skill so Git installs are detected even before a package version bump."""
+    """Fingerprint the installed CLI and skill payload so editable installs refresh before a version bump."""
     package_dir = Path(__file__).resolve().parent
     digest = sha256()
     for path in sorted(package_dir.rglob("*.py")):
         digest.update(path.relative_to(package_dir).as_posix().encode())
         digest.update(path.read_bytes())
-    payload_root = package_dir if (package_dir / "SKILL.md").is_file() else package_dir.parents[1]
+    payload_root = _payload_root()
     payload_paths = [payload_root / "SKILL.md", *(payload_root / "agents").rglob("*"), *(payload_root / "references").rglob("*"), *(payload_root / "skills").rglob("*"), payload_root / ".codex-plugin" / "plugin.json"]
     for path in sorted((path for path in payload_paths if path.is_file()), key=lambda item: item.relative_to(payload_root).as_posix()):
         digest.update(path.relative_to(payload_root).as_posix().encode())
@@ -44,31 +83,31 @@ def _record(outcome: str) -> None:
 
 
 def offer_once() -> None:
-    """Offer to run ``npx skills add Sid-MB/fwd`` once, retaining inherited stdio for the installer's own prompts."""
+    """Offer one local, global Codex/Claude skill install while retaining the installer's terminal."""
     if SKILL_PROMPT_PATH.exists():
         return
-    command_text = f"npx {' '.join(SKILL_ADD_COMMAND)}"
-    if not ui.confirm(f"Install the fwd skill for your coding agents with '{command_text}'?", default=True):
+    if not ui.confirm("Install the fwd skill for Codex and Claude from this local fwd package?", default=True):
         _record("declined")
         return
     npx = shutil.which("npx")
     if npx is None:
-        ui.warn(f"could not install the fwd skill because npx is not on PATH; retry later with '{command_text}'")
+        ui.warn("could not install the bundled fwd skill because npx is not on PATH; it will offer again next time")
         return
     try:
-        result = subprocess.run([npx, *SKILL_ADD_COMMAND], check=False)
+        source = _materialize_skill_source()
+        result = subprocess.run(_add_command(npx, source, noninteractive=False), check=False)
     except OSError as exc:
-        ui.warn(f"could not install the fwd skill ({exc}); retry with '{command_text}'")
+        ui.warn(f"could not install the bundled fwd skill ({exc}); it will offer again next time")
         return
     if result.returncode != 0:
-        ui.warn(f"could not install the fwd skill (npx exited with status {result.returncode}); retry with '{command_text}'")
+        ui.warn(f"could not install the bundled fwd skill (npx exited with status {result.returncode}); it will offer again next time")
         return
     _record(f"installed:{_current_revision()}")
-    ui.ok(f"installed the fwd coding-agent skill from {SKILL_SOURCE}")
+    ui.ok(f"installed the bundled fwd skill for Codex and Claude from {source}")
 
 
 def update_if_needed() -> None:
-    """Update an accepted skill once per installed CLI revision without introducing another confirmation prompt."""
+    """Reinstall the bundled local skill once per fwd revision without fetching fwd from GitHub or prompting."""
     try:
         state = SKILL_PROMPT_PATH.read_text(encoding="utf-8").strip()
     except OSError:
@@ -82,14 +121,14 @@ def update_if_needed() -> None:
     if npx is None:
         ui.warn("could not update the installed fwd skill because npx is not on PATH; it will retry next time")
         return
-    command_text = f"npx {' '.join(SKILL_UPDATE_COMMAND)}"
     try:
-        result = subprocess.run([npx, *SKILL_UPDATE_COMMAND], check=False)
+        source = _materialize_skill_source()
+        result = subprocess.run(_add_command(npx, source, noninteractive=True), check=False)
     except OSError as exc:
-        ui.warn(f"could not update the installed fwd skill ({exc}); it will retry with '{command_text}'")
+        ui.warn(f"could not update the installed fwd skill from the local package ({exc}); it will retry next time")
         return
     if result.returncode != 0:
-        ui.warn(f"could not update the installed fwd skill (npx exited with status {result.returncode}); it will retry with '{command_text}'")
+        ui.warn(f"could not update the installed fwd skill from the local package (npx exited with status {result.returncode}); it will retry next time")
         return
     _record(f"installed:{revision}")
     ui.ok("updated the installed fwd coding-agent skill")
