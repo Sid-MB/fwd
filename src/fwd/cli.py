@@ -30,8 +30,8 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, ui
+from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_example_backend, complete_gpu, complete_output_format, complete_runpod_image, complete_session, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
-from fwd.cli_completion import complete_session
 from fwd.output import OutputFormat
 
 # Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
@@ -95,9 +95,9 @@ def main(
 
 
 def _up(
-    command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude'/'codex' for a synced coding-agent workflow.")] = None,
-    target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", rich_help_panel=PANEL_TARGET)] = None,
-    gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", rich_help_panel=PANEL_TARGET)] = None,
+    command: Annotated[list[str] | None, typer.Argument(help="Initial remote command; omit for a shell, or use 'claude'/'codex' for a synced coding-agent workflow.", autocompletion=complete_agent)] = None,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", autocompletion=complete_target, rich_help_panel=PANEL_TARGET)] = None,
+    gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", autocompletion=complete_gpu, rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach after startup; non-agent commands stay local unless this is passed.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
@@ -173,7 +173,7 @@ app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignor
 
 @app.command("ls")
 def ls_cmd(
-    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
     """List every fwd session with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
@@ -240,7 +240,7 @@ class ExampleBackend(str, Enum):
 
 @app.command("config")
 def config_cmd(
-    backend: Annotated[ExampleBackend | None, typer.Argument(help="With --example, which backend to show; defaults to all.")] = None,
+    backend: Annotated[ExampleBackend | None, typer.Argument(help="With --example, which backend to show; defaults to all.", autocompletion=complete_example_backend)] = None,
     example: Annotated[bool, typer.Option("--example", help="Print a commented reference config generated from fwd's own schema instead of your effective one.")] = False,
     schema: Annotated[bool, typer.Option("--schema", help="Print the complete machine-readable JSON Schema for config files.")] = False,
 ) -> None:
@@ -259,20 +259,20 @@ def config_cmd(
 
 @app.command("setup")
 def setup_cmd(
-    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: ssh, runpod, or slurm. Required in non-interactive mode.")] = None,
-    target_name: Annotated[str | None, typer.Option("--target-name", help="Local fwd label for this connection; defaults to the backend name.")] = None,
-    host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.")] = None,
-    login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.")] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: ssh, runpod, or slurm. Required in non-interactive mode.", autocompletion=complete_backend)] = None,
+    target_name: Annotated[str | None, typer.Option("--target-name", help="Local fwd label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
+    host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.", autocompletion=complete_ssh_host)] = None,
+    login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.", autocompletion=complete_ssh_host)] = None,
     user: Annotated[str | None, typer.Option("--user", help="Remote username; optional for SSH aliases.")] = None,
     port: Annotated[int | None, typer.Option("--port", help="SSH port.")] = None,
     key_path: Annotated[str | None, typer.Option("--key-path", help="SSH identity file; omit to use your SSH agent/config.")] = None,
-    proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="External SSH host used to reach a non-public target, as user@host.")] = None,
+    proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="External SSH host used to reach a non-public target, as user@host.", autocompletion=complete_ssh_host)] = None,
     extra_ssh_option: Annotated[list[str] | None, typer.Option("--extra-ssh-option", help="Additional raw SSH argv entry; repeat to preserve argument boundaries.")] = None,
     remote_base: Annotated[str | None, typer.Option("--remote-base", help="Remote parent directory for project checkouts.")] = None,
-    compute_type: Annotated[str | None, typer.Option("--compute-type", help="RunPod compute type: cpu (default) or gpu.")] = None,
-    cloud_type: Annotated[str | None, typer.Option("--cloud-type", help="RunPod cloud pool: secure (default) or community.")] = None,
-    gpu: Annotated[str | None, typer.Option("--gpu", help="Default RunPod GPU id; used only with --compute-type gpu.")] = None,
-    image: Annotated[str | None, typer.Option("--image", help="Default RunPod container image.")] = None,
+    compute_type: Annotated[str | None, typer.Option("--compute-type", help="RunPod compute type: cpu (default) or gpu.", autocompletion=complete_compute_type)] = None,
+    cloud_type: Annotated[str | None, typer.Option("--cloud-type", help="RunPod cloud pool: secure (default) or community.", autocompletion=complete_cloud_type)] = None,
+    gpu: Annotated[str | None, typer.Option("--gpu", help="Default RunPod GPU id; used only with --compute-type gpu.", autocompletion=complete_gpu)] = None,
+    image: Annotated[str | None, typer.Option("--image", help="Default RunPod container image.", autocompletion=complete_runpod_image)] = None,
     volume_gb: Annotated[int | None, typer.Option("--volume-gb", help="RunPod persistent volume size in GB.")] = None,
     volume_mount_path: Annotated[str | None, typer.Option("--volume-mount-path", help="RunPod persistent volume mount path.")] = None,
     allow_proxy: Annotated[bool | None, typer.Option("--allow-proxy/--no-allow-proxy", help="Allow the RunPod SSH proxy fallback.")] = None,
@@ -327,8 +327,8 @@ def setup_cmd(
 
 @app.command("doctor")
 def doctor_cmd(
-    target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target instead of every configured one.")] = None,
-    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target instead of every configured one.", autocompletion=complete_target)] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
     """Check local prerequisites (ssh, rsync, backend CLIs) and the reachability of each configured target.
 
@@ -341,7 +341,7 @@ def doctor_cmd(
 
 @app.command("info")
 def info_cmd(
-    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.")] = OutputFormat.auto,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
 ) -> None:
     """Print installed version and the local paths fwd uses for configuration and session state."""
     from fwd.config import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_RELPATH

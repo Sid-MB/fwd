@@ -10,6 +10,7 @@ from typer.main import get_command
 
 from fwd import cli_completion
 from fwd.cli import app
+from fwd.config import Config, RunpodTargetConfig, SshTargetConfig
 from fwd.state import SessionState, StateStore
 
 
@@ -46,6 +47,32 @@ def test_complete_session_never_breaks_shell_on_state_errors(monkeypatch: pytest
     assert cli_completion.complete_session(None, [], "") == []  # type: ignore[arg-type] - callback ignores context
 
 
+def test_complete_target_combines_configured_builtin_and_ssh_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config(targets={"lab": SshTargetConfig(name="lab", host="lab.example", user="sid"), "gpu-box": RunpodTargetConfig(name="gpu-box", compute_type="gpu", gpu="NVIDIA A40")})
+    monkeypatch.setattr(cli_completion, "load_config", lambda: config)
+    monkeypatch.setattr(cli_completion, "ssh_config_host_aliases", lambda: {"cluster", "lab"})
+
+    items = cli_completion.complete_target(None, [], "")  # type: ignore[arg-type] - callback ignores context
+
+    assert [value for value, _ in items] == ["cluster", "gpu-box", "lab", "runpod"]
+    assert dict(items)["cluster"] == "OpenSSH Host alias · zero-config SSH target"
+    assert dict(items)["gpu-box"] == "runpod · NVIDIA A40 · secure"
+    assert dict(items)["lab"] == "ssh · sid@lab.example"
+    assert dict(items)["runpod"] == "built-in RunPod target · CPU by default"
+
+
+def test_complete_target_keeps_zero_config_default_when_config_is_broken(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli_completion, "load_config", lambda: (_ for _ in ()).throw(OSError("broken")))
+    monkeypatch.setattr(cli_completion, "ssh_config_host_aliases", lambda: set())
+    assert cli_completion.complete_target(None, [], "run") == [("runpod", "built-in RunPod target · CPU by default")]  # type: ignore[arg-type] - callback ignores context
+
+
+def test_static_rich_completions_filter_values_and_include_help() -> None:
+    assert cli_completion.complete_agent(None, [], "co") == [("codex", "Codex · sync settings, config, and skills; auto-attach in a terminal")]  # type: ignore[arg-type] - callback ignores context
+    assert cli_completion.complete_compute_type(None, [], "") == [("cpu", "CPU-only compute · default"), ("gpu", "GPU compute")]  # type: ignore[arg-type] - callback ignores context
+    assert cli_completion.complete_output_format(None, [], "j") == [("json", "structured JSON")]  # type: ignore[arg-type] - callback ignores context
+
+
 @pytest.mark.parametrize(
     ("command_name", "parameter_name"),
     (
@@ -61,6 +88,40 @@ def test_complete_session_never_breaks_shell_on_state_errors(monkeypatch: pytest
     ),
 )
 def test_every_session_selecting_command_uses_completion(command_name: str, parameter_name: str) -> None:
+    root = get_command(app)
+    root_context = _click.Context(root)
+    command = root.get_command(root_context, command_name)
+    assert command is not None
+    parameter = next(parameter for parameter in command.params if parameter.name == parameter_name)
+    assert parameter._custom_shell_complete is not None
+
+
+@pytest.mark.parametrize(
+    ("command_name", "parameter_name"),
+    (
+        ("up", "command"),
+        ("up", "target"),
+        ("up", "gpu"),
+        ("launch", "command"),
+        ("launch", "target"),
+        ("launch", "gpu"),
+        ("ls", "output_format"),
+        ("config", "backend"),
+        ("setup", "backend"),
+        ("setup", "target_name"),
+        ("setup", "host"),
+        ("setup", "login_host"),
+        ("setup", "proxy_jump"),
+        ("setup", "compute_type"),
+        ("setup", "cloud_type"),
+        ("setup", "gpu"),
+        ("setup", "image"),
+        ("doctor", "target"),
+        ("doctor", "output_format"),
+        ("info", "output_format"),
+    ),
+)
+def test_every_discoverable_cli_value_uses_rich_completion(command_name: str, parameter_name: str) -> None:
     root = get_command(app)
     root_context = _click.Context(root)
     command = root.get_command(root_context, command_name)

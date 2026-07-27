@@ -1,17 +1,46 @@
-"""Reusable shell completion callbacks for fwd's state-aware CLI values."""
+"""Reusable rich shell completion callbacks for fwd's discoverable CLI values.
+
+Callbacks return ``(value, help)`` tuples, the Typer representation that lets Fish and Zsh show descriptions beside
+completion candidates. They only inspect local state/configuration: shell completion must stay fast, must never
+provision resources, and must not turn a provider outage into a broken Tab key.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable, Iterable
 
 from typer import _click
 
+from fwd.agents import AGENTS
+from fwd.backends import backend_names
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, load_config, ssh_config_host_aliases
+from fwd.output import OutputFormat
 from fwd.state import SessionState, StateStore
+
+Completion = tuple[str, str]
+CompletionCallback = Callable[[_click.Context, list[str], str], list[Completion]]
 
 
 def _session_store() -> StateStore:
     """Return the state store through a seam tests can replace without touching a user's real home directory."""
     return StateStore()
+
+
+def _matches(items: Iterable[Completion], incomplete: str) -> list[Completion]:
+    """Filter and sort rich candidates so every callback behaves consistently."""
+    return sorted((item for item in items if item[0].startswith(incomplete)), key=lambda item: item[0])
+
+
+def static_completer(items: Iterable[Completion]) -> CompletionCallback:
+    """Build a Typer callback for a fixed set of documented choices."""
+    choices = tuple(items)
+
+    def complete(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+        del ctx, args
+        return _matches(choices, incomplete)
+
+    return complete
 
 
 def _session_help(session: SessionState) -> str:
@@ -33,5 +62,82 @@ def complete_session(ctx: _click.Context, args: list[str], incomplete: str) -> l
         sessions = _session_store().all()
     except Exception:
         return []
-    matches = (session for session in sessions if session.name.startswith(incomplete))
-    return [(session.name, _session_help(session)) for session in sorted(matches, key=lambda session: session.name)]
+    return _matches(((session.name, _session_help(session)) for session in sessions), incomplete)
+
+
+def _target_help(target: SshTargetConfig | RunpodTargetConfig | SlurmTargetConfig) -> str:
+    """Describe a configured target with the fields that most clearly distinguish it."""
+    if isinstance(target, SshTargetConfig):
+        return f"ssh · {target.user + '@' if target.user else ''}{target.host or '<host unset>'}"
+    if isinstance(target, RunpodTargetConfig):
+        detail = target.gpu if target.compute_type == "gpu" and target.gpu else target.compute_type
+        return f"runpod · {detail} · {target.cloud_type}"
+    partition = f" · partition={target.partition}" if target.partition else ""
+    return f"slurm · {target.login_host or '<login host unset>'}{partition}"
+
+
+def complete_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete configured targets plus zero-config RunPod and OpenSSH-alias targets."""
+    del ctx, args
+    candidates: dict[str, str] = {"runpod": "built-in RunPod target · CPU by default"}
+    try:
+        config = load_config()
+        candidates.update({name: _target_help(target) for name, target in config.targets.items()})
+    except Exception:
+        pass
+    try:
+        for alias in ssh_config_host_aliases():
+            candidates.setdefault(alias, "OpenSSH Host alias · zero-config SSH target")
+    except Exception:
+        pass
+    return _matches(candidates.items(), incomplete)
+
+
+def complete_ssh_host(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete concrete aliases from ``~/.ssh/config`` while still allowing arbitrary hosts."""
+    del ctx, args
+    try:
+        aliases = ((alias, "OpenSSH Host alias") for alias in ssh_config_host_aliases())
+        return _matches(aliases, incomplete)
+    except Exception:
+        return []
+
+
+def complete_gpu(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Suggest locally configured GPU strings without making a provider API call."""
+    del ctx, args
+    candidates: dict[str, str] = {"NVIDIA GeForce RTX 4090": "RunPod GPU identifier · free text also accepted"}
+    try:
+        for target in load_config().targets.values():
+            if isinstance(target, RunpodTargetConfig) and target.gpu:
+                candidates[target.gpu] = f"GPU configured by target {target.name!r}"
+    except Exception:
+        pass
+    return _matches(candidates.items(), incomplete)
+
+
+_AGENT_HELP = {
+    "claude": "Claude Code · sync context and auto-attach in a terminal",
+    "codex": "Codex · sync settings, config, and skills; auto-attach in a terminal",
+}
+complete_agent = static_completer((name, _AGENT_HELP.get(name, "registered coding agent · auto-attach in a terminal")) for name in AGENTS)
+complete_backend = static_completer((name, f"{name} backend") for name in backend_names())
+complete_compute_type = static_completer((("cpu", "CPU-only compute · default"), ("gpu", "GPU compute")))
+complete_cloud_type = static_completer((("secure", "RunPod Secure Cloud · default"), ("community", "RunPod Community Cloud")))
+complete_runpod_image = static_completer(((DEFAULT_RUNPOD_CPU_IMAGE, "default CPU image"), (DEFAULT_RUNPOD_GPU_IMAGE, "default GPU/PyTorch image")))
+complete_output_format = static_completer(
+    (
+        (OutputFormat.auto.value, "Rich in a terminal; Markdown for agents and pipes"),
+        (OutputFormat.rich.value, "styled terminal table"),
+        (OutputFormat.markdown.value, "plain Markdown table"),
+        (OutputFormat.json.value, "structured JSON"),
+    )
+)
+complete_example_backend = static_completer(
+    (
+        ("all", "complete example for every backend"),
+        ("ssh", "SSH target example"),
+        ("runpod", "RunPod target example"),
+        ("slurm", "Slurm target example"),
+    )
+)

@@ -102,14 +102,20 @@ Shell completion for every session-selecting command is state-aware:
 
 ```sh
 fwd attach <TAB>
+fwd up <TAB>                 # claude/codex magic commands
+fwd up --target <TAB>        # configured targets, RunPod, and SSH aliases
+fwd up --gpu <TAB>           # locally configured GPU identifiers
 fwd rm <TAB>
 fwd stop <TAB>
 fwd send --name <TAB>
 fwd push --name <TAB>
+fwd setup --backend <TAB>    # backends and backend-specific choices
 ```
 
 Suggestions come from `~/.fwd/state.json` and include help text with the backend, target, local project directory, and
-last-attached time. Completion never contacts a provider, so pressing Tab remains fast and cannot start compute.
+last-attached time. Target and setup completion also reads local fwd configuration and `~/.ssh/config`; magic agent,
+output-format, backend, compute, cloud, and image choices carry short descriptions. Completion never contacts a
+provider, so pressing Tab remains fast and cannot start compute.
 Shells with descriptive completion support (including Fish and appropriately configured Zsh) display that help as a
 tooltip/menu description; other shells still complete the session name. Install scripts with
 `fwd --install-completion` or print one for manual setup with `fwd --show-completion`.
