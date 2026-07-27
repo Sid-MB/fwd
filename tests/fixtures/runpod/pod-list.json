@@ -1,0 +1,20 @@
+[
+  {
+    "costPerHr": 0.17,
+    "desiredStatus": "RUNNING",
+    "gpuCount": 1,
+    "id": "h3n6ygxbdgm4hr",
+    "imageName": "runpod/base:0.6.2-cpu",
+    "name": "fwd-test-vol",
+    "volumeInGb": 20
+  },
+  {
+    "costPerHr": 0.06,
+    "desiredStatus": "EXITED",
+    "gpuCount": 0,
+    "id": "nlom3h0kpps2y8",
+    "imageName": "runpod/base:0.6.2-cpu",
+    "name": "fwd-test-spike",
+    "volumeInGb": 0
+  }
+]

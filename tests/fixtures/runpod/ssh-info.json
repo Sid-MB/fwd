@@ -1,0 +1,14 @@
+{
+  "id": "nlom3h0kpps2y8",
+  "ip": "216.243.220.199",
+  "name": "fwd-test-spike",
+  "port": 18876,
+  "ssh_command": "ssh -i /Users/sid/.runpod/ssh/runpodctl-ssh-key root@216.243.220.199 -p 18876",
+  "ssh_key": {
+    "exists": true,
+    "fingerprint": "SHA256:w5xU0a7rZ3vfJRBkrTPP5ZrZN+YO84MU0fcYc5nALqw",
+    "in_account": true,
+    "path": "/Users/sid/.runpod/ssh/runpodctl-ssh-key",
+    "source": "runpodctl doctor"
+  }
+}

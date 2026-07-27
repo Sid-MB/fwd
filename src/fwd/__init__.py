@@ -1,0 +1,13 @@
+"""fwd — forward your local Claude Code working session to a remote machine.
+
+The package is layered deliberately so that each layer can be developed and tested in isolation:
+
+- ``sshexec``      : the only place that shells out to ``ssh``; everything remote goes through an ``SSHEndpoint``.
+- ``config``/``state`` : pure data layers (TOML config, ``~/.fwd/state.json``) with no side effects beyond file IO.
+- ``backends/*``   : provisioning strategies behind the ``Provisioner`` protocol; they return a ``TargetInfo`` and know nothing about Claude.
+- ``sync``/``remote``/``claude_state`` : mechanical steps of a launch (files up, tooling up, Claude state up).
+- ``ops/*``        : orchestration of the above into user-facing operations.
+- ``cli``          : thin Typer surface that only parses flags and delegates to ``ops``.
+"""
+
+__version__ = "0.1.0"

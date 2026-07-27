@@ -1,0 +1,14 @@
+{"error":"api error: {\"error\":\"pod not found\",\"status\":404}\n (status 404)"}
+Usage:
+  runpodctl pod get <pod-id> [flags]
+
+Flags:
+  -h, --help                     help for get
+      --include-machine          include machine info
+      --include-network-volume   include network volume info
+
+Global Flags:
+  -o, --output string   output format (json, yaml) (default "json")
+
+{"error":"failed to get pod: api error: {"error":"pod not found","status":404}
+ (status 404)"}

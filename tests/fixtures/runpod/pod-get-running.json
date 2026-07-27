@@ -1,0 +1,36 @@
+{
+  "containerDiskInGb": 10,
+  "costPerHr": 0.06,
+  "createdAt": "2026-07-27 00:10:46.131 +0000 UTC",
+  "desiredStatus": "RUNNING",
+  "env": {
+    "PUBLIC_KEY": "<REDACTED ssh public keys>"
+  },
+  "gpuCount": 0,
+  "id": "nlom3h0kpps2y8",
+  "imageName": "runpod/base:0.6.2-cpu",
+  "lastStatusChange": "Rented by User: Mon Jul 27 2026 00:10:46 GMT+0000 (Coordinated Universal Time)",
+  "memoryInGb": 4,
+  "name": "fwd-test-spike",
+  "ports": [
+    "22/tcp"
+  ],
+  "ssh": {
+    "id": "nlom3h0kpps2y8",
+    "ip": "216.243.220.199",
+    "name": "fwd-test-spike",
+    "port": 18876,
+    "ssh_command": "ssh -i /Users/sid/.runpod/ssh/runpodctl-ssh-key root@216.243.220.199 -p 18876",
+    "ssh_key": {
+      "exists": true,
+      "fingerprint": "SHA256:w5xU0a7rZ3vfJRBkrTPP5ZrZN+YO84MU0fcYc5nALqw",
+      "in_account": true,
+      "path": "/Users/sid/.runpod/ssh/runpodctl-ssh-key",
+      "source": "runpodctl doctor"
+    }
+  },
+  "uptimeSeconds": 0,
+  "vcpuCount": 2,
+  "volumeInGb": 0,
+  "volumeMountPath": "/workspace"
+}

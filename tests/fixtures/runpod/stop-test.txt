@@ -1,0 +1,46 @@
+### pod stop
+{
+  "containerDiskInGb": 10,
+  "costPerHr": 0.06,
+  "createdAt": "2026-07-27 00:10:46.131 +0000 UTC",
+  "desiredStatus": "EXITED",
+  "env": {
+    "PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA9vjxEn54SV+9+GijU3sFcPGGkG5tsA3TzrFQs7ZePM siddharth@sidmb.com\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKa9XkbIzhoLHQ5UwtPe1rFBwfquScSKTEVq/F9Mcv18 siddharth@cs.stanford.edu\nssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDLFmW0NQ5bsVaCfz5ufW8ALluvWxtDkPLEScDiCGj1PNhX4xG+IrT1teSzZzvD/8/xz89nI/0CITEkHL7xRizOb3K+Lgzej7p/MoMmSDhEtKqY8u1G6zwhAgitkBx+gC1sbvu98ZYjy/1vIOsmyImRXC39X5oVV9LqlsWA97VlOS9JlKvDRCuXXoRE4MHb8mUD2TYXyd9MAS/a68tjdzd4UjtIXyRUVe9RNRV70zyebHlZmV58h5LAdFqsOjZGq/eeylhGa2VrIMrQ7om/Lim8D3LnV1Kmr01erCWk4IYIMFEw8KQ3O/8FelBx3xsd+7DuF+zmEXQbQVeXhCg06icp runpodctl-ssh-key\nssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDIInPnnB5k8rDyqnrG2KPUflj3nmbHqPjX6YgflmHTc8VDE5keMTGn37Xqqvp7Mp6cZfBtINfMC7Mm1Jv+mqH6x+Yh0V4ZvJe+MW+RxO6Zw3rnuoPZ/+0VFk1nXwlea8pg5MQZ+nhe/9YuN4uTZFgR85CX8SawlZgDPN3nGmri5/s74yQ/V55QVGrf81BhnxD+j1q/wG7o/FuV9t1ClvAomUDAWotv4APVrlXa5kcF5Re7hgbp7LOJONa3HGLM20MhnQUHo3yJKnVEH2AM9+g2F6tD0N3ke4svXibEFAlzwz4OW9Y+aJkMDN8MNyxnBmjZ2GyDyPPyillg5FaFu/Wz runpodctl-ssh-key"
+  },
+  "gpuCount": 0,
+  "id": "nlom3h0kpps2y8",
+  "imageName": "runpod/base:0.6.2-cpu",
+  "lastStatusChange": "Exited by user: Mon Jul 27 2026 00:16:04 GMT+0000 (Coordinated Universal Time)",
+  "memoryInGb": 4,
+  "name": "fwd-test-spike",
+  "ports": [
+    "22/tcp"
+  ],
+  "vcpuCount": 2,
+  "volumeInGb": 0,
+  "volumeMountPath": "/workspace"
+}
+exit=0
+### pod get after stop (poll)
+[1] desiredStatus=
+[2] desiredStatus=
+[3] desiredStatus=
+[4] desiredStatus=
+[5] desiredStatus=
+[6] desiredStatus=
+[7] desiredStatus=
+[8] desiredStatus=
+[9] desiredStatus=
+[10] desiredStatus=
+[11] desiredStatus=
+[12] desiredStatus=
+[13] desiredStatus=
+[14] desiredStatus=
+[15] desiredStatus=
+[16] desiredStatus=
+[17] desiredStatus=
+[18] desiredStatus=
+[19] desiredStatus=
+[20] desiredStatus=
+[21] desiredStatus=
+[22] desiredStatus=

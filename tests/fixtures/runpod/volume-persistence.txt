@@ -1,0 +1,31 @@
+### endpoint before stop: 87.197.146.56:40708
+Warning: Permanently added '[87.197.146.56]:40708' (ED25519) to the list of known hosts.
+-rw-r--r-- 1 root root 10 Jul 27 00:22 /root/CONTAINER_MARKER.txt
+-rw-r--r-- 1 root root  7 Jul 27 00:22 /workspace/VOLUME_MARKER.txt
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          10G   16M   10G   1% /
+/dev/nvme0n1     20G  8.0K   20G   1% /workspace
+### stop
+  [1] EXITED
+### confirm old endpoint dead
+/private/tmp/claude-501/-Users-sid-Coding-Python-fwd/fb009d5c-2ead-46c0-94bb-bb546e913849/scratchpad/volume_test.sh: line 14: timeout: command not found
+  old-endpoint-exit=0
+### start
+### endpoint after start: 87.197.146.56:40668   (was 87.197.146.56:40708)
+ENDPOINT_CHANGED
+### waiting for sshd
+### after restart
+CONNECTED
+container marker: cat: /root/CONTAINER_MARKER.txt: No such file or directory
+volume marker: volume
+tool file: toolfile
+--- df ---
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          10G   16M   10G   1% /
+/dev/nvme0n1     20G  8.0K   20G   1% /workspace
+ontainer disk WIPED
+volume marker: volume                                                          <-- /workspace SURVIVED
+tool file: toolfile                                                            <-- /workspace/.fwd-tools SURVIVED
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          10G   16M   10G   1% /
+/dev/nvme0n1     20G  8.0K   20G   1% /workspace

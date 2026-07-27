@@ -1,0 +1,75 @@
+"""Backend registry with lazy imports.
+
+Design intent
+-------------
+Backends are resolved by name through a table of ``(module, class)`` strings and imported only when actually used.
+Eager imports would make every ``fwd`` invocation pay for all three backends' module-level work, and would couple
+startup time to the slowest backend. Lazy resolution also means a broken or half-written backend cannot break
+unrelated commands — relevant here, since the three backends are being built in parallel by different teammates.
+"""
+
+from __future__ import annotations
+
+import importlib
+
+from fwd.backends.base import (
+    CheckResult,
+    Provisioner,
+    ProvisionError,
+    TargetInfo,
+    TargetStatus,
+)
+from fwd.config import Config, TargetConfig
+
+__all__ = [
+    "BACKENDS",
+    "CheckResult",
+    "ProvisionError",
+    "Provisioner",
+    "TargetInfo",
+    "TargetStatus",
+    "backend_names",
+    "get_backend",
+    "make_backend",
+]
+
+# Backend name (matches config's ``backend =`` value) -> (module path, class name).
+BACKENDS: dict[str, tuple[str, str]] = {
+    "ssh": ("fwd.backends.ssh_host", "SshHostBackend"),
+    "runpod": ("fwd.backends.runpod", "RunpodBackend"),
+    "slurm": ("fwd.backends.slurm", "SlurmBackend"),
+}
+
+
+def backend_names() -> list[str]:
+    """Return registered backend names, sorted for stable help and error text."""
+    return sorted(BACKENDS)
+
+
+def get_backend(name: str) -> type[Provisioner]:
+    """Import and return the backend class for ``name``.
+
+    Args:
+        name: Backend identifier, e.g. ``"runpod"``.
+
+    Raises:
+        ProvisionError: If the name is unregistered, or the module/class fails to import — both are surfaced as user
+            errors rather than tracebacks because a config typo is the likeliest cause.
+    """
+    try:
+        module_path, class_name = BACKENDS[name]
+    except KeyError:
+        raise ProvisionError(f"unknown backend {name!r}; expected one of: {', '.join(backend_names())}") from None
+    try:
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)
+    except (ImportError, AttributeError) as exc:
+        raise ProvisionError(f"backend {name!r} failed to load ({module_path}.{class_name}): {exc}") from exc
+
+
+def make_backend(target: TargetConfig, config: Config) -> Provisioner:
+    """Instantiate the backend implied by a target's ``backend`` field.
+
+    The one-liner every caller in ``ops`` uses, so nobody repeats the lookup-then-construct dance.
+    """
+    return get_backend(target.backend)(target, config)

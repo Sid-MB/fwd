@@ -1,0 +1,11 @@
+{
+  "_note": "SYNTHETIC. Every pod observed during the S2 spike published a direct ip:port, so no real proxy-only response was captured. This mirrors the documented ssh.runpod.io shape (no ip/port, ssh_command pointing at the proxy) and exists to pin the proxy-fallback parsing path.",
+  "id": "nlom3h0kpps2y8",
+  "name": "fwd-test-spike",
+  "ssh_command": "ssh nlom3h0kpps2y8-644117d0@ssh.runpod.io -i ~/.ssh/id_ed25519",
+  "ssh_key": {
+    "exists": true,
+    "in_account": true,
+    "path": "/Users/sid/.runpod/ssh/runpodctl-ssh-key"
+  }
+}

@@ -1,0 +1,16 @@
+### ssh attempt with ~/.ssh/id_ed25519
+Warning: Permanently added '[216.243.220.199]:18876' (ED25519) to the list of known hosts.
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+SSH_OK
+Linux c8d96afef2f8 6.8.0-100-generic #100-Ubuntu SMP PREEMPT_DYNAMIC Tue Jan 13 16:40:06 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+ls: cannot access '/workspace': No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          10G   16M   10G   1% /
+/usr/bin/rsync
+/usr/bin/tmux
+/usr/bin/git
+/usr/bin/curl
+df: /workspace: No such file or directory
+exit=0

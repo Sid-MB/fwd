@@ -1,0 +1,18 @@
+### after restart: what survived?
+Warning: Permanently added '[216.243.220.199]:10992' (ED25519) to the list of known hosts.
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+CONNECTED
+--- /root/CONTAINER_MARKER.txt:
+cat: /root/CONTAINER_MARKER.txt: No such file or directory
+--- /workspace/VOLUME_MARKER.txt:
+cat: /workspace/VOLUME_MARKER.txt: No such file or directory
+--- /root/fwdtest:
+ls: cannot access '/root/fwdtest': No such file or directory
+--- mounts:
+Filesystem                  Size  Used Avail Use% Mounted on
+overlay                      10G   16M   10G   1% /
+shm                         1.9G     0  1.9G   0% /dev/shm
+/dev/mapper/xfsdata-xfs_lv  7.0T  406G  6.6T   6% /etc/hosts
+exit=0

@@ -1,0 +1,28 @@
+{
+  "containerDiskInGb": 10,
+  "costPerHr": 0.06,
+  "createdAt": "2026-07-27 00:10:46.131 +0000 UTC",
+  "desiredStatus": "EXITED",
+  "env": {
+    "PUBLIC_KEY": "<REDACTED ssh public keys>"
+  },
+  "gpuCount": 0,
+  "id": "nlom3h0kpps2y8",
+  "imageName": "runpod/base:0.6.2-cpu",
+  "lastStatusChange": "Exited by user: Mon Jul 27 2026 00:16:04 GMT+0000 (Coordinated Universal Time)",
+  "memoryInGb": 4,
+  "name": "fwd-test-spike",
+  "ports": [
+    "22/tcp"
+  ],
+  "ssh": {
+    "error": "pod not ready",
+    "id": "nlom3h0kpps2y8",
+    "name": "fwd-test-spike",
+    "status": "EXITED"
+  },
+  "uptimeSeconds": 0,
+  "vcpuCount": 2,
+  "volumeInGb": 0,
+  "volumeMountPath": "/workspace"
+}

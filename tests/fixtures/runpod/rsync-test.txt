@@ -1,0 +1,48 @@
+### rsync up
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+Number of files: 3
+Number of files transferred: 2
+Total file size: 204846 B
+Total transferred file size: 204846 B
+Unmatched data: 204846 B
+Matched data: 0 B
+File list size: 110 B
+File list generation time: 0.001 seconds
+File list transfer time: 0.008 seconds
+Total sent: 205164 B
+Total received: 70 B
+
+sent 205164 bytes  received 70 bytes  608822 bytes/sec
+total size is 204846  speedup is 1.00
+exit=0
+### remote check + container-disk marker
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+total 204
+-rw-r--r-- 1 501 root     46 Jul 27 00:15 a.txt
+-rw-r--r-- 1 501 root 204800 Jul 27 00:15 blob.bin
+-rw-r--r-- 1 root root 22 Jul 27 00:15 /root/CONTAINER_MARKER.txt
+-rw-r--r-- 1 root root 14 Jul 27 00:15 /workspace/VOLUME_MARKER.txt
+exit=1
+### rsync down
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+
+sent 60 bytes  received 205137 bytes  2051970000 bytes/sec
+total size is 204846  speedup is 1.00
+Number of files: 3
+Number of files transferred: 2
+Total file size: 204846 B
+Total transferred file size: 204846 B
+Unmatched data: 204846 B
+Matched data: 0 B
+File list size: 61 B
+Total sent: 64 B
+Total received: 205137 B
+exit=0
+### diff
+ROUNDTRIP_IDENTICAL
