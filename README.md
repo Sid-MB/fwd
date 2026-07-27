@@ -23,11 +23,33 @@ your project dir  ──── rsync ──────────▶  ~/fwd/pr
 ## Install
 
 ```sh
-uv tool install fwd
+uv tool install FWD_PYPI_ID
+```
+
+<!-- FWD_PYPI_ID is a placeholder: replace with the real PyPI package id once fwd is published. -->
+
+**Not yet on PyPI** — until it is published, install from source:
+
+```sh
+uv tool install git+https://github.com/Sid-MB/fwd
 ```
 
 Requires Python 3.12+, plus `ssh` and `rsync` locally. Everything the *remote* needs (uv, bun, node, claude, tmux) is
 installed by `fwd` on first launch.
+
+## Install as a Claude Code skill
+
+`fwd` ships a `SKILL.md` at the repo root, so Claude can drive it for you — ask it to "continue this on a GPU machine"
+and it will launch, sync and hand the session back:
+
+```sh
+npx skills add Sid-MB/fwd
+```
+
+That installs the skill into your agent's skills directory (`.claude/skills/fwd/` for Claude Code); pass
+`-a claude-code -y` for a non-interactive install, or `--all` when installing into several agents. The skill teaches
+Claude the safe subset of the CLI — it uses `fwd up --no-attach` since attaching is an interactive terminal takeover,
+and hands `fwd`/`fwd attach` back to you. Installing the skill does not install the `fwd` binary; do that above.
 
 ## Quickstart
 

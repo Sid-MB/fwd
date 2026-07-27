@@ -12,6 +12,12 @@ Two things make this module unusual and both are deliberate:
    break unrelated commands.
 
 ``up`` and ``launch`` are the same function registered twice, so the alias cannot drift from the primary command.
+
+Help text is treated as primary documentation: ``--help`` is the surface an agent or a new user reads first, so every
+option carries an explicit ``help=`` that states the *behavioural* consequence (what gets billed, what leaves the
+laptop, what a default silently does), not just a restatement of the flag name. ``fwd up`` groups its options into rich
+help panels because its flag list spans two unrelated concerns — where the machine comes from, and what Claude context
+travels with it — and a single flat list of eight options buries that distinction.
 """
 
 from __future__ import annotations
@@ -22,9 +28,14 @@ import typer
 
 from fwd import __version__, ui
 
+# Panel titles for `fwd up`. Kept as constants so the two groups are named identically everywhere they are referenced.
+PANEL_TARGET = "Target & session"
+PANEL_CLAUDE = "Claude context"
+
 app = typer.Typer(
     name="fwd",
-    help="Forward your Claude Code session to a remote machine.",
+    help="Forward your Claude Code session to a remote machine: provision, sync, carry the transcript, attach.",
+    epilog="Bare 'fwd' attaches to this directory's session, or launches one if there is none. Start with 'fwd setup', diagnose with 'fwd doctor'.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -35,9 +46,12 @@ app = typer.Typer(
 @app.callback()
 def main(
     ctx: typer.Context,
-    restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped compute without a prompt (required when not on a terminal).")] = False,
+    restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
-    """Run the smart default when no subcommand is given: attach to this directory's session, else launch one."""
+    """Attach to this directory's session, launching one if it does not exist yet.
+
+    The smart default that runs when no subcommand is given, so the everyday loop is a bare 'fwd' in the project directory whether or not a remote session already exists.
+    """
     if ctx.invoked_subcommand is not None:
         return
     from fwd.ops import attach as attach_ops
@@ -46,16 +60,19 @@ def main(
 
 
 def _up(
-    target: Annotated[str | None, typer.Option("--target", "-t", help="Target name from config.")] = None,
-    gpu: Annotated[str | None, typer.Option("--gpu", help="GPU type/id override for the backend.")] = None,
-    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name (defaults to the directory name).")] = None,
-    session: Annotated[bool, typer.Option("--session", help="Transfer the live transcript so claude resumes it (best-effort).")] = False,
-    handoff: Annotated[bool, typer.Option("--handoff", help="Generate HANDOFF.md and have the remote session read it.")] = False,
-    user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude config bundle (CLAUDE.md, skills, agents, commands).")] = False,
-    creds: Annotated[bool, typer.Option("--creds", help="Copy local Claude credentials to the remote machine (writes a token to remote disk).")] = False,
-    no_attach: Annotated[bool, typer.Option("--no-attach", help="Set everything up but do not attach.")] = False,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", rich_help_panel=PANEL_TARGET)] = None,
+    gpu: Annotated[str | None, typer.Option("--gpu", help="Override the GPU for this launch only (RunPod GPU id, or a Slurm --gres spec).", rich_help_panel=PANEL_TARGET)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", rich_help_panel=PANEL_TARGET)] = None,
+    no_attach: Annotated[bool, typer.Option("--no-attach", help="Provision, sync and start Claude remotely but stay local instead of attaching.", rich_help_panel=PANEL_TARGET)] = False,
+    session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
+    handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
+    user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
+    creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
 ) -> None:
-    """Provision (or reuse) a remote target, sync this directory, and start a Claude session there."""
+    """Provision (or reuse) a remote target, sync this directory, and start a Claude session there.
+
+    Also the repair command: every stage is idempotent, so re-running after a failed launch resumes where it stopped rather than duplicating a pod, a job or a sync.
+    """
     from fwd.ops import launch as launch_ops
 
     launch_ops.launch(
@@ -78,9 +95,12 @@ app.command("launch", hidden=True)(_up)
 @app.command("attach")
 def attach_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
-    restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped compute without a prompt (required when not on a terminal).")] = False,
+    restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
 ) -> None:
-    """Attach to a running remote session's tmux."""
+    """Attach to a running remote session's tmux, reconciling live backend status first.
+
+    Replaces this process with 'ssh -t', so the remote session owns the terminal outright: resize, mouse reporting and ctrl-C behave exactly as a hand-typed ssh would. Detach with tmux's ctrl-b d; the session keeps running.
+    """
     from fwd.ops import attach as attach_ops
 
     attach_ops.attach(name, restart=restart)
@@ -88,7 +108,7 @@ def attach_cmd(
 
 @app.command("ls")
 def ls_cmd() -> None:
-    """List sessions with live status from each backend."""
+    """List every fwd session with live status and cost queried from each backend."""
     from fwd.ops import lifecycle
 
     lifecycle.ls()
@@ -98,7 +118,7 @@ def ls_cmd() -> None:
 def push_cmd(
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
 ) -> None:
-    """Sync local changes up to the remote session."""
+    """Mirror local changes up to the remote session; remote-only files are deleted unless sync.delete is off."""
     from fwd.ops import transfer
 
     transfer.push(name)
@@ -106,10 +126,10 @@ def push_cmd(
 
 @app.command("pull")
 def pull_cmd(
-    paths: Annotated[list[str] | None, typer.Argument(help="Specific remote-relative paths; default pulls everything.")] = None,
+    paths: Annotated[list[str] | None, typer.Argument(help="Remote-relative paths to fetch; omit to pull the whole remote directory.")] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to this directory's session.")] = None,
 ) -> None:
-    """Bring remote changes back down to the local directory."""
+    """Bring remote changes back down to the local directory, additively — a pull never deletes local files."""
     from fwd.ops import transfer
 
     transfer.pull(name, tuple(paths or ()))
@@ -119,7 +139,10 @@ def pull_cmd(
 def stop_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
 ) -> None:
-    """Stop a session's remote tmux and suspend its target (data is preserved)."""
+    """Kill a session's remote tmux and suspend its target to stop billing; synced data is preserved.
+
+    Restart it later with 'fwd attach --restart' or another 'fwd up'. RunPod caveat: only the volume survives a stop, so anything outside remote_base on a container disk is lost.
+    """
     from fwd.ops import lifecycle
 
     lifecycle.stop(name)
@@ -128,9 +151,12 @@ def stop_cmd(
 @app.command("rm")
 def rm_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name; defaults to this directory's session.")] = None,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt.")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
 ) -> None:
-    """Destroy a session's target and forget it. Irreversible."""
+    """Destroy a session's target and forget the session. Irreversible — remote data is gone.
+
+    The confirmation defaults to no, so a scripted 'fwd rm' without --force safely does nothing.
+    """
     from fwd.ops import lifecycle
 
     lifecycle.remove(name, force=force)
@@ -138,7 +164,7 @@ def rm_cmd(
 
 @app.command("setup")
 def setup_cmd() -> None:
-    """Interactively create or update ~/.fwd/config.toml."""
+    """Interactively create or update ~/.fwd/config.toml: pick a backend and fill in its target details."""
     from fwd import wizard
 
     wizard.run_wizard()
@@ -146,9 +172,12 @@ def setup_cmd() -> None:
 
 @app.command("doctor")
 def doctor_cmd(
-    target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target.")] = None,
+    target: Annotated[str | None, typer.Option("--target", "-t", help="Check only this target instead of every configured one.")] = None,
 ) -> None:
-    """Check local prerequisites and target reachability."""
+    """Check local prerequisites (ssh, rsync, backend CLIs) and the reachability of each configured target.
+
+    Exits non-zero when a check fails, so it doubles as a preflight in scripts.
+    """
     from fwd import doctor
 
     raise typer.Exit(doctor.run_doctor(target))
@@ -156,7 +185,7 @@ def doctor_cmd(
 
 @app.command("version")
 def version_cmd() -> None:
-    """Print the fwd version."""
+    """Print the installed fwd version and exit."""
     ui.console.print(__version__)
 
 
