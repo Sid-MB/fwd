@@ -133,29 +133,29 @@ installer. Accepting may update the Bash/Zsh startup file; declining is remember
 `~/.fwd/completion-prompted`. Agents, redirected commands, help/version output, and shell-completion subprocesses
 never prompt. The explicit `fwd --install-completion` command remains available after a decline.
 
-| Command | What it does |
-| --- | --- |
-| `fwd` | Smart default: attach to this directory's session, else launch one |
-| `fwd TARGET` | Launch that configured target's saved default command and attach |
-| `fwd BACKEND` | Use the most recently used configured target of that backend and attach; offer setup interactively if none exists |
-| `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching |
-| `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first |
-| `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status |
-| `fwd ls` | List sessions with live status queried from each backend |
-| `fwd push` | Re-sync local changes up |
-| `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) |
-| `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive |
-| `fwd rm [name]` | Destroy the target and forget the session (confirms first) |
-| `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag |
-| `fwd doctor` | Check local prerequisites and target reachability |
-| `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides |
-| `fwd config` | Print the effective merged config, annotated with where each value came from |
-| `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` |
-| `fwd config rm KEY` | Remove one value at user, project, or target scope, revealing the next-higher default |
-| `fwd config --example [backend]` | Print a commented reference config generated from the schema |
-| `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling |
-| `fwd -V` | Print the installed version |
-| `fwd info` | Print version plus config and state paths |
+| Command | What it does | Example |
+| --- | --- | --- |
+| `fwd` | Smart default: attach to this directory's session, else launch one | `fwd` |
+| `fwd TARGET` | Launch that configured target's saved default command and attach | `fwd work` |
+| `fwd BACKEND` | Use the most recently used configured target of that backend and attach; offer setup interactively if none exists | `fwd runpod` |
+| `fwd up [COMMAND...]` (alias `launch`) | Provision/reuse, sync and bootstrap a target, then start a persistent shell or command without attaching | `fwd up codex` |
+| `fwd attach` / `fwd a [name] [--restart]` | Attach to a running session, reconciling live status first | `fwd a demo` |
+| `fwd send` / `fwd s -- COMMAND...` | Execute one command remotely and return its output and exit status | `fwd s -- pwd` |
+| `fwd ls` | List sessions with live status queried from each backend | `fwd ls --format json` |
+| `fwd push` | Re-sync local changes up | `fwd push` |
+| `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull outputs/` |
+| `fwd stop [name]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop demo` |
+| `fwd rm [name]` | Destroy the target and forget the session (confirms first) | `fwd rm demo` |
+| `fwd setup` | Create/update `~/.fwd/config.toml`; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
+| `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --format json` |
+| `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
+| `fwd config` | Print the effective merged config, annotated with where each value came from | `fwd config` |
+| `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` | `fwd config set sync.delete false` |
+| `fwd config rm KEY` | Remove one value at user, project, or target scope, revealing the next-higher default | `fwd config rm default_command` |
+| `fwd config --example [backend]` | Print a commented reference config generated from the schema | `fwd config --example runpod` |
+| `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling | `fwd config --schema` |
+| `fwd -V` | Print the installed version | `fwd -V` |
+| `fwd info` | Print version plus config and state paths | `fwd info --format json` |
 
 ### One-shot remote commands
 
@@ -182,17 +182,17 @@ when a command must run inside an allocation.
 
 ### `fwd up` flags
 
-| Flag | Effect |
-| --- | --- |
-| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude`/`codex` for a synced coding-agent workflow |
-| `--target/-t NAME` | Which configured target to use (default: `default_target`) |
-| `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) |
-| `--name/-n NAME` | Session name (default: derived from the directory) |
-| `--session` / `--handoff` | How to carry conversation context — see below |
-| `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) |
-| `--creds` | Copy Claude credentials to the remote machine |
-| `--attach/-a` | Attach after startup |
-| `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach |
+| Flag | Effect | Example |
+| --- | --- | --- |
+| `COMMAND...` | Initial persistent command; omit for a shell, or use `claude`/`codex` for a synced coding-agent workflow | `fwd up codex` |
+| `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
+| `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
+| `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
+| `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
+| `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
+| `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
+| `--attach/-a` | Attach after startup | `fwd up -a` |
+| `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --no-attach codex` |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
 it again and it picks up where it left off rather than starting over or duplicating anything.
