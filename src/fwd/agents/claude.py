@@ -24,13 +24,34 @@ HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
 HANDOFF_MAX_AGE_SECONDS = 15 * 60
 
 
-def build_command(*, resume_id: str | None, use_handoff: bool) -> str:
-    """Build a Claude startup command for transcript resume, handoff context, or a clean conversation."""
+def build_command(*, resume_id: str | None, use_handoff: bool, remote_control_name: str | None = None) -> str:
+    """Build a Claude startup command with the selected context and optional cross-device control."""
+    command = ["claude"]
     if resume_id:
-        return f"claude --resume {shlex.quote(resume_id)}"
-    if use_handoff:
-        return f"claude {shlex.quote(HANDOFF_PROMPT)}"
-    return "claude"
+        command.extend(("--resume", resume_id))
+    elif use_handoff:
+        command.append(HANDOFF_PROMPT)
+    plain_command = shlex.join(command)
+    if not remote_control_name:
+        return plain_command
+    remote_command = shlex.join(["claude", "--remote-control", remote_control_name, *command[1:]])
+    fallback = f"{remote_command} || {{ printf '%s\\n' 'Claude Remote Control unavailable; starting a normal terminal session.' >&2; exec {plain_command}; }}"
+    return f"bash -lc {shlex.quote(fallback)}"
+
+
+def _remote_control_status(endpoint: SSHEndpoint) -> int:
+    """Return 0 when Remote Control can start, 2 when supported but not account-authenticated, or 1 when absent."""
+    probe = endpoint.run(
+        "claude --help 2>&1 | grep -q -- '--remote-control' || exit 1; "
+        "status=$(claude auth status --json 2>/dev/null) || exit 2; "
+        "printf %s \"$status\" | grep -Eq '\"authMethod\"[[:space:]]*:[[:space:]]*\"claude\\.ai\"' || exit 2; "
+        "printf %s \"$status\" | grep -Eq '\"subscriptionType\"[[:space:]]*:[[:space:]]*\"(pro|max|team|enterprise)\"' || exit 2; "
+        "printf fwd-claude-remote-control-ready",
+        check=False,
+    )
+    if probe.returncode == 2:
+        return 2
+    return 0 if probe.returncode == 0 and probe.stdout.strip() == "fwd-claude-remote-control-ready" else 1
 
 
 def fresh_handoff(local_cwd: Path) -> Path | None:
@@ -88,7 +109,7 @@ class ClaudeAgent(Agent):
         return bundle
 
     def prepare_remote(self, endpoint: SSHEndpoint, remote_dir: str, flags: dict[str, Any], local_state: object | None) -> dict[str, Any]:
-        """Install requested user state and import the transcript, degrading cleanly when optional transfer fails."""
+        """Install requested state, import the transcript, and enable supported cross-device control."""
         if flags["user_config"]:
             with ui.step("Uploading Claude user config"):
                 claude_state.upload_user_config(endpoint)
@@ -113,7 +134,14 @@ class ClaudeAgent(Agent):
                 ui.warn("could not install the transcript remotely; the session will start from HANDOFF.md instead")
             else:
                 ui.warn(f"could not install the transcript remotely; starting a fresh session (try {ui.command('up --handoff')!r})")
-        return {"resume_id": resume_id}
+        remote_control_name: str | None = None
+        remote_control_status = _remote_control_status(endpoint)
+        if remote_control_status == 0:
+            remote_control_name = f"fwd: {Path(remote_dir).name}"
+            ui.info(f"Claude Remote Control enabled as {remote_control_name!r}")
+        elif remote_control_status == 2:
+            ui.info("Claude Remote Control is installed but requires a claude.ai Pro, Max, Team, or Enterprise login on the remote")
+        return {"resume_id": resume_id, "remote_control_name": remote_control_name}
 
     def startup_command(self, flags: Mapping[str, object]) -> str:
         """Start Claude with the context chosen during this launch."""
@@ -121,6 +149,7 @@ class ClaudeAgent(Agent):
         return build_command(
             resume_id=resume_id if isinstance(resume_id, str) else None,
             use_handoff=bool(flags.get("handoff")) and not resume_id,
+            remote_control_name=flags.get("remote_control_name") if isinstance(flags.get("remote_control_name"), str) else None,
         )
 
     def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:

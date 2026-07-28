@@ -8,6 +8,11 @@ mirrors your working directory, installs the requested toolchain, and starts a p
 It can carry a Claude transcript across, sync Codex settings and skills, start an ordinary shell or command, and run
 durable command and agent tasks whose logs can be reattached later. Close the laptop, return tomorrow, and the remote session is waiting.
 
+When the remote CLI and account support it, agent launches also enable cross-device control. Claude starts the same
+interactive conversation with Remote Control enabled for claude.ai and the Claude mobile app. Codex starts its
+persistent Remote Control app-server daemon beside the terminal TUI, making the remote machine discoverable to
+supported signed-in Codex clients. Missing support, authentication, or enrollment never blocks the tmux session.
+
 Existing tools either remote-*view* a session that stays pinned to your laptop, or provision machines with no session
 story at all. `fwd` does the handoff itself.
 

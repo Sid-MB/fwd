@@ -38,6 +38,11 @@ successfully provisioned machine.
 Override `launch_flags()` only if the agent owns special CLI/config behavior. Agent-independent orchestration should
 never test `agent.name`; put that decision in the implementation instead.
 
+Optional remote-control setup also belongs in the agent implementation because products expose different models.
+Claude decorates its long-lived interactive command, while Codex starts a separate managed app-server daemon beside
+the primary TUI. Probe both CLI support and compatible account authentication, degrade to the normal terminal session
+when unavailable, and never make remote-control enrollment a prerequisite for launching the agent.
+
 ## Register and test it
 
 Import and instantiate the class in `agents/__init__.py`. The registry is explicit so CLI startup, packaging, and
