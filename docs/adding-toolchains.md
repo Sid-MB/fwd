@@ -25,7 +25,7 @@ The relevant extension points are:
 | Built-in requirements | `src/fwd/tooling/requirements.py` | Reusable uv, JS-manager, Swift/Swiftly, Claude, and Codex definitions |
 | Toolchain registry | `src/fwd/toolchains/__init__.py` | Explicit ordered list and project plan aggregation |
 | Ecosystem implementation | `src/fwd/toolchains/<name>.py` | Detection, requirements, and dependency commands |
-| Coding-agent registry | `src/fwd/agents.py` | Agent commands, synchronization, sending, and shared tool requirements |
+| Coding-agent contract | `src/fwd/agents/base.py` | Agent commands, synchronization, sending, and shared tool requirements |
 | Core bootstrap | `src/fwd/scripts/bootstrap.sh` | Persistent environment paths and tmux only |
 
 Do not implement a language as a `Backend`. Backends acquire SSH-reachable compute; toolchains prepare projects after the provider-independent sync.
