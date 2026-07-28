@@ -190,11 +190,64 @@ def test_explicit_up_command_streams_by_default_or_attaches_directly(tmp_path: P
 
     result = cli._run_up(("echo", "hi"), attach=attach)
 
-    assert launched[0]["initial_command"] == ("echo", "hi")
+    assert launched[0]["initial_command"] == (("echo", "hi") if attach else ())
     assert launched[0]["run_command_as_task"] is expected_stream
     assert launched[0]["attach"] is attach
     assert streamed == ([(("echo", "hi"), "demo")] if expected_stream else [])
     assert result == (7 if expected_stream else None)
+
+
+def test_reuse_command_uses_existing_session_task_manager_instead_of_attaching(tmp_path: Path, monkeypatch) -> None:
+    """Root aliases add --reuse, but an explicit command must still behave exactly like fwd send."""
+    matched = _session("demo", tmp_path, target="pod", backend="runpod", command=("codex",))
+    selector = session_select.SessionSelector(target=session_select.TargetSelector("pod", "pod", exact_name="pod", backend="runpod"), command=("yes",))
+    selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(matched,), cwd=tmp_path, matches=(matched,))
+    attached: list[str] = []
+    streamed: list[tuple[tuple[str, ...], str | None]] = []
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
+    from fwd.ops import attach as attach_ops
+    from fwd.ops import send as send_ops
+
+    monkeypatch.setattr(attach_ops, "attach", lambda name, **kwargs: attached.append(name))
+    monkeypatch.setattr(send_ops, "run_command", lambda arguments, *, name=None, stop_after=False: streamed.append((arguments, name)) or 0)
+
+    assert cli._run_up(("pod", "yes"), reuse=True) == 0
+    assert attached == []
+    assert streamed == [(("yes",), "demo")]
+
+
+def test_reuse_command_provisions_a_shell_then_starts_a_managed_task_when_no_session_matches(tmp_path: Path, monkeypatch) -> None:
+    """The interactive fallback behind fwd runpod COMMAND must not turn COMMAND into the primary tmux process."""
+    selector = session_select.SessionSelector(target=session_select.TargetSelector("runpod", "runpod", backend="runpod"), command=("yes",))
+    selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(), cwd=tmp_path, matches=())
+    launched: list[dict[str, object]] = []
+    streamed: list[tuple[tuple[str, ...], str | None]] = []
+    state = _session("demo", tmp_path, target="runpod", backend="runpod", command=())
+    monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
+    monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
+    from fwd.ops import launch as launch_ops
+    from fwd.ops import send as send_ops
+
+    monkeypatch.setattr(launch_ops, "launch", lambda **kwargs: launched.append(kwargs) or state)
+    monkeypatch.setattr(send_ops, "run_command", lambda arguments, *, name=None, stop_after=False: streamed.append((arguments, name)) or 0)
+
+    assert cli._run_up(("runpod", "yes"), reuse=True) == 0
+    assert launched[0]["initial_command"] == ()
+    assert launched[0]["run_command_as_task"] is True
+    assert launched[0]["attach"] is False
+    assert streamed == [(("yes",), "demo")]
+
+
+def test_managed_command_selects_session_without_treating_work_as_session_identity(tmp_path: Path, monkeypatch) -> None:
+    """A command sent through the task manager may use a session whose primary process is unrelated."""
+    current = _session("demo", tmp_path, target="pod", backend="runpod", command=("codex",))
+    selector = session_select.SessionSelector(name="demo", command=("yes",))
+    monkeypatch.setattr(session_select, "parse_current", lambda *args, **kwargs: (selector, Config(), [current], tmp_path))
+
+    selection = session_select.select_current(("demo", "yes"), match_command=False)
+
+    assert selection.selector.command == ("yes",)
+    assert selection.matches == (current,)
 
 
 def test_explicit_up_stop_after_is_forwarded_to_durable_command(tmp_path: Path, monkeypatch) -> None:

@@ -484,8 +484,9 @@ def _launch(
         creds: Lift local Claude credentials to the remote machine (warns).
         attach: Exec into the remote tmux session when everything is ready.
         push_only: Stop after syncing files, before bootstrap.
-        run_command_as_task: Start a shell as the primary pane so the caller can run and stream ``initial_command``
-            through the durable task manager after launch while retaining the original argv in session metadata.
+        run_command_as_task: Start a shell as the primary pane so the caller can run a separate explicit command
+            through the durable task manager after launch. The caller passes an empty ``initial_command`` because the
+            managed task, rather than the primary session, owns the requested command argv and task metadata.
 
     Returns:
         The persisted :class:`~fwd.state.SessionState`. Does not return when ``attach`` is ``True``, since the

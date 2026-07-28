@@ -52,7 +52,7 @@ app = typer.Typer(
     cls=AliasHelpGroup,
     name=ui.COMMAND_NAME,
     help="Move coding work to remote compute: provision or reuse a target, sync the project, and run a persistent shell, command, Claude Code, or Codex.",
-    epilog=f"Bare {ui.command()!r} means {ui.command('up --reuse')!r}: attach to the unambiguous matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar. For a non-attaching launch, omit --reuse: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
+    epilog=f"Bare {ui.command()!r} means {ui.command('up --reuse')!r}: attach to the unambiguous matching session, or create and attach interactively. Root selectors such as {ui.command('runpod')!r}, {ui.command('codex')!r}, and {ui.command('--name demo')!r} use the same matching grammar; add an arbitrary command to run it through the managed task runner. For a non-attaching agent launch, omit --reuse: {ui.command('up runpod codex')!r}. Learn config with {ui.command('config --example')!r} or {ui.command('config --schema')!r}; guide: {CONFIG_DOCS_URL}. Diagnose with {ui.command('doctor')!r}.",
     add_completion=True,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -253,6 +253,7 @@ def _run_up(
         name=name,
         gpu=gpu,
         state=launch_ops.store(),
+        match_command=attach,
     )
     selector = selection.selector
     config = selection.config
@@ -262,6 +263,13 @@ def _run_up(
         ui.die("--new and --name are mutually exclusive")
     matches = selection.matches
     chosen_match = launch_ops.choose_session(matches, selector.describe()) if matches else None
+    managed_command = selector.command is not None and not attach
+
+    if chosen_match is not None and managed_command and not new:
+        from fwd.ops import send as send_ops
+
+        ui.info(f"selectors matched session {chosen_match.name!r}; running the command as a managed task")
+        return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after)
 
     if reuse and chosen_match is not None:
         chosen = chosen_match
@@ -284,7 +292,9 @@ def _run_up(
     initial_command = selector.initial_command
     if stop_after and selector.command is None:
         ui.die(f"--stop-after requires an explicit command, for example {ui.command('up --stop-after -- pytest -q')!r}; a general shell or interactive agent has no completion point")
-    if reuse:
+    if managed_command:
+        effective_attach = False
+    elif reuse:
         effective_attach = True
     else:
         effective_attach = _should_attach(_configured_command(config, selector), attach=attach, no_attach=no_attach)
@@ -299,13 +309,13 @@ def _run_up(
         has_project_session = any(Path(candidate.local_cwd).expanduser().resolve() == cwd for candidate in sessions)
         launch_new = has_project_session
 
-    stream_command = selector.command is not None and not effective_attach
+    stream_command = managed_command
     state = launch_ops.launch(
         target=selector.target.launch_name if selector.target else None,
         gpu=gpu,
         name=launch_name,
         new=launch_new,
-        initial_command=initial_command,
+        initial_command=() if stream_command else initial_command,
         run_command_as_task=stream_command,
         session=session,
         handoff=handoff,
@@ -328,7 +338,7 @@ def _up(
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", autocompletion=complete_gpu, rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
     new: Annotated[bool, typer.Option("--new", help="Create a fresh session instead of reusing this directory's existing session. Cannot be combined with --name.", rich_help_panel=PANEL_TARGET)] = False,
-    reuse: Annotated[bool, typer.Option("--reuse", "-r", help="Reuse and attach to a matching session; create it only in an interactive terminal when no match exists.", rich_help_panel=PANEL_TARGET)] = False,
+    reuse: Annotated[bool, typer.Option("--reuse", "-r", help="Reuse a matching session; attach when no task command is supplied, or create only interactively when none exists.", rich_help_panel=PANEL_TARGET)] = False,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="With --reuse, authorize restarting stopped billable compute without prompting.", rich_help_panel=PANEL_TARGET)] = False,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach directly after startup instead of streaming an explicit command as a durable task.", rich_help_panel=PANEL_TARGET)] = False,
     no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
@@ -341,8 +351,9 @@ def _up(
     """Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
 
     Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
-    in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
-    Explicit commands stream as durable tasks; pass --attach to enter the primary tmux session instead. Use
+    in an interactive terminal. --reuse attaches to a matching session when no task command is supplied, or creates
+    one only in a human terminal. Explicit commands use the same durable task manager as 'fwd send -- COMMAND'; pass
+    --attach to enter the primary tmux session instead. Use
     --no-attach for an agent background launch and '--' before remote command flags.
 
     To add a new target, run 'fwd setup'.
@@ -373,9 +384,10 @@ def _up(
 UP_HELP = f"""{command_docs.UP.summary}
 
 Positionals are [TARGET] [AGENT|COMMAND...]. Magic agents 'claude' and 'codex' sync their settings and auto-attach
-in an interactive terminal. --reuse attaches to a matching session, or creates one only in a human terminal.
-Explicit commands stream back with Ctrl-C to cancel and Ctrl-B to background; pass --attach to enter their session
-directly, or --stop-after to stop remote compute after the tracked command. Use '--' before remote command flags.
+in an interactive terminal. --reuse attaches to a matching session when no task command is supplied, or creates one
+only in a human terminal. Explicit commands use the same managed task runner as {ui.command('send -- COMMAND')!r} and
+stream back with Ctrl-C to cancel and Ctrl-B to background; pass --attach to enter their session directly, or
+--stop-after to stop remote compute after the tracked command. Use '--' before remote command flags.
 
 To add a new target, run {ui.command('setup')!r}.
 """

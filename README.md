@@ -69,14 +69,17 @@ repository-only installation path for people who have not installed the Python p
 cd ~/code/my-project
 fwd                       # connect to this project's session; create and attach if none exists
 fwd runpod                # connect to this project's RunPod session; otherwise create one interactively
+fwd runpod yes            # run a durable task on that session, provisioning it interactively if needed
 fwd codex                 # connect to this project's Codex session; otherwise launch Codex interactively
 fwd --name demo           # connect to the exact session; otherwise create that name interactively
 ```
 
 Bare `fwd` is exactly `fwd up --reuse`; root selectors such as `fwd runpod` and `fwd codex` are the corresponding
-`fwd up --reuse …` forms. They are intended for a human terminal: when all selectors match an existing session they
-attach, and when none matches they create and attach. Inside the session, detach with `ctrl-b d` (tmux); the command
-keeps running. Type the same reuse form later to reattach.
+`fwd up --reuse …` forms. Without an explicit command, they are intended for a human terminal: when all selectors
+match an existing session they attach, and when none matches they create and attach. With an arbitrary command, the
+selectors choose or provision the session and the command uses the same durable task runner as `fwd send -- COMMAND`;
+it therefore appears in `fwd send --ls` and supports the same streaming, backgrounding, cancellation, and
+`--stop-after` behavior. Inside an attached session, detach with `ctrl-b d` (tmux); the primary process keeps running.
 
 `--reuse` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
 Instead it prints the exact `fwd up` command without `--reuse` that an agent or script can use to create the session.
@@ -170,9 +173,9 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | Command | What it does | Example |
 | --- | --- | --- |
 | `fwd [selector flags]` | Alias for `fwd up --reuse`: attach to a match, or create interactively | `fwd --agent codex` |
-| `fwd TARGET/BACKEND/AGENT` | Connect by positional selector using the same grammar | `fwd runpod` |
+| `fwd TARGET/BACKEND/AGENT [COMMAND...]` | Connect by positional selector, or run a managed command on that session | `fwd runpod yes` |
 | `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
-| `fwd up -r [selectors...]` | Reuse and attach when all selectors match; otherwise create only in a human terminal | `fwd up -r work codex` |
+| `fwd up -r [selectors...]` | Reuse a match; attach without a command, or run a supplied command as a managed task | `fwd up -r work yes` |
 | `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector | `fwd a work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
@@ -302,7 +305,7 @@ nor the remote project is modified.
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
 | `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
 | `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
-| `--reuse/-r` | Reuse and attach to a conjunctive match; create only interactively when none exists | `fwd up -r pod codex` |
+| `--reuse/-r` | Reuse a conjunctive match; attach when no task command is supplied, or create only interactively | `fwd up -r pod codex` |
 | `--restart/-y` | With `--reuse`, authorize restarting stopped billable compute | `fwd up -r -y demo` |
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
@@ -321,6 +324,7 @@ The startup forms are:
 ```sh
 fwd                               # equivalent to: fwd up --reuse
 fwd runpod                        # equivalent to: fwd up --reuse runpod
+fwd runpod yes                    # reuse/provision RunPod, then stream yes as a managed task
 fwd --agent codex                 # connect to this project's Codex session, or create it interactively
 fwd --name demo                   # connect to exact name, or create it interactively
 fwd up                            # launch layered default_command and use default_target
@@ -335,11 +339,12 @@ fwd up -- python train.py --epochs 10  # stream a durable task; '--' protects it
 fwd up --stop-after -- pytest -q    # stream tests, then stop remotely even if this laptop disconnects
 ```
 
-By default, an explicit arbitrary command runs as a durable task after provisioning: fwd streams its output, returns
-its exit status, and shows Ctrl-C to cancel or Ctrl-B to background after two seconds. The session's primary pane
-remains a login shell, so the session stays attachable after a finite command completes. Pass `--attach/-a` to run
-the command in the primary pane and enter tmux directly; after a successful finite attached command, that pane falls
-through to a login shell, while a nonzero exit remains visible as a launch failure.
+By default, an explicit arbitrary command runs as a durable task after selecting or provisioning the session: fwd
+uses the same task manager as `fwd send -- COMMAND`, streams its output, returns its exit status, and shows Ctrl-C to
+cancel or Ctrl-B to background after two seconds. The task receives an ID and remains visible in `fwd send --ls`.
+The session's primary pane remains a login shell, so the session stays attachable after a finite command completes.
+Pass `--attach/-a` to run the command in the primary pane and enter tmux directly; after a successful finite attached
+command, that pane falls through to a login shell, while a nonzero exit remains visible as a launch failure.
 
 `--stop-after` is valid only for an explicit streamed command, because bare shells, direct attachments, and
 interactive agents have no objective completion point. For agent work, use `fwd send agent --stop-after "MESSAGE"`,
@@ -488,6 +493,7 @@ For a human who wants to connect to a saved target and coding environment, use a
 
 ```sh
 fwd runpod                          # attach to a matching RunPod session, or create one interactively
+fwd runpod yes                      # run a managed task there; it appears in fwd send --ls
 fwd ssh                             # attach through the recent SSH target, or create/setup interactively
 fwd pod                             # exact configured target; attach a match or create interactively
 ```

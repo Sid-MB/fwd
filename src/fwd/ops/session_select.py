@@ -1,14 +1,15 @@
 """Shared selector parsing and session matching for ``up``, ``attach``, and bare ``fwd``.
 
 The CLI accepts the same concepts through several spellings: a session name, a configured target or backend, a
-registered coding agent, or an arbitrary startup command. Keeping their precedence here prevents subtle drift where
+registered coding agent, or an arbitrary managed command. Keeping their precedence here prevents subtle drift where
 ``fwd up codex`` launches one thing but ``fwd attach codex`` searches for another.
 
 Resolution is deliberately local and side-effect free. Exact session names win first. A target/backend consumes the
 next positional token before an agent does, which makes a configured target named ``codex`` deterministic; the warning
 explains ``--agent codex`` and how to rename the target. Remaining words are either one registered agent or an exact
-arbitrary command. Session matching applies every supplied selector and, unless an exact name was given, stays within
-the current project directory.
+arbitrary command. Target, agent, name, and compute selectors define session identity; callers that stream an
+arbitrary command exclude that workload from identity so it can use any otherwise matching session. Unless an exact
+name was given, matching stays within the current project directory.
 """
 
 from __future__ import annotations
@@ -239,13 +240,21 @@ def select_current(
     gpu: str | None = None,
     project_dir: Path | None = None,
     state: StateStore | None = None,
+    match_command: bool = True,
 ) -> CurrentSelection:
-    """Parse and match against one state snapshot, rejecting an exact name combined with conflicting selectors."""
+    """Parse and match against one state snapshot, rejecting an exact name combined with conflicting selectors.
+
+    Args:
+        match_command: Include an arbitrary positional command in session identity. Direct-attachment callers need
+            this because the command owns the primary pane. Managed-command callers disable it because the command is
+            work sent to whichever session the remaining target/name selectors choose.
+    """
     selector, config, sessions, cwd = parse_current(positional, target=target, agent=agent, name=name, gpu=gpu, project_dir=project_dir, state=state)
-    matched = matching_sessions(sessions, selector, cwd=cwd)
+    matching_selector = selector if match_command or selector.command is None else SessionSelector(name=selector.name, target=selector.target, agent=selector.agent, gpu=selector.gpu)
+    matched = matching_sessions(sessions, matching_selector, cwd=cwd)
     exact = next((candidate for candidate in sessions if selector.name and candidate.name == selector.name), None)
     if exact is not None and not matched:
-        ui.die(f"session {exact.name!r} exists but does not match every supplied selector ({selector.describe()}); use a different --name or remove the conflicting selector")
+        ui.die(f"session {exact.name!r} exists but does not match every supplied selector ({matching_selector.describe()}); use a different --name or remove the conflicting selector")
     return CurrentSelection(selector=selector, config=config, sessions=tuple(sessions), cwd=cwd, matches=tuple(matched))
 
 
