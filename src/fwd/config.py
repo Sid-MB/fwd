@@ -31,6 +31,7 @@ typo) degrades instead of blocking every command.
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
@@ -63,6 +64,7 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
     "build",
     ".DS_Store",
 )
+DEFAULT_MAX_SYNC_SIZE_GB = 1.0
 
 DEFAULT_RUNPOD_CPU_IMAGE = "runpod/base:0.6.2-cpu"
 DEFAULT_RUNPOD_GPU_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
@@ -284,11 +286,22 @@ class SyncConfig:
         exclude: Patterns passed to rsync as ``--exclude`` (or filtered client-side in the tar fallback).
         use_gitignore: Add ``--filter=':- .gitignore'`` so the repo's own ignore rules apply per directory.
         delete: Pass ``--delete`` on push, making the remote a mirror. Off means remote-only files survive a push.
+        max_size_gb: Maximum filtered local tree size that fwd may upload. This preflight prevents accidentally
+            copying a broad directory such as a home directory; users can raise it explicitly for larger projects.
     """
 
     exclude: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))
     use_gitignore: bool = True
     delete: bool = True
+    max_size_gb: float = field(default=DEFAULT_MAX_SYNC_SIZE_GB, metadata={"json_schema": {"exclusiveMinimum": 0}})
+
+    def __post_init__(self) -> None:
+        """Reject disabled or nonsensical limits so every upload retains an explicit finite safety boundary."""
+        if isinstance(self.max_size_gb, bool) or not isinstance(self.max_size_gb, (int, float)):
+            raise ConfigError("sync.max_size_gb must be a positive number")
+        self.max_size_gb = float(self.max_size_gb)
+        if not math.isfinite(self.max_size_gb) or self.max_size_gb <= 0:
+            raise ConfigError("sync.max_size_gb must be a positive finite number")
 
 
 @dataclass(slots=True)
@@ -467,6 +480,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         exclude=list(sync_raw.get("exclude", DEFAULT_EXCLUDES)),
         use_gitignore=bool(sync_raw.get("use_gitignore", True)),
         delete=bool(sync_raw.get("delete", True)),
+        max_size_gb=sync_raw.get("max_size_gb", DEFAULT_MAX_SYNC_SIZE_GB),
     )
     targets = {name: parse_target(name, raw or {}) for name, raw in targets_raw.items()}
 

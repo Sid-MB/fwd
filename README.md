@@ -624,12 +624,19 @@ creds = false         # copy credentials to the remote machine
 exclude = [".venv", "node_modules", "dist"]   # replaces the defaults; see below
 use_gitignore = true                          # honour the repo's own .gitignore
 delete = true                                 # push mirrors local (removes remote-only files)
+max_size_gb = 1.0                             # reject unexpectedly broad uploads before provisioning
 ```
 
 `exclude` is **seeded** with sensible defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`, `.next`,
 `dist`, `build`, `.turbo`, the various caches, `.DS_Store`) and setting it *replaces* the list rather than adding to
 it — so a project that genuinely ships a checked-in `dist/` can shrink the list, not just grow it. `.git` is never
 excluded: the remote session needs history to diff, blame and commit.
+
+Before `fwd up` provisions anything, and before every `fwd push`, fwd measures the filtered local tree and refuses to
+upload more than `sync.max_size_gb` (1 GB by default). The error prints an exact project-scoped command such as
+`fwd config set --project sync.max_size_gb 4` and the project/user config paths. The normal safety measurement uses
+the same `sync.exclude`, `.fwdignore`, and `.gitignore` rules as rsync. If fwd must fall back to tar-over-SSH, it runs
+a second conservative check that counts files hidden only by `.gitignore`, which tar cannot reproduce.
 
 ## Notes
 
@@ -638,7 +645,8 @@ excluded: the remote session needs history to diff, blame and commit.
   Reused targets are never destroyed by cancellation. If `fwd stop` is interrupted while closing tmux, fwd still
   completes the provider stop before exiting so compute is not left billing.
 - **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
-  additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet.
+  additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet. Uploads above
+  `sync.max_size_gb` are rejected before transfer; downloads are not capped by this local upload guard.
 - **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, needs `--force`
   when non-interactive: its prompt defaults to `no`, so a scripted removal safely does nothing. Likewise `fwd attach` will **refuse to restart
   stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning

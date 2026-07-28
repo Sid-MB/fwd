@@ -14,7 +14,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import typer
 
+from fwd import config as config_mod
+from fwd import ui
 from fwd.config import DEFAULT_EXCLUDES, SyncConfig
 from fwd.sshexec import SSHEndpoint
 from fwd.sync import RSYNC_BASE, rsync_filters
@@ -216,6 +219,44 @@ def test_genuine_rsync_failures_still_raise(monkeypatch) -> None:
     monkeypatch.setattr(sync_mod.subprocess, "run", lambda argv, **kw: sp.CompletedProcess(argv, 12))
     with pytest.raises(SSHError):
         sync_mod._run(["rsync"], what="rsync push")
+
+
+@needs_rsync
+def test_upload_size_uses_transfer_filters_and_portable_mode_is_conservative(tmp_path: Path) -> None:
+    """Normal measurement matches rsync; tar-compatible measurement additionally counts gitignored content."""
+    from fwd import sync as sync_mod
+
+    _write(tmp_path, "keep.txt", "keep")
+    _write(tmp_path, ".gitignore", "git-ignored.bin\n")
+    _write(tmp_path, "git-ignored.bin", "g" * 17)
+    _write(tmp_path, ".fwdignore", "remote-ignored.bin\n")
+    _write(tmp_path, "remote-ignored.bin", "r" * 23)
+    _write(tmp_path, "node_modules/package/index.js", "n" * 31)
+
+    normal = sum((tmp_path / name).stat().st_size for name in ("keep.txt", ".gitignore", ".fwdignore"))
+    portable = normal + (tmp_path / "git-ignored.bin").stat().st_size
+    assert sync_mod.filtered_upload_size_bytes(tmp_path, SyncConfig()) == normal
+    assert sync_mod.filtered_upload_size_bytes(tmp_path, SyncConfig(), portable=True) == portable
+
+
+def test_upload_limit_error_offers_project_and_user_config_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """A rejected upload explains both ways to make a deliberate larger-project exception."""
+    from fwd import sync as sync_mod
+
+    global_path = tmp_path / "home" / "config.toml"
+    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
+    monkeypatch.setattr(sync_mod, "filtered_upload_size_bytes", lambda source, cfg, **kwargs: 1_200_000_000)
+    monkeypatch.setattr(ui.err_console, "width", 500)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        sync_mod.enforce_upload_limit(tmp_path, SyncConfig(max_size_gb=1))
+
+    assert exc_info.value.exit_code == 1
+    error = " ".join(capsys.readouterr().err.split())
+    assert "sync.max_size_gb=1" in error
+    assert "config set --project sync.max_size_gb 2" in error
+    assert str(tmp_path / ".fwd" / "config.toml") in error
+    assert str(global_path) in error
 
 
 # --------------------------------------------------------------------------------------------------------------

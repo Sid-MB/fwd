@@ -22,6 +22,10 @@ fwd config --example slurm
 
 User config is `~/.fwd/config.toml`. Project `.fwd/config.toml` deep-merges over it. Target settings override project settings, which override user settings.
 
+Uploads are capped at 1 GB by default so accidentally running fwd from a broad directory fails before provisioning.
+Raise the boundary for one known-large project with `fwd config set --project sync.max_size_gb N`; the refusal also
+prints the exact project and user config paths for direct TOML editing.
+
 ## Target resolution
 
 These forms need no saved target when they are unambiguous:

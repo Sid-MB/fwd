@@ -15,12 +15,16 @@ through ssh, giving correctness at the cost of no delta transfer, and callers mu
 
 from __future__ import annotations
 
+import math
 import os
+import re
 import shlex
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from fwd import config as config_mod
 from fwd import ui
 from fwd.config import SyncConfig
 from fwd.sshexec import SSHEndpoint, SSHError
@@ -45,6 +49,24 @@ RSYNC_PARTIAL_EXITS: frozenset[int] = frozenset({23, 24})
 # macOS bsdtar stores extended attributes as AppleDouble "._name" sidecar files, which arrive as visible junk in every
 # directory of a Linux remote. COPYFILE_DISABLE suppresses them; GNU tar ignores the variable.
 TAR_ENV: dict[str, str] = {"COPYFILE_DISABLE": "1"}
+BYTES_PER_GB = 1_000_000_000
+_RSYNC_TOTAL_SIZE = re.compile(r"^Total file size:\s*([\d,]+)\s+(?:B|bytes)\s*$", re.MULTILINE)
+
+
+def _portable_filters(sync_cfg: SyncConfig, local_dir: str | Path) -> list[str]:
+    """Return exclusions shared by rsync, tar fallback, and the upload-size preflight.
+
+    The safety check deliberately does not apply ``.gitignore`` because the tar fallback cannot implement git's
+    per-directory ignore semantics. Measuring the transport-independent superset guarantees that selecting a degraded
+    transport cannot silently make an already-approved upload larger. Users can put remote-only large paths in
+    ``.fwdignore`` or ``sync.exclude``; both transports and the preflight honor those sources.
+    """
+    root = Path(local_dir).expanduser()
+    args = [f"--exclude={pattern}" for pattern in sync_cfg.exclude]
+    fwdignore = root / FWDIGNORE_NAME
+    if fwdignore.is_file():
+        args.append(f"--exclude-from={fwdignore}")
+    return args
 
 
 def rsync_filters(sync_cfg: SyncConfig, local_dir: str | Path) -> list[str]:
@@ -70,11 +92,68 @@ def rsync_filters(sync_cfg: SyncConfig, local_dir: str | Path) -> list[str]:
     if sync_cfg.use_gitignore:
         # ':-' is a per-directory merge: every .gitignore in the tree applies to its own subtree, matching git.
         args.append("--filter=:- .gitignore")
-    args += [f"--exclude={pattern}" for pattern in sync_cfg.exclude]
-    fwdignore = root / FWDIGNORE_NAME
-    if fwdignore.is_file():
-        args.append(f"--exclude-from={fwdignore}")
+    args += _portable_filters(sync_cfg, root)
     return args
+
+
+def filtered_upload_size_bytes(local_dir: str | Path, sync_cfg: SyncConfig, *, portable: bool = False) -> int:
+    """Measure the local tree fwd may upload without copying file contents.
+
+    A local rsync dry run is used as the selection engine, so filters have exactly the same interpretation as the
+    normal rsync upload. When ``portable`` is true, ``.gitignore`` is omitted because tar fallback cannot implement
+    Git's per-directory semantics; callers use that stricter second check before tar-over-SSH. The destination is an
+    empty temporary directory and ``--stats`` reports the selected byte total without copying file contents.
+
+    Raises:
+        SSHError: If rsync cannot inspect the local tree or emits an unrecognized stats format.
+    """
+    source = Path(local_dir).expanduser().resolve()
+    filters = _portable_filters(sync_cfg, source) if portable else rsync_filters(sync_cfg, source)
+    with tempfile.TemporaryDirectory(prefix="fwd-upload-size-") as destination:
+        argv = [*RSYNC_BASE, "--dry-run", "--stats", *filters, f"{source}/", f"{destination}/"]
+        proc = subprocess.run(argv, check=False, capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"})
+    if proc.returncode != 0:
+        detail = proc.stderr.strip()
+        raise SSHError(f"could not measure the local upload (rsync exit {proc.returncode})" + (f": {detail}" if detail else ""))
+    match = _RSYNC_TOTAL_SIZE.search(proc.stdout)
+    if match is None:
+        raise SSHError("could not measure the local upload because rsync did not report its total file size")
+    return int(match.group(1).replace(",", ""))
+
+
+def _display_size(size_bytes: int) -> str:
+    """Format a byte count compactly for the upload-limit error."""
+    if size_bytes >= BYTES_PER_GB:
+        return f"{size_bytes / BYTES_PER_GB:.2f} GB"
+    if size_bytes >= 1_000_000:
+        return f"{size_bytes / 1_000_000:.1f} MB"
+    if size_bytes >= 1_000:
+        return f"{size_bytes / 1_000:.1f} KB"
+    return f"{size_bytes} bytes"
+
+
+def enforce_upload_limit(local_dir: str | Path, sync_cfg: SyncConfig, *, portable: bool = False) -> int:
+    """Abort before provisioning or transfer when the filtered local tree exceeds ``sync.max_size_gb``.
+
+    The error provides both supported configuration scopes. Project scope is safest for a deliberately large repo;
+    user scope is available when the user's normal projects all exceed the built-in 1 GB boundary.
+
+    Returns:
+        The measured byte count, which callers may later use for progress reporting.
+    """
+    source = Path(local_dir).expanduser().resolve()
+    size_bytes = filtered_upload_size_bytes(source, sync_cfg, portable=portable)
+    limit_bytes = int(sync_cfg.max_size_gb * BYTES_PER_GB)
+    if size_bytes <= limit_bytes:
+        return size_bytes
+    suggested_gb = max(1, math.ceil(size_bytes / BYTES_PER_GB))
+    project_path = source / config_mod.PROJECT_CONFIG_RELPATH
+    ui.die(
+        f"upload from {source} is {_display_size(size_bytes)} after fwd exclusions, exceeding sync.max_size_gb={sync_cfg.max_size_gb:g} GB. "
+        f"Raise this project only with '{ui.command(f'config set --project sync.max_size_gb {suggested_gb}')}', or set max_size_gb = {suggested_gb} "
+        f"under [sync] in {project_path}. To change the user default, run '{ui.command(f'config set sync.max_size_gb {suggested_gb}')}' "
+        f"or edit {config_mod.GLOBAL_CONFIG_PATH}."
+    )
 
 
 def _run(argv: Sequence[str], *, what: str) -> None:
@@ -188,7 +267,11 @@ def tar_up(endpoint: SSHEndpoint, local_dir: str | Path, remote_dir: str, sync_c
     """
     source = Path(local_dir).expanduser()
     _ensure_remote_dir(endpoint, remote_dir)
-    tar_argv = ["tar", "czf", "-", *_tar_excludes(sync_cfg), "-C", str(source), "."]
+    tar_excludes = _tar_excludes(sync_cfg)
+    fwdignore = source / FWDIGNORE_NAME
+    if fwdignore.is_file():
+        tar_excludes.append(f"--exclude-from={fwdignore}")
+    tar_argv = ["tar", "czf", "-", *tar_excludes, "-C", str(source), "."]
     ssh_argv = [*endpoint.ssh_argv(), f"tar xzf - -C {shlex.quote(remote_dir)}"]
     _pipe(tar_argv, ssh_argv, what="tar push")
 

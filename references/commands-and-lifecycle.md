@@ -98,6 +98,12 @@ fwd pull outputs/ logs/   # additive path-scoped download
 
 `fwd diff` compares temporary filtered snapshots and changes neither side. Prefer it before choosing push or pull.
 
+Launch and push preflight the local upload before provisioning or transfer. `sync.max_size_gb` defaults to 1 GB; an
+over-limit error gives the exact `fwd config set --project sync.max_size_gb N` command and both applicable config
+paths. Normal measurement honors configured exclusions, `.fwdignore`, and `.gitignore` exactly as rsync does. If fwd
+must use tar-over-SSH, it runs a second conservative check that also counts files hidden only by `.gitignore`. This
+guard applies to uploads, not pulls.
+
 Every existing-session operation accepts an exact session name, target label, or backend name. Use selectors
 positionally with `attach`, `stop`, `rm`, and `diff`, and through `--name` with `send`, `push`, and `pull`. Exact
 session names win. A sole alias match wins even when stopped so it remains restartable or removable; when several

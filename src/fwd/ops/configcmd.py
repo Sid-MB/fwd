@@ -97,6 +97,7 @@ SECTION_DOCS: dict[str, str] = {
     "exclude": "rsync excludes; REPLACES the built-in list rather than adding to it, so it can shrink",
     "use_gitignore": "also honour the repo's own .gitignore, per directory",
     "delete": "push mirrors local, removing remote-only files",
+    "max_size_gb": "maximum filtered upload size in GB; defaults to 1 GB to catch accidentally broad directories",
 }
 
 DEFAULT_COMMAND_DOC = f"argv launched by bare {ui.command()!r}; target_defaults.<name>.default_command takes precedence"
@@ -128,7 +129,7 @@ def _toml_scalar(value: Any) -> str:
     """Render a Python scalar as TOML. Only the types the config schema actually uses are supported."""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, int):
+    if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_scalar(v) for v in value) + "]"
@@ -317,7 +318,7 @@ def _json_type(annotation: Any) -> dict[str, Any]:
         non_null = [arg for arg in args if arg is not type(None)]
         if len(non_null) == 1 and len(non_null) != len(args):
             return {"anyOf": [_json_type(non_null[0]), {"type": "null"}]}
-    return {"type": {str: "string", int: "integer", bool: "boolean"}.get(annotation, "string")}
+    return {"type": {str: "string", int: "integer", float: "number", bool: "boolean"}.get(annotation, "string")}
 
 
 def _section_schema(cls: type, docs: dict[str, str], *, backend: str | None = None) -> dict[str, Any]:
@@ -333,6 +334,7 @@ def _section_schema(cls: type, docs: dict[str, str], *, backend: str | None = No
         field_schema["description"] = backend_docs.get(field_info.name, docs.get(field_info.name, f"See {cls.__name__}.{field_info.name}."))
         if field_info.name == "backend" and backend is not None:
             field_schema = {"const": backend, **field_schema}
+        field_schema.update(field_info.metadata.get("json_schema", {}))
         effective_default = getattr(instance, field_info.name)
         if effective_default is not None:
             field_schema["default"] = effective_default
