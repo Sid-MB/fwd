@@ -214,6 +214,9 @@ def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_w
     npm = fake_bin / "npm"
     npm.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     npm.chmod(0o755)
+    curl = fake_bin / "curl"
+    curl.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    curl.chmod(0o755)
     bun = fake_bin / "bun"
     bun.write_text(
         "#!/bin/sh\n"

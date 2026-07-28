@@ -68,6 +68,8 @@ def ensure_tools(endpoint: SSHEndpoint, requirements: tuple[ToolRequirement, ...
                     return True
                 if result.returncode == 0:
                     ui.warn(f"{installer.name} returned success but {requirement.command!r} still failed its version probe")
+                else:
+                    ui.warn(f"{requirement.name} installer {installer.name} failed (exit {result.returncode})")
         finally:
             resolving.pop()
         if fatal:

@@ -12,6 +12,33 @@ BUN_INSTALL_SCRIPT = """
 curl -fsSL https://bun.sh/install | BUN_INSTALL="$FWD_TOOL_PREFIX/bun" bash >/dev/null 2>&1
 """.strip()
 
+NVM_NODE_INSTALL_SCRIPT = """
+NVM_DIR="$FWD_TOOL_PREFIX/nvm"
+export NVM_DIR
+mkdir -p "$NVM_DIR"
+curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | env NVM_DIR="$NVM_DIR" PROFILE=/dev/null METHOD=script bash
+unset npm_config_prefix NPM_CONFIG_PREFIX
+set +u
+. "$NVM_DIR/nvm.sh"
+export NVM_NO_PROGRESS=1
+project_dir="${FWD_REMOTE_DIR:-$PWD}"
+if [ -f "$project_dir/.nvmrc" ]; then
+    cd "$project_dir"
+    nvm install
+    nvm use
+else
+    nvm install --lts
+    nvm use --lts
+fi
+nvm alias default "$(nvm current)" >/dev/null 2>&1
+set -u
+node_bin="$(dirname "$(command -v node)")"
+for command in node npm npx corepack; do
+    [ -x "$node_bin/$command" ] || continue
+    ln -sf "$node_bin/$command" "$FWD_TOOL_PREFIX/bin/$command"
+done
+""".strip()
+
 CURL = ToolRequirement(name="curl", command="curl", version_command=("curl", "--version"), hint="Install curl on the remote host.")
 TAR = ToolRequirement(name="tar", command="tar", version_command=("tar", "--version"), hint="Install tar on the remote host.")
 UNZIP = ToolRequirement(name="unzip", command="unzip", version_command=("unzip", "-v"), hint="Install unzip on the remote host.")
@@ -57,8 +84,9 @@ mise use -g node@lts >/dev/null 2>&1
 """.strip(),
             requirements=(MISE,),
         ),
+        ToolInstaller("nvm Node", NVM_NODE_INSTALL_SCRIPT, requirements=(CURL, TAR)),
     ),
-    hint="Install Node.js/npm on the remote host or make an existing version visible to non-interactive SSH commands.",
+    hint="Install Node.js/npm on the remote host, or provide curl and tar so fwd can install the project's .nvmrc version (or Node LTS) and npm persistently through nvm.",
 )
 
 PNPM = ToolRequirement(

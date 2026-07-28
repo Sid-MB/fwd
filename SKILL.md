@@ -91,6 +91,7 @@ The sync domain is the filtered project tree governed by `.gitignore`, `.fwdigno
 ### Toolchains and requirements
 
 A toolchain detects a project ecosystem such as Python, JavaScript, or Swift Package Manager and declares its remote setup steps and tool requirements. Requirements reuse compatible tools already present on the remote and install only missing dependencies, including prerequisite tools. Use an idempotent `.fwd/setup.sh` for project-specific setup that no built-in toolchain covers.
+JavaScript requirements can bootstrap npm through a persistent nvm installation when neither npm nor mise is available. The installer runs `nvm install` and `nvm use` against the synced project's `.nvmrc` when present, otherwise it selects the latest Node LTS; pnpm, Yarn, Claude Code, and Codex can reuse that npm prerequisite.
 
 
 ## Common operations
