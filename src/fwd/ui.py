@@ -217,15 +217,13 @@ def code(text: str) -> str:
     return f"{fence}{padding}{text}{padding}{fence}"
 
 
-def code_examples(examples: Sequence[tuple[str, str]], *, heading: str = "Useful commands:") -> str:
-    """Format labeled command examples for either direct printing or embedding in a post-process shell message."""
-    lines = [heading]
-    lines.extend(f"  {label}: {code(command_text)}" for label, command_text in examples)
-    return "\n".join(lines)
+def code_examples(examples: Sequence[str], *, heading: str = "Useful commands:") -> str:
+    """Format command hints as one compact line for direct printing or embedding in a post-process shell message."""
+    return f"{heading} {' | '.join(code(command_text) for command_text in examples)}"
 
 
-def show_code_examples(examples: Sequence[tuple[str, str]], *, heading: str = "Useful commands:") -> None:
-    """Print a compact command-reference block to stderr without contaminating structured stdout.
+def show_code_examples(examples: Sequence[str], *, heading: str = "Useful commands:") -> None:
+    """Print a compact single-line command reference to stderr without contaminating structured stdout.
 
     ``code_examples`` deliberately returns a plain string because the attach path embeds it in a local shell wrapper
     that runs only after SSH exits. In a terminal that string contains ANSI styling produced by :func:`code`, so it

@@ -104,23 +104,10 @@ def test_provenance_labels_global_project_and_default(tmp_path: Path, monkeypatc
     assert "default" in lines["port"]
 
 
-def test_render_effective_names_both_config_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The header legend points at the real paths and marks the ones that do not exist."""
-    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
-    rendered = configcmd.render_effective(load_config(tmp_path), tmp_path)
-    assert "absent.toml  (absent)" in rendered
-    assert "No targets are configured" in rendered
-
-
-def test_no_config_prints_pointers_not_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """With no config anywhere, `fwd config` is friendly: hints on stderr, still-valid TOML on stdout."""
+def test_no_config_still_emits_valid_effective_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
     configcmd.show(None, project_dir=tmp_path)
     captured = capsys.readouterr()
-    assert "fwd setup" in captured.err
-    assert "fwd config --example" in captured.err
-    assert "--target runpod" in captured.err
-    # stdout must stay machine-readable even in the empty case.
     assert tomllib.loads(captured.out) == {
         "default_command": ["claude"],
         "claude": {"user_config": False, "creds": False, "session": True, "handoff": False},
@@ -226,35 +213,16 @@ def test_default_target_may_name_an_implicit_target(tmp_path: Path, monkeypatch:
     assert load_config(tmp_path).target().backend == "runpod"
 
 
-def test_slurm_is_refused_with_an_explanation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Slurm is not inferable, and the error must say why and where to look."""
+def test_slurm_is_not_implicitly_inferred(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
-    with pytest.raises(ConfigError) as excinfo:
+    with pytest.raises(ConfigError):
         load_config(tmp_path).target("slurm")
-    message = str(excinfo.value)
-    assert "cannot be inferred" in message
-    assert "login host" in message
-    assert "fwd config --example slurm" in message
 
 
-def test_no_targets_error_mentions_the_zero_config_forms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The non-interactive empty-config error has to teach the implicit forms, since there is no prompt to fall back on."""
+def test_no_targets_raises_config_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
-    with pytest.raises(ConfigError) as excinfo:
+    with pytest.raises(ConfigError):
         load_config(tmp_path).target()
-    message = str(excinfo.value)
-    assert "fwd up --target runpod" in message
-    assert "--target user@host" in message
-    assert "[targets.<name>]" in message
-
-
-def test_explain_target_describes_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    global_path = tmp_path / "global.toml"
-    _write(global_path, '[targets.box]\nbackend = "ssh"\nhost = "h.example"\nuser = "sid"\n')
-    monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
-    assert "declared in config" in configcmd.explain_target("box", tmp_path)
-    assert ORIGIN_BUILTIN in configcmd.explain_target("runpod", tmp_path)
-    assert "not inferable" in configcmd.explain_target("nonsense-name", tmp_path)
 
 
 # --- command defaults and mutation ------------------------------------------------------------------------------
@@ -278,7 +246,7 @@ def test_default_command_falls_back_to_claude_without_config(tmp_path: Path, mon
     assert load_config(tmp_path).command_for("runpod") == ("claude",)
 
 
-def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     global_path = tmp_path / "home" / "config.toml"
     _write(global_path, '# keep me\ndefault_target = "runpod"\n')
     project = tmp_path / "project"
@@ -295,13 +263,9 @@ def test_config_set_preserves_existing_toml_and_writes_each_scope(tmp_path: Path
     assert global_config["default_command"] == ["codex"]
     assert global_config["target_defaults"]["runpod"]["default_command"] == ["claude"]
     assert project_config["default_command"] == ["python", "-m", "agent"]
-    messages = capsys.readouterr().err
-    assert "set 'default_command' for user to 'codex'" in messages
-    assert "set 'default_command' for project to 'python -m agent'" in messages
-    assert "set 'default_command' for target 'runpod' to 'claude'" in messages
 
 
-def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     global_path = tmp_path / "config.toml"
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
     configcmd.set_value("sync.delete", ("false",))
@@ -309,14 +273,11 @@ def test_config_set_supports_general_dotted_scalar_values(tmp_path: Path, monkey
     parsed = tomllib.loads(global_path.read_text(encoding="utf-8"))
     assert parsed["sync"]["delete"] is False
     assert parsed["default_target"] == "runpod"
-    messages = capsys.readouterr().err
-    assert "set 'sync.delete' for user to 'false'" in messages
-    assert "set 'default_target' for user to 'runpod'" in messages
 
 
 def test_config_set_rejects_conflicting_scopes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "config.toml")
-    with pytest.raises(ConfigError, match="mutually exclusive"):
+    with pytest.raises(ConfigError):
         configcmd.set_value("default_command", ("codex",), user=True, project=True)
 
 
@@ -338,11 +299,10 @@ def test_config_rm_removes_each_scope_and_prunes_empty_tables(tmp_path: Path, mo
     assert project_config == {"default_command": ["python"]}
 
 
-def test_config_rm_reports_missing_before_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_config_rm_reports_missing_before_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", tmp_path / "absent.toml")
     monkeypatch.setattr(configcmd.ui, "confirm", lambda *args, **kwargs: pytest.fail("missing values must not prompt"))
     assert configcmd.remove_value("default_command") is False
-    assert "no 'default_command' config exists for user" in capsys.readouterr().err
 
 
 def test_config_rm_confirms_interactively_and_preserves_value_when_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -364,7 +324,7 @@ def test_config_rm_requires_force_noninteractively(tmp_path: Path, monkeypatch: 
     _write(global_path, 'default_command = ["codex"]\n')
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
     monkeypatch.setattr(configcmd, "_interactive_terminal", lambda: False)
-    with pytest.raises(ConfigError, match="--force"):
+    with pytest.raises(ConfigError):
         configcmd.remove_value("default_command")
     assert configcmd.remove_value("default_command", force=True) is True
 

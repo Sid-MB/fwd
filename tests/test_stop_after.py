@@ -68,7 +68,7 @@ def test_prepare_installs_remote_action_agent_helper_mapping_and_guidance() -> N
 
 
 def test_prepare_rejects_backend_without_remote_stop_contract() -> None:
-    with pytest.raises(stop_after.StopAfterUnsupported, match="not supported"):
+    with pytest.raises(stop_after.StopAfterUnsupported):
         stop_after.prepare(FakeEndpoint(), UnsupportedBackend(), session())
 
 

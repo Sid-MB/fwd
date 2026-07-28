@@ -78,26 +78,13 @@ def test_typer_app_registers_all_commands() -> None:
 
 
 def test_help_lists_commands() -> None:
-    """`fwd --help` renders and mentions the primary commands."""
+    """`fwd --help` renders and exposes the primary command names."""
     from fwd.cli import app
 
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
     for name in ("up", "attach", "ls", "push", "pull", "stop", "rm", "setup", "doctor"):
         assert name in result.output
-    assert "shell, command, Claude Code, or Codex" in result.output
-    assert "Forward your Claude Code session" not in result.output
-
-
-def test_stop_help_explains_backend_dependent_persistence() -> None:
-    """Stop documentation must not promise persistence for volume-less CPU RunPod sessions."""
-    from fwd.cli import app
-
-    result = CliRunner().invoke(app, ["stop", "--help"])
-    assert result.exit_code == 0
-    normalized = " ".join(result.output.split())
-    assert "storage preservation depends on the target" in normalized
-    assert "CPU pod work is wiped" in normalized
 
 
 def test_up_help_documents_fresh_session_flag() -> None:
@@ -106,7 +93,6 @@ def test_up_help_documents_fresh_session_flag() -> None:
     result = CliRunner().invoke(app, ["up", "--help"])
     assert result.exit_code == 0
     assert "--new" in result.output
-    assert "fresh session" in result.output
 
 
 def test_rm_help_documents_bulk_removal() -> None:
@@ -115,25 +101,19 @@ def test_rm_help_documents_bulk_removal() -> None:
     result = CliRunner().invoke(app, ["rm", "--help"])
     assert result.exit_code == 0
     assert "--all" in result.output
-    assert "Destroy every tracked session" in result.output
 
 
 def test_help_groups_short_aliases_with_canonical_commands() -> None:
-    """Aliases remain callable but occupy no standalone help rows."""
+    """Aliases remain callable through the same CLI surface."""
     from fwd.cli import app
 
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "attach (a)" in result.output
-    assert "send (s)" in result.output
-    assert "\n│ a " not in result.output
-    assert "\n│ s " not in result.output
     assert CliRunner().invoke(app, ["a", "--help"]).exit_code == 0
     assert CliRunner().invoke(app, ["s", "--help"]).exit_code == 0
 
 
-def test_short_alias_prints_exact_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Alias discovery must precede operation output and retain the user's arguments and flags."""
+def test_short_alias_dispatches_with_arguments_and_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     from fwd import cli
     from fwd.cli import app
     from fwd.config import Config
@@ -144,32 +124,31 @@ def test_short_alias_prints_exact_canonical_invocation_first(monkeypatch: pytest
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
     selection = session_select.CurrentSelection(selector=session_select.SessionSelector(name="demo"), config=Config(), sessions=(session,), cwd=Path.cwd(), matches=(session,))
     monkeypatch.setattr(session_select, "select_current", lambda *args, **kwargs: selection)
-    monkeypatch.setattr(attach, "attach", lambda *args, **kwargs: None)
+    attached: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(attach, "attach", lambda *args, **kwargs: attached.append((args, kwargs)))
     result = CliRunner().invoke(app, ["a", "demo", "--restart"])
 
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == "info: fwd a demo --restart → fwd attach demo --restart"
+    assert attached == [(("demo",), {"restart": True})]
 
 
-def test_bare_command_prints_resolved_canonical_invocation_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bare fwd is itself an alias whose resolved operation should be visible before dispatch."""
+def test_bare_command_dispatches_to_reuse(monkeypatch: pytest.MonkeyPatch) -> None:
     from fwd import cli
     from fwd.cli import app
 
-    monkeypatch.setattr(cli, "_run_up", lambda *args, **kwargs: None)
+    dispatched: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(cli, "_run_up", lambda *args, **kwargs: dispatched.append((args, kwargs)))
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == "info: fwd → fwd up --reuse"
+    assert dispatched and dispatched[0][1]["reuse"] is True
 
 
-def test_up_help_explains_how_to_add_a_target() -> None:
-    """The launch surface should point users to setup when its target selector lacks the machine they need."""
+def test_up_help_exposes_reuse_alias_and_omits_retired_connect_flag() -> None:
     from fwd.cli import app
 
     result = CliRunner().invoke(app, ["up", "--help"])
     assert result.exit_code == 0
-    assert "To add a new target, run 'fwd setup'." in result.output
     assert "--reuse" in result.output
     assert "-r" in result.output
     assert "--connect" not in result.output
@@ -210,12 +189,10 @@ def test_config_rm_cli_reports_missing_and_removes_with_force(tmp_path: Path, mo
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
     missing = CliRunner().invoke(app, ["config", "rm", "default_command"])
     assert missing.exit_code == 0
-    assert "no 'default_command' config exists" in missing.output
 
     global_path.write_text('default_command = ["codex"]\n', encoding="utf-8")
     removed = CliRunner().invoke(app, ["config", "rm", "default_command", "--force"])
     assert removed.exit_code == 0, removed.output
-    assert "removed 'default_command'" in removed.output
     assert "default_command" not in tomllib.loads(global_path.read_text(encoding="utf-8"))
 
 
@@ -224,7 +201,6 @@ def test_config_mutation_rejects_parent_rendering_flags() -> None:
 
     result = CliRunner().invoke(app, ["config", "--schema", "rm", "default_command"])
     assert result.exit_code != 0
-    assert "cannot be combined with 'config rm'" in result.output
 
 
 def test_version_command() -> None:

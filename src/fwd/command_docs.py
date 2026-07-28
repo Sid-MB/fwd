@@ -2,12 +2,12 @@
 
 Command hints used to be assembled independently in lifecycle tables, post-attach output, and Typer help. That made
 small wording or syntax improvements easy to apply in one place while leaving another stale. This module keeps each
-command's public name, hint label, summary, and example construction together; operations decide *when* a hint is
-applicable, while this module decides *how* that command is documented and rendered.
+command's public name, summary, and example construction together; operations decide *when* a hint is applicable,
+while this module decides which commands are suggested.
 
-The functions return plain ``(label, command)`` records understood by :func:`fwd.ui.show_code_examples`. They never
-print, inspect configuration, or contact a backend, so callers can reuse them in interactive, Markdown, JSON-adjacent,
-and post-SSH contexts without side effects.
+The functions return command strings understood by :func:`fwd.ui.show_code_examples`. They never print, inspect
+configuration, or contact a backend, so callers can reuse them in interactive, Markdown, JSON-adjacent, and post-SSH
+contexts without side effects.
 """
 
 from __future__ import annotations
@@ -28,40 +28,36 @@ NEXT_STEPS_HEADING = "Next steps:"
 
 @dataclass(frozen=True, slots=True)
 class CommandDoc:
-    """One command's canonical CLI documentation shared by hints and ``--help``."""
+    """One command's canonical name and summary shared by hints and ``--help``."""
 
     name: str
-    hint_label: str
     summary: str
 
 
-UP = CommandDoc("up", "Default target and command", "Provision or reuse a target, synchronize the project, bootstrap its tools, and start a persistent session.")
-ATTACH = CommandDoc("attach", "Reattach", "Attach to the unambiguous existing session matching the supplied selectors.")
-SEND = CommandDoc("send", "Send command", "Start, follow, background, list, or cancel durable remote tasks.")
-LIST = CommandDoc("ls", "See all sessions", "List managed sessions with live backend status.")
-STOP = CommandDoc("stop", "Stop", "Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.")
-REMOVE = CommandDoc("rm", "Remove", "Destroy one session target, or every tracked target with --all, and forget their state.")
+UP = CommandDoc("up", "Provision or reuse a target, synchronize the project, bootstrap its tools, and start a persistent session.")
+ATTACH = CommandDoc("attach", "Attach to the unambiguous existing session matching the supplied selectors.")
+SEND = CommandDoc("send", "Start, follow, background, list, or cancel durable remote tasks.")
+LIST = CommandDoc("ls", "List managed sessions with live backend status.")
+STOP = CommandDoc("stop", "Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.")
+REMOVE = CommandDoc("rm", "Destroy one session target, or every tracked target with --all, and forget their state.")
 
 
-def _session_example(command: CommandDoc, session_name: str) -> tuple[str, str]:
+def _session_example(command: CommandDoc, session_name: str) -> str:
     """Build a positional session-command example using shell-safe quoting."""
-    return command.hint_label, shlex.join([ui.COMMAND_NAME, command.name, session_name])
+    return shlex.join([ui.COMMAND_NAME, command.name, session_name])
 
 
-def send_example(session_name: str) -> tuple[str, str]:
+def send_example(session_name: str) -> str:
     """Build a directly runnable durable-command example for one known session."""
-    return SEND.hint_label, shlex.join([ui.COMMAND_NAME, SEND.name, "--name", session_name, "--", "echo", "hello"])
+    return shlex.join([ui.COMMAND_NAME, SEND.name, "--name", session_name, "--", "echo", "hello"])
 
 
-def start_session_examples() -> tuple[tuple[str, str], ...]:
+def start_session_examples() -> tuple[str, ...]:
     """Return launch guidance for an empty session list without implying that a session can already be managed."""
-    return (
-        (UP.hint_label, ui.command(UP.name)),
-        ("Choose a target and agent", ui.command(f"{UP.name} runpod codex")),
-    )
+    return (ui.command(UP.name), ui.command(f"{UP.name} runpod codex"))
 
 
-def manage_session_examples(session_statuses: Sequence[tuple[SessionState, TargetStatus | str]]) -> tuple[tuple[str, str], ...]:
+def manage_session_examples(session_statuses: Sequence[tuple[SessionState, TargetStatus | str]]) -> tuple[str, ...]:
     """Return only management commands applicable to at least one displayed session.
 
     The caller supplies statuses it already queried for the table, preventing hint rendering from repeating provider
@@ -70,7 +66,7 @@ def manage_session_examples(session_statuses: Sequence[tuple[SessionState, Targe
     """
     if not session_statuses:
         return ()
-    examples: list[tuple[str, str]] = []
+    examples: list[str] = []
     attachable = next((session for session, status in session_statuses if status == TargetStatus.RUNNING), None)
     attachable = attachable or next((session for session, status in session_statuses if status == TargetStatus.PENDING), None)
     attachable = attachable or next((session for session, status in session_statuses if status != TargetStatus.GONE), None)
@@ -86,10 +82,10 @@ def manage_session_examples(session_statuses: Sequence[tuple[SessionState, Targe
     return tuple(examples)
 
 
-def post_attach_examples(session_name: str) -> tuple[tuple[str, str], ...]:
+def post_attach_examples(session_name: str) -> tuple[str, ...]:
     """Return commands useful immediately after detaching or exiting an attached session."""
     return (
         _session_example(ATTACH, session_name),
         _session_example(STOP, session_name),
-        (LIST.hint_label, ui.command(LIST.name)),
+        ui.command(LIST.name),
     )

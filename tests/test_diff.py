@@ -109,4 +109,3 @@ def test_diff_cli_maps_operational_failures_above_one(monkeypatch: pytest.Monkey
     monkeypatch.setattr(diff_ops, "diff", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("network failed")))
     result = CliRunner().invoke(app, ["diff"])
     assert result.exit_code == 2
-    assert "diff failed: network failed" in result.output

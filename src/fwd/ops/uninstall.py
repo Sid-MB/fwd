@@ -262,12 +262,9 @@ def uninstall(*, force: bool = False) -> int:
         ui.ok(f"removed {removed} local fwd artifact(s), including the coding-agent skill and temporary logs")
 
     advice = installation_advice()
-    examples = [
-        (f"Finish uninstalling with {advice.manager}", advice.uninstall),
-        ("Reinstall later", advice.reinstall),
-    ]
+    examples = [advice.uninstall, advice.reinstall]
     if advice.temporary:
-        examples.append(("Use once without installing", advice.temporary))
+        examples.append(advice.temporary)
     ui.show_code_examples(tuple(examples), heading="After this command exits:")
     ui.info(f"If you try fwd again, feedback and bug reports are welcome at {ISSUES_URL}")
     return 1 if failures else 0

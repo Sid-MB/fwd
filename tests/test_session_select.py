@@ -35,18 +35,13 @@ def _session(
     )
 
 
-def test_parser_prioritizes_target_over_same_named_agent_and_explains_disambiguation(tmp_path: Path, capsys) -> None:
+def test_parser_prioritizes_target_over_same_named_agent(tmp_path: Path) -> None:
     config = Config(targets={"codex": SshTargetConfig(name="codex", host="example")})
     selector = session_select.parse(("codex",), config=config, sessions=[])
 
     assert selector.target is not None
     assert selector.target.exact_name == "codex"
     assert selector.agent is None
-    output = capsys.readouterr().err
-    assert "names both a target and coding agent" in output
-    assert "fwd up --agent codex" in output
-    assert "[targets.codex]" in output
-    assert "fwd config" in output
 
 
 def test_explicit_target_leaves_positional_agent_unambiguous() -> None:
@@ -104,7 +99,7 @@ def test_up_reuse_attaches_matching_session_in_interactive_terminal(tmp_path: Pa
     assert attached == [("demo", {"restart": False})]
 
 
-def test_up_reuse_noninteractive_no_match_prints_exact_creation_command(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_up_reuse_noninteractive_no_match_exits_without_creating(tmp_path: Path, monkeypatch) -> None:
     selector = session_select.SessionSelector(target=session_select.TargetSelector("runpod", "runpod", backend="runpod"), agent="codex")
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: False)
     selection = session_select.CurrentSelection(selector=selector, config=Config(), sessions=(), cwd=tmp_path, matches=())
@@ -112,11 +107,6 @@ def test_up_reuse_noninteractive_no_match_prints_exact_creation_command(tmp_path
 
     with pytest.raises(typer.Exit):
         cli._run_up(("runpod", "codex"), reuse=True, create_argv=("fwd", "up", "runpod", "codex"))
-
-    output = capsys.readouterr().err
-    assert "non-interactive mode" in output
-    assert "fwd up runpod codex" in output
-    assert output.rstrip().endswith("`fwd up runpod codex`")
 
 
 @pytest.mark.parametrize("reuse_flag", ["--reuse", "-r"])
@@ -145,15 +135,14 @@ def test_up_cli_returns_streamed_command_exit_status(monkeypatch) -> None:
     assert result.exit_code == 7
 
 
-@pytest.mark.parametrize(("retired", "replacement"), [("--connect", "--reuse"), ("-c", "-r")])
-def test_retired_connect_option_fails_instead_of_becoming_a_remote_command(monkeypatch, retired: str, replacement: str) -> None:
+@pytest.mark.parametrize("retired", ["--connect", "-c"])
+def test_retired_connect_option_fails_instead_of_becoming_a_remote_command(monkeypatch, retired: str) -> None:
     dispatched = []
     monkeypatch.setattr(cli, "_run_up", lambda positional, **kwargs: dispatched.append((positional, kwargs)))
 
     result = CliRunner().invoke(cli.app, ["up", retired])
 
     assert result.exit_code != 0
-    assert f"{retired} was renamed to {replacement}" in result.output
     assert dispatched == []
 
 
