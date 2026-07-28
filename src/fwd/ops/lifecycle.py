@@ -224,7 +224,7 @@ def stop(name: str | None = None) -> None:
         raise KeyboardInterrupt
     target = getattr(backend, "target", None)
     if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu":
-        ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with {ui.command(f'attach {session.name}')!r}")
+        ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with {ui.command(f'attach {session.name}')!r}, delete forever with {ui.command(f'rm {session.name}')!r}")
     else:
         ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with {ui.command(f'attach {session.name}')!r}")
 
