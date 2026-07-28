@@ -103,6 +103,8 @@ EXAMPLE = ToolRequirement(
 
 Prerequisites belong to the specific installer that uses them, not unconditionally to the resulting tool. For example, Codex's npm installer declares `requirements=(NPM,)`, while its Bun installer declares `requirements=(BUN,)`. The resolver first reuses an existing Codex; otherwise it recursively resolves only the current installer path, skips that path if a prerequisite cannot be prepared, and continues to the next installer. Successfully resolved prerequisites are shared across every agent and toolchain requirement in the launch. Cycles fail before running an installer and show the complete executable chain.
 
+When every installer path for a required tool fails, the resolver's error must preserve the manual recovery path: `fwd attach --raw` creates a plain shell in the already-synced project without repeating tool resolution, dependency installation, project setup, or agent startup. This lets the user repair unusual host-specific prerequisites, exit the recovery shell so its temporary tmux session closes, and then rerun the normal launch. The flag only recovers a missing primary tmux session on an already-running target; it does not bypass restart authorization for stopped compute.
+
 Installer requirements:
 
 - use an already working remote command instead of replacing it;

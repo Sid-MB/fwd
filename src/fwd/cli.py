@@ -403,6 +403,7 @@ def _attach(
     agent: Annotated[str | None, typer.Option("--agent", help="Require a session running this registered coding agent.", autocompletion=complete_agent)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Require this exact session name.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
+    raw: Annotated[bool, typer.Option("--raw", help="If the primary tmux session is missing, start a plain recovery shell without rerunning launch preparation.")] = False,
 ) -> None:
     """Attach to the unambiguous session matching every supplied selector.
 
@@ -428,13 +429,17 @@ def _attach(
             f"Run {ui.command(f'attach {chosen.name}')!r} in a terminal."
         )
     ui.info(f"selectors matched session {chosen.name!r}; attaching")
-    attach_ops.attach(chosen.name, restart=restart)
+    if raw:
+        attach_ops.attach(chosen.name, restart=restart, raw=True)
+    else:
+        attach_ops.attach(chosen.name, restart=restart)
 
 
 ATTACH_HELP = f"""{command_docs.ATTACH.summary}
 
 Replaces this process with 'ssh -t', so the remote session owns the terminal outright. Detach with tmux's ctrl-b d;
-the session keeps running.
+the session keeps running. If launch preparation failed before tmux started, pass --raw to enter a plain recovery
+shell without rerunning tool or dependency installation.
 """
 
 # Registered from one callback so the tmux-style `a` alias and `attach` always accept identical arguments.

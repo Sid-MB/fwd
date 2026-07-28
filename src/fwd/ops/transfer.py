@@ -65,7 +65,7 @@ def push(name: str | None = None) -> None:
         else:
             ui.warn("transport does not support rsync; using tar-over-ssh (whole-tree transfer)")
             sync.enforce_upload_limit(local_cwd, cfg.sync, portable=True)
-            sync.tar_up(endpoint, local_cwd, session.remote_dir, cfg.sync)
+            sync.tar_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete)
     ui.ok(f"pushed to {session.name!r}")
 
 

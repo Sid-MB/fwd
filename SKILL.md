@@ -43,6 +43,10 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Launch and push reject filtered uploads above `sync.max_size_gb` (1 GB by default) before provisioning or transfer. If fwd refuses a deliberately large project, use the exact project-scoped `fwd config set` command in its error only after confirming the selected directory is intentional.
 - In non-interactive environments, use explicit flags. Never invoke a setup wizard or invent a missing target.
 - Missing `npx`, the optional `skills` CLI, or an unsuccessful skill refresh must not block normal fwd commands.
+- If launch preparation fails after the target is running and synced, hand the human `fwd attach SESSION --raw` to
+  open a plain recovery shell without rerunning tool or dependency installation. The human can repair the remote
+  environment, exit the recovery shell, and rerun the normal launch; `--raw` does not authorize restarting stopped
+  billable compute.
 
 ## Primitives
 
@@ -67,6 +71,8 @@ Use `fwd ls --json` to discover session names and live state. Existing-session c
 Every session has one primary persistent process started by `fwd up`. It may be a shell, the layered `default_command`, or a registered agent. An explicit arbitrary command—including a root shortcut such as `fwd runpod pytest -q`—selects or provisions the session, then uses the same durable task manager as `fwd send -- COMMAND`; it therefore appears in `fwd send --ls`. The primary pane remains a shell unless `--attach` explicitly runs the command there and enters tmux. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
 
 Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running.
+When preparation failed before the primary tmux session was created, `fwd attach SESSION --raw` creates a plain
+login-shell tmux in the synced project and attaches to it without repeating launch preparation.
 
 ### Send tasks
 
@@ -76,7 +82,7 @@ A send task is durable work started inside an already-running session with `fwd 
 
 ### Synchronization
 
-The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Launch and `fwd push` mirror local content to the remote project; `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side. Before any upload, `sync.max_size_gb` limits this tree to 1 GB by default. Normal measurement matches rsync's filters; tar fallback runs a second conservative check that also counts files hidden only by `.gitignore`.
+The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Launch and `fwd push` mirror local content to the remote project through rsync or tar fallback; stale synchronized files are deleted while excluded remote environments remain. Linked Git worktrees whose `.git` file points outside the project are not supported. `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side. Before any upload, `sync.max_size_gb` limits this tree to 1 GB by default. Normal measurement matches rsync's filters; tar fallback runs a second conservative check that also counts files hidden only by `.gitignore`.
 
 ### Toolchains and requirements
 

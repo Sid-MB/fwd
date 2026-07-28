@@ -176,7 +176,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd TARGET/BACKEND/AGENT [COMMAND...]` | Connect by positional selector, or run a managed command on that session | `fwd runpod yes` |
 | `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
 | `fwd up -r [selectors...]` | Reuse a match; attach without a command, or run a supplied command as a managed task | `fwd up -r work yes` |
-| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector | `fwd a work codex` |
+| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector; add `--raw` to recover from failed launch preparation | `fwd a work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
@@ -565,7 +565,8 @@ and user behind its advanced-options gate.
 
 Pods are reused by name across launches, restarted if stopped, and their IP/port are re-resolved on every attach
 (RunPod churns both across restarts). If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
-because that transport cannot run rsync — it warns, and pushes get slower.
+because that transport cannot run rsync — it warns, and pushes get slower. Tar pushes still mirror synchronized
+files: stale files are deleted while excluded remote environments and caches are preserved.
 
 ### Slurm — your university or lab cluster
 
@@ -630,7 +631,8 @@ max_size_gb = 1.0                             # reject unexpectedly broad upload
 `exclude` is **seeded** with sensible defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`, `.next`,
 `dist`, `build`, `.turbo`, the various caches, `.DS_Store`) and setting it *replaces* the list rather than adding to
 it — so a project that genuinely ships a checked-in `dist/` can shrink the list, not just grow it. `.git` is never
-excluded: the remote session needs history to diff, blame and commit.
+excluded: the remote session needs history to diff, blame and commit. Run `fwd` from a standalone checkout; linked
+Git worktrees whose `.git` file points outside the project directory are not currently supported.
 
 Before `fwd up` provisions anything, and before every `fwd push`, fwd measures the filtered local tree and refuses to
 upload more than `sync.max_size_gb` (1 GB by default). The error prints an exact project-scoped command such as
@@ -657,6 +659,12 @@ a second conservative check that counts files hidden only by `.gitignore`, which
   ```
 - **Attach never proxies your terminal.** `fwd` `exec`s into `ssh -t`, replacing itself, so resize, mouse reporting
   and ctrl-C behave exactly as a hand-typed ssh would.
+- **Failed launch preparation is recoverable from inside the target.** If tool or dependency preparation fails after
+  provisioning and sync but before the primary tmux session starts, run `fwd attach --raw` (or `fwd a --raw`). On a
+  running target this creates a plain login-shell tmux in the synced project without rerunning sync, tool resolution,
+  dependency installation, project setup, or agent startup. Install or repair what is missing, exit the recovery
+  shell so its temporary tmux session closes, then rerun the normal `fwd` launch. `--raw` does not bypass restart
+  confirmation for stopped billable compute.
 - **State lives in `~/.fwd/state.json`**, locked with `flock` and written atomically. If it is ever lost or corrupted,
   `fwd` degrades to an empty session list rather than failing — your pods and jobs still exist, and `fwd up` will find
   and reuse them by name.

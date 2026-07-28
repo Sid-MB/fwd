@@ -7,7 +7,7 @@ reality drifts underneath it constantly: pods get stopped from the RunPod consol
 limit, someone kills a tmux session by hand. So attach never trusts stored state — it re-resolves the endpoint through
 the backend (RunPod hands out a new IP on every restart) and branches on live ``status()``:
 
-- ``RUNNING``   → attach, stamping ``last_attached``.
+- ``RUNNING``   → attach, stamping ``last_attached``. If launch preparation failed before tmux was created, ``--raw`` starts a plain recovery shell in the synced project instead of rerunning preparation.
 - ``PENDING``   → attach anyway. On a busy cluster a queued allocation is normal and can last hours, and the tmux pane
   shows ``salloc``'s queue position, so attaching is genuinely useful rather than an error.
 - ``STOPPED``   → offer a full ``launch`` relaunch. A restarted pod has a wiped container disk, so only the complete
@@ -112,6 +112,15 @@ def _tmux_alive(endpoint: SSHEndpoint, tmux_session: str) -> bool:
         return True
 
 
+def _start_raw_shell(endpoint: SSHEndpoint, session: SessionState) -> None:
+    """Create the missing primary tmux session as a plain login shell without rerunning launch preparation.
+
+    This recovery path intentionally skips sync, tool resolution, dependency installation, project setup, and agent startup. It exists so a user can enter an already-running target after one of those launch stages failed, repair the remote environment manually, exit the recovery shell, and rerun the normal launch.
+    """
+    with ui.step("Starting raw recovery shell"):
+        remote.tmux_new(endpoint, session.tmux_session, session.remote_dir, launch_ops.REMOTE_SHELL_COMMAND)
+
+
 def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
     """Gate any action that starts billable compute, or abort with an actionable message.
 
@@ -141,13 +150,14 @@ def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
         raise typer.Exit(1)
 
 
-def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
+def attach(name: str | None = None, *, restart: bool = False, raw: bool = False) -> NoReturn:
     """Attach to an existing session's remote tmux, reconciling live status first.
 
     Args:
         name: Session name, target label, or backend name; ``None`` resolves the session registered for the current directory.
         restart: Authorize restarting stopped compute without prompting. Required for any restart in a
             non-interactive run, since the alternative is silently spending money.
+        raw: When the target is running but its primary tmux session is missing, create a plain recovery shell without rerunning sync, tool installation, dependency installation, project setup, or agent startup.
 
     Never returns: either execs into ssh, relaunches, or exits with a message.
     """
@@ -203,10 +213,12 @@ def attach(name: str | None = None, *, restart: bool = False) -> NoReturn:
 
     if not _tmux_alive(endpoint, session.tmux_session):
         ui.warn(f"remote tmux session {session.tmux_session!r} is not running")
-        # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline,
-        # so it goes through the same gate rather than inventing a second policy.
-        _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
-        _relaunch(session)
+        if raw:
+            _start_raw_shell(endpoint, session)
+        else:
+            # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline, so it goes through the same gate rather than inventing a second policy.
+            _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
+            _relaunch(session)
 
     session.touch_attached()
     launch_ops.store().upsert(session)

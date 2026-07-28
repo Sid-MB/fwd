@@ -72,7 +72,8 @@ def ensure_tools(endpoint: SSHEndpoint, requirements: tuple[ToolRequirement, ...
             resolving.pop()
         if fatal:
             hint = f" {requirement.hint}" if requirement.hint else ""
-            raise SSHError(f"required remote tool {requirement.name!r} ({requirement.command}) is unavailable after {len(requirement.installers)} installer path(s).{hint}")
+            recovery = f" To repair the running target manually, use {ui.command('attach --raw')!r}; install the missing tool, exit the recovery shell, then rerun the normal launch."
+            raise SSHError(f"required remote tool {requirement.name!r} ({requirement.command}) is unavailable after {len(requirement.installers)} installer path(s).{hint}{recovery}")
         return False
 
     for requirement in roots:

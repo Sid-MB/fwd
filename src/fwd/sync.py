@@ -195,7 +195,7 @@ def sync_up(
         delete: Remove remote files absent locally, making the copy an exact mirror.
     """
     if not endpoint.supports_rsync:
-        tar_up(endpoint, local_dir, remote_dir, sync_cfg)
+        tar_up(endpoint, local_dir, remote_dir, sync_cfg, delete=delete)
         return
 
     source = f"{str(Path(local_dir).expanduser()).rstrip('/')}/"
@@ -260,10 +260,62 @@ def _tar_excludes(sync_cfg: SyncConfig) -> list[str]:
     return [f"--exclude={pattern}" for pattern in sync_cfg.exclude]
 
 
-def tar_up(endpoint: SSHEndpoint, local_dir: str | Path, remote_dir: str, sync_cfg: SyncConfig) -> None:
-    """Upload by streaming a local tar into a remote ``tar -x``, for transports without rsync.
+def _combined_tar_excludes(sync_cfg: SyncConfig, source: Path) -> str:
+    """Return the exclusion file used to identify the remote paths owned by tar synchronization.
 
-    Filtering happens locally when building the archive, since the remote side only extracts.
+    Local tar already reads ``.fwdignore`` directly. Combining it with configured exclusions gives the remote
+    manifest pass the exact same selection policy, which is what lets deletion preserve environments and caches.
+    """
+    patterns = list(sync_cfg.exclude)
+    fwdignore = source / FWDIGNORE_NAME
+    if fwdignore.is_file():
+        patterns.extend(fwdignore.read_text(encoding="utf-8").splitlines())
+    return "".join(f"{pattern}\n" for pattern in patterns if pattern)
+
+
+def _tar_mirror_command(remote_dir: str, excludes: str) -> str:
+    """Build a remote tar extraction command with rsync-like stale-file deletion.
+
+    The upload first lands in a sibling staging directory. Sorted tar manifests identify old, non-excluded paths
+    absent from the incoming tree; files are removed and directories are removed only when empty, so an excluded
+    descendant prevents its parent from being deleted. Type changes are resolved before the staged tree is overlaid.
+    """
+    remote = shlex.quote(remote_dir.rstrip("/"))
+    exclude_text = shlex.quote(excludes)
+    return (
+        f"set -eu; remote={remote}; parent=$(dirname \"$remote\"); mkdir -p \"$remote\" \"$parent\"; "
+        f"stage=$(mktemp -d \"$parent/.fwd-upload.XXXXXX\"); old=$(mktemp \"$parent/.fwd-old.XXXXXX\"); "
+        f"new=$(mktemp \"$parent/.fwd-new.XXXXXX\"); old_raw=$(mktemp \"$parent/.fwd-old-raw.XXXXXX\"); "
+        f"new_raw=$(mktemp \"$parent/.fwd-new-raw.XXXXXX\"); excludes=$(mktemp \"$parent/.fwd-excludes.XXXXXX\"); "
+        "cleanup() { rm -rf -- \"$stage\"; rm -f -- \"$old\" \"$new\" \"$old_raw\" \"$new_raw\" \"$excludes\"; }; trap cleanup EXIT HUP INT TERM; "
+        f"printf %s {exclude_text} > \"$excludes\"; tar xzf - -v -C \"$stage\" > \"$new_raw\" 2>&1; "
+        "tar cf /dev/null -v --exclude-from=\"$excludes\" -C \"$remote\" . > \"$old_raw\" 2>&1; "
+        "sed 's/^[ax] //' \"$old_raw\" | LC_ALL=C sort > \"$old\"; sed 's/^[ax] //' \"$new_raw\" | LC_ALL=C sort > \"$new\"; "
+        "LC_ALL=C comm -23 \"$old\" \"$new\" | LC_ALL=C sort -r | while IFS= read -r entry; do "
+        "[ \"$entry\" = \"./\" ] && continue; relative=${entry#./}; "
+        "existing=\"$remote/$relative\"; if [ -d \"$existing\" ] && [ ! -L \"$existing\" ]; then rmdir -- \"$existing\" 2>/dev/null || true; else rm -f -- \"$existing\"; fi; "
+        "done; "
+        "while IFS= read -r entry; do [ \"$entry\" = \"./\" ] && continue; relative=${entry#./}; "
+        "incoming=\"$stage/$relative\"; existing=\"$remote/$relative\"; "
+        "if [ -d \"$incoming\" ] && [ ! -L \"$incoming\" ]; then "
+        "if { [ -e \"$existing\" ] || [ -L \"$existing\" ]; } && { [ ! -d \"$existing\" ] || [ -L \"$existing\" ]; }; then rm -f -- \"$existing\"; fi; "
+        "elif [ -d \"$existing\" ] && [ ! -L \"$existing\" ]; then rm -rf -- \"$existing\"; fi; "
+        "done < \"$new\"; cp -a \"$stage\"/. \"$remote\"/"
+    )
+
+
+def tar_up(
+    endpoint: SSHEndpoint,
+    local_dir: str | Path,
+    remote_dir: str,
+    sync_cfg: SyncConfig,
+    *,
+    delete: bool = True,
+) -> None:
+    """Upload by streaming a local tar into a remote project, for transports without rsync.
+
+    Filtering happens locally when building the archive. When deletion is enabled, remote manifests remove stale
+    synchronized paths while preserving content selected by ``sync.exclude`` and ``.fwdignore``.
     """
     source = Path(local_dir).expanduser()
     _ensure_remote_dir(endpoint, remote_dir)
@@ -272,7 +324,8 @@ def tar_up(endpoint: SSHEndpoint, local_dir: str | Path, remote_dir: str, sync_c
     if fwdignore.is_file():
         tar_excludes.append(f"--exclude-from={fwdignore}")
     tar_argv = ["tar", "czf", "-", *tar_excludes, "-C", str(source), "."]
-    ssh_argv = [*endpoint.ssh_argv(), f"tar xzf - -C {shlex.quote(remote_dir)}"]
+    remote_command = _tar_mirror_command(remote_dir, _combined_tar_excludes(sync_cfg, source)) if delete and sync_cfg.delete else f"tar xzf - -C {shlex.quote(remote_dir)}"
+    ssh_argv = [*endpoint.ssh_argv(), remote_command]
     _pipe(tar_argv, ssh_argv, what="tar push")
 
 

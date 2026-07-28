@@ -413,7 +413,7 @@ def _sync_project(endpoint: sshexec.SSHEndpoint, local_cwd: Path, remote_dir: st
     ui.warn("transport does not support rsync; falling back to tar-over-ssh (no delta transfer, slower pushes)")
     # Tar cannot reproduce per-directory .gitignore rules, so repeat the limit check against its broader selection.
     sync.enforce_upload_limit(local_cwd, cfg.sync, portable=True)
-    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync)
+    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete)
 
 
 def launch(
