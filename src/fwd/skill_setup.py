@@ -84,7 +84,7 @@ def _current_revision() -> str:
         digest.update(path.relative_to(package_dir).as_posix().encode())
         digest.update(path.read_bytes())
     payload_root = _payload_root()
-    payload_paths = [payload_root / "SKILL.md", *_payload_directory(payload_root, "agents").rglob("*"), *(payload_root / "references").rglob("*"), *(payload_root / "skills").rglob("*"), payload_root / ".codex-plugin" / "plugin.json"]
+    payload_paths = [payload_root / "SKILL.md", *_payload_directory(payload_root, "agents").rglob("*"), *(payload_root / "references").rglob("*")]
     for path in sorted((path for path in payload_paths if path.is_file()), key=lambda item: item.relative_to(payload_root).as_posix()):
         digest.update(path.relative_to(payload_root).as_posix().encode())
         digest.update(path.read_bytes())

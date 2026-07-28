@@ -29,11 +29,9 @@ packages = ["src/fwd"]
 "SKILL.md" = "fwd/SKILL.md"
 "agents" = "fwd/skill_agents"
 "references" = "fwd/references"
-".codex-plugin/plugin.json" = "fwd/.codex-plugin/plugin.json"
-"skills" = "fwd/skills"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/fwd", "tests", "README.md", "/SKILL.md", "/agents", "/references", "/skills", "/.codex-plugin"]
+include = ["src/fwd", "tests", "README.md", "/SKILL.md", "/agents", "/references"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

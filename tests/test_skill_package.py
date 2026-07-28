@@ -1,9 +1,7 @@
-"""Validate the distributable fwd skill, its Codex metadata, and its plugin package."""
+"""Validate the single distributable npx-skills payload and its Codex metadata."""
 
 from __future__ import annotations
 
-import json
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -27,7 +25,7 @@ def test_skill_frontmatter_has_required_fields() -> None:
 
 def test_skill_core_is_concise_and_links_every_reference() -> None:
     text = SKILL.read_text(encoding="utf-8")
-    assert len(text.splitlines()) < 120
+    assert len(text.splitlines()) < 140
     for name in ("targets-and-config.md", "commands-and-lifecycle.md", "agent-transfer.md"):
         assert f"references/{name}" in text
         assert (ROOT / "references" / name).is_file()
@@ -39,17 +37,8 @@ def test_openai_metadata_enables_implicit_invocation_and_is_synced() -> None:
     for key in ("display_name:", "short_description:", "default_prompt:"):
         assert key in metadata
     assert "allow_implicit_invocation: true" in metadata
-    assert (ROOT / "skills" / "fwd" / "agents" / "openai.yaml").read_text(encoding="utf-8") == metadata
 
 
-def test_plugin_manifest_packages_the_root_skill_with_matching_version() -> None:
-    manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert manifest["name"] == "fwd"
-    assert manifest["version"] == project["version"]
-    assert manifest["skills"] == "./skills/"
-    assert manifest["interface"]["displayName"]
-    assert manifest["interface"]["defaultPrompt"]
-    plugin_skill = (ROOT / "skills" / "fwd" / "SKILL.md").read_text(encoding="utf-8")
-    assert "../../SKILL.md" in plugin_skill
-    assert _frontmatter(ROOT / "skills" / "fwd" / "SKILL.md") == _frontmatter()
+def test_skill_has_one_canonical_npx_layout() -> None:
+    assert not (ROOT / ".codex-plugin").exists()
+    assert not (ROOT / "skills").exists()

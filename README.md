@@ -59,9 +59,9 @@ prompts.
 Invoke it explicitly as `/fwd natural-language instructions` in Claude Code, `$fwd natural-language instructions` in
 Codex, or select it from Codex's `/skills` menu. Matching natural-language requests can invoke it implicitly. The
 skill teaches agents the machine-readable, non-attaching CLI workflow and hands `fwd attach` back to you only when an
-interactive terminal is needed. The repository also includes a validated `.codex-plugin/plugin.json`, making the
-same skill package ready for Codex/OpenAI plugin catalogs. `npx skills add Sid-MB/fwd` remains an optional
-repository-only installation path for people who have not installed the Python package.
+interactive terminal is needed. `npx skills` is the only supported skill distribution mechanism: people who have not
+installed the Python package can install directly from the repository with
+`npx skills add Sid-MB/fwd --skill fwd -g -a codex -a claude-code`.
 
 ## Quickstart
 
