@@ -28,11 +28,13 @@ Treat the text following the skill name as work to perform remotely, not as lite
 
 For an explicitly requested shell command instead of coding-agent work, use `fwd send --name SESSION -- COMMAND...`. List or resume background tasks with `fwd send --ls --json` and `fwd send TASK_ID`; cancel only that task with `fwd send TASK_ID --stop`.
 
+When the user wants disposable compute to stop after work finishes, arm remote-owned shutdown with `fwd up --stop-after -- COMMAND...` for initial command work or `fwd send --name SESSION --stop-after agent "TASK"` for an agent turn. To stop after work that is already active, run `fwd send --name SESSION stopafter`. Confirm the lifecycle task in `fwd send --ls --json`; disarm it before shutdown begins with `fwd send --name SESSION cancel stopafter`. Never substitute a local delayed `fwd stop`: the local process may disconnect or shut down before it runs.
+
 ## Agent safety rules
 
 Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Prefer `--json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
-- Never run bare `fwd`, root-selector forms such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --reuse`, or `fwd up --attach` as a tool call because reuse/attach forms take over a human terminal. In non-interactive mode `--reuse` deliberately errors instead of provisioning.
+- Never run bare `fwd`, root-selector forms without an explicit arbitrary command such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --reuse`, or `fwd up --attach` as a tool call because reuse/attach forms take over a human terminal. A root form with an explicit command uses managed-task behavior on an existing match, but in non-interactive mode it still refuses to provision; prefer an explicit non-attaching `fwd up` invocation in agent workflows.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
@@ -67,7 +69,9 @@ Attaching connects the human terminal to this primary tmux session. Detaching le
 
 ### Send tasks
 
-A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. `--stop-after` adds a remotely owned lifecycle task after new work; `fwd send stopafter` queues it after all current work, and `fwd send cancel stopafter` disarms it. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
+A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Stream until completion by default; after two seconds Ctrl-C cancels the remote task and Ctrl-B backgrounds only the local viewer. Use `--detach` to background immediately, `fwd send TASK_ID` to reattach, `fwd send --ls --all --json` for task history, `fwd send cancel` for queued work, and `fwd send cancel all` for every active task.
+
+`--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Registered remote agents receive instructions for the literal `stopafter` helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
 
 ### Synchronization
 
@@ -94,7 +98,11 @@ fwd send stopafter                     # queue remote stop after all active task
 fwd send cancel stopafter              # cancel queued remote shutdown
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks
+fwd send --ls --all --json             # include completed, failed, and canceled task history
+fwd send cancel                        # cancel queued tasks
+fwd send cancel all                    # cancel every active task without stopping the session
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
+fwd send agent --stop "try another approach"  # interrupt the active turn and send a replacement
 fwd diff                               # show local/remote project differences
 fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
