@@ -242,15 +242,13 @@ def _matching_agent_tasks(session_name: str, agent_name: str, endpoint: SSHEndpo
     return [task for task in (_refresh(task, endpoint) for task in matches) if task.active]
 
 
-def _session_agent(session: SessionState, selector: str) -> agents.AgentSpec:
+def _session_agent(session: SessionState, selector: str) -> agents.Agent:
     """Resolve ``agent`` or an explicit agent name against the session's launched command."""
     launched = agents.resolve(launch_ops.initial_command_for(session))
     if launched is None:
         ui.die(f"session {session.name!r} is not running a registered coding agent; launch one with {ui.command('up codex')!r} or {ui.command('up claude')!r}")
     if selector != "agent" and selector != launched.name:
         ui.die(f"session {session.name!r} is running {launched.name}, not {selector}")
-    if launched.send_command is None:
-        ui.die(f"{launched.name} does not support messages through {ui.command('send')!r}")
     return launched
 
 

@@ -10,7 +10,9 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-from fwd import agents, cli, codex_state
+from fwd import agents, cli
+from fwd.agents import codex_state
+from fwd.agents.base import Agent
 from fwd.sshexec import SSHEndpoint
 from fwd.tooling.requirements import CLAUDE, CODEX
 
@@ -24,6 +26,7 @@ def test_agent_registry_only_resolves_exact_magic_commands() -> None:
     assert agents.resolve(()) is None
     assert agents.resolve(("claude",)).tools == (CLAUDE,)
     assert agents.resolve(("codex",)).tools == (CODEX,)
+    assert all(isinstance(agent, Agent) for agent in agents.AGENTS.values())
 
 
 @pytest.mark.parametrize("command", [("claude",), ("codex",)])

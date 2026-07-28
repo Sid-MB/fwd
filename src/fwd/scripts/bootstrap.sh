@@ -2,7 +2,7 @@
 # Establish fwd's persistent remote environment and tmux prerequisite.
 #
 # Language runtimes, package managers, and coding agents deliberately do not live here. Class-based toolchains and
-# AgentSpec return shared ToolRequirement objects to the Python resolver, which probes the remote PATH first and runs
+# Agent classes return shared ToolRequirement objects to the Python resolver, which probes the remote PATH first and runs
 # only the missing tools' user-space fallback installers. Keeping this script tool-agnostic prevents a Swift, Haskell,
 # shell, or arbitrary-command launch from downloading unrelated Python, JavaScript, Claude, or Codex tooling.
 

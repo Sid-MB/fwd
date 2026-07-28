@@ -36,13 +36,11 @@ import re
 import secrets
 import shlex
 import sys
-import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Sequence
 
-from fwd import agents, backends, claude_state, remote, sshexec, stop_after as stop_after_ops, sync, ui
+from fwd import agents, backends, remote, sshexec, stop_after as stop_after_ops, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
 from fwd.config import Config, ConfigError, TargetConfig, load_config
 from fwd.state import SessionState, StateStore, endpoint_to_dict
@@ -83,21 +81,12 @@ class _InterruptCleanup:
         else:
             ui.warn(f"startup canceled; no newly created resource was removed; {suffix}")
 
-# The prompt handed to claude when context arrives as a document rather than a transcript.
-HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
-
 # Exact startup tokens with fwd-specific semantics. Keeping this as a lookup boundary makes future magic commands
 # explicit instead of teaching the general arbitrary-command path to guess based on executable names.
 MAGIC_CLAUDE_COMMAND: tuple[str, ...] = ("claude",)
-MAGIC_CODEX_COMMAND: tuple[str, ...] = ("codex",)
 
 # A commandless `fwd up` still creates a useful persistent tmux session, so a later `fwd attach` opens a normal shell.
 REMOTE_SHELL_COMMAND = 'exec "${SHELL:-bash}" -l'
-
-# How long a generated HANDOFF.md stays reusable. Regenerating costs a full ``claude -p`` round trip (~65 s measured
-# in the live e2e), which a repair rerun of ``fwd up`` should not have to pay again.
-HANDOFF_MAX_AGE_SECONDS = 15 * 60
-
 
 def store() -> StateStore:
     """Return the session store.
@@ -274,19 +263,6 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: 
     endpoint.exec_interactive(remote.tmux_attach_command(tmux_session))
 
 
-def build_claude_command(*, resume_id: str | None, use_handoff: bool) -> str:
-    """Build the ``claude`` invocation tmux will run.
-
-    Three escalating levels of carried context, matching the plan's flags: resume a real transcript, start fresh but
-    point claude at a handoff document, or start clean.
-    """
-    if resume_id:
-        return f"claude --resume {shlex.quote(resume_id)}"
-    if use_handoff:
-        return f"claude {shlex.quote(HANDOFF_PROMPT)}"
-    return "claude"
-
-
 def build_tmux_command(
     backend: Provisioner,
     endpoint: sshexec.SSHEndpoint,
@@ -347,18 +323,6 @@ def track_job_id(backend: Provisioner, endpoint: sshexec.SSHEndpoint, session_na
     return {"job_id": job_id}
 
 
-def claude_command_for(session: SessionState) -> str:
-    """Rebuild the ``claude`` invocation for an existing session from its recorded launch flags.
-
-    Used by relaunch paths that must not redo the Claude state transfer: the transcript is already installed remotely
-    and ``HANDOFF.md`` is already in the synced tree, so a restart only needs to point claude at them again.
-    """
-    return build_claude_command(
-        resume_id=session.flags.get("resume_id"),
-        use_handoff=bool(session.flags.get("handoff")) and not session.flags.get("resume_id"),
-    )
-
-
 def initial_command_for(session: SessionState) -> tuple[str, ...]:
     """Return the startup argv recorded for a session, treating older state files as Claude sessions."""
     recorded = session.flags.get("initial_command")
@@ -391,42 +355,10 @@ def startup_command_for(session: SessionState) -> str:
     if session.flags.get("command_via_send"):
         return REMOTE_SHELL_COMMAND
     initial = initial_command_for(session)
-    if initial == MAGIC_CLAUDE_COMMAND:
-        return claude_command_for(session)
+    agent = agents.resolve(initial)
+    if agent is not None:
+        return agent.restart_command(session.flags)
     return build_standard_startup_command(initial)
-
-
-def _resolve_claude_flags(
-    cfg: Config,
-    *,
-    session: bool,
-    handoff: bool,
-    user_config: bool,
-    creds: bool,
-) -> dict[str, bool]:
-    """Merge command-line Claude flags with their config defaults.
-
-    ``session`` and ``handoff`` are alternatives rather than additives: transferring the real transcript already
-    carries the context a handoff document would only summarize. Since the S1 spike proved transcript relocation
-    works, ``session`` is the default and ``--handoff`` is the explicit opt-out — passing it forces handoff mode and
-    suppresses the transfer entirely, which is what a user wants when the conversation is long and they only need the
-    conclusions. ``--session`` re-enables the transfer when config has turned it off.
-
-    The runtime fallback chain (session → handoff → plain claude) is applied later in :func:`launch`, because it can
-    only be resolved once the export and import have actually been attempted.
-    """
-    if handoff:
-        want_session, want_handoff = False, True
-    elif session:
-        want_session, want_handoff = True, cfg.claude.handoff
-    else:
-        want_session, want_handoff = cfg.claude.session, cfg.claude.handoff
-    return {
-        "session": want_session,
-        "handoff": want_handoff,
-        "user_config": user_config or cfg.claude.user_config,
-        "creds": creds or cfg.claude.creds,
-    }
 
 
 def _resolve_target(cfg: Config, requested: str | None, existing: SessionState | None) -> TargetConfig:
@@ -471,27 +403,6 @@ def _resolve_target_or_setup(cfg: Config, requested: str | None, existing: Sessi
             ui.die(str(retry_exc))
 
 
-def _fresh_handoff(local_cwd: Path) -> Path | None:
-    """Return an existing ``HANDOFF.md`` if it is recent enough to reuse, else ``None``.
-
-    Generating a handoff shells out to ``claude -p``, which the live e2e measured at **64 seconds** — by far the most
-    expensive stage of a launch. Since ``fwd up`` doubles as the repair command, a user fixing a failed launch would
-    otherwise pay that minute again on every retry, to regenerate a summary of a conversation that has not changed.
-
-    Fifteen minutes is chosen to cover the realistic repair loop (retry, tweak config, retry again) while still
-    regenerating for a genuinely new session later in the day. Deleting the file forces regeneration, which is the
-    obvious escape hatch and is mentioned in the message the caller prints.
-    """
-    handoff = local_cwd / "HANDOFF.md"
-    if not handoff.is_file():
-        return None
-    try:
-        age = time.time() - handoff.stat().st_mtime
-    except OSError:
-        return None
-    return handoff if 0 <= age < HANDOFF_MAX_AGE_SECONDS else None
-
-
 def _sync_project(endpoint: sshexec.SSHEndpoint, local_cwd: Path, remote_dir: str, cfg: Config) -> None:
     """Mirror the project up, choosing rsync or the tar fallback based on what the transport supports."""
     if endpoint.supports_rsync:
@@ -501,41 +412,6 @@ def _sync_project(endpoint: sshexec.SSHEndpoint, local_cwd: Path, remote_dir: st
     # the user is about to wonder why every push is slow.
     ui.warn("transport does not support rsync; falling back to tar-over-ssh (no delta transfer, slower pushes)")
     sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync)
-
-
-def _transfer_claude_state(
-    endpoint: sshexec.SSHEndpoint,
-    remote_dir: str,
-    flags: dict[str, bool],
-    bundle: Path | None,
-) -> str | None:
-    """Run the opt-in Claude state steps and return a session id to resume, if any.
-
-    Each step is independently failure-tolerant: a session that starts without your skills directory is inconvenient,
-    but a launch that aborts three minutes in over one optional upload is worse. The transcript import is the step
-    that most often fails (foreign-session validation tightened in claude >= 2.1.9), and the caller downgrades that
-    to a warning and falls back to a handoff or a clean session.
-    """
-    if flags["user_config"]:
-        with ui.step("Uploading Claude user config"):
-            claude_state.upload_user_config(endpoint)
-
-    if flags["creds"]:
-        creds_json: str | None = None
-        with ui.step("Copying Claude credentials"):
-            creds_json = claude_state.read_keychain_creds()
-            if creds_json:
-                claude_state.upload_creds(endpoint, creds_json)
-        if creds_json:
-            ui.warn("a live Claude token now exists on the remote machine at ~/.claude/.credentials.json (mode 600)")
-        else:
-            ui.warn("no local Claude credentials found; you will need to log in inside the remote session")
-
-    if bundle is None:
-        return None
-    with ui.step("Importing Claude session transcript"):
-        remote_home = endpoint.run('printf %s "$HOME"').stdout.strip() or f"/home/{endpoint.user}"
-        return claude_state.import_session_bundle(endpoint, bundle, remote_dir, remote_home)
 
 
 def launch(
@@ -645,15 +521,20 @@ def _launch(
     if initial_command is None:
         initial_command = cfg.command_for(target_cfg.name)
     agent = agents.resolve(initial_command)
-    is_claude = agent is not None and agent.name == "claude"
-    if not is_claude and any((session, handoff, user_config, creds)):
-        ui.die(f"--session, --handoff, --user-config, and --creds are only valid with {ui.command('up claude')!r}")
-    flags = _resolve_claude_flags(cfg, session=session, handoff=handoff, user_config=user_config, creds=creds) if is_claude else {
+    agent_options = agents.AgentLaunchOptions(session=session, handoff=handoff, user_config=user_config, creds=creds)
+    flags: dict[str, Any] = {
         "session": False,
         "handoff": False,
         "user_config": False,
         "creds": False,
     }
+    if agent is not None:
+        try:
+            flags.update(agent.launch_flags(cfg, agent_options))
+        except ValueError as exc:
+            ui.die(str(exc))
+    elif agent_options.any():
+        ui.die(f"--session, --handoff, --user-config, and --creds require a compatible coding agent such as {ui.command('up claude')!r}")
     flags["initial_command"] = list(initial_command)
     flags["command_via_send"] = run_command_as_task
 
@@ -693,27 +574,9 @@ def _launch(
         # Multiplexing is an optimization; a launch without it is merely slower.
         ui.warn(f"ssh multiplexing unavailable, continuing without it ({exc})")
 
-    # 3. Magic-Claude local prep, before the sync. General commands skip this entire concern. HANDOFF.md must be inside
-    # the tree that gets mirrored, and the transcript bundle is cheapest to export while touching local disk.
-    bundle: Path | None = None
-    if flags["session"]:
-        with ui.step("Exporting Claude session transcript"):
-            bundle = claude_state.export_session_bundle(local_cwd, Path(tempfile.mkdtemp(prefix="fwd-session-")))
-        if bundle is None:
-            # First rung of the fallback chain. The export already warned about the specific reason (no transcript
-            # for this directory, usually), so only the consequence is reported here.
-            flags["session"] = False
-            if flags["handoff"]:
-                ui.info("falling back to a handoff document")
-    if flags["handoff"]:
-        existing_handoff = _fresh_handoff(local_cwd)
-        if existing_handoff is not None:
-            age = (time.time() - existing_handoff.stat().st_mtime) / 60
-            ui.info(f"reusing HANDOFF.md from {age:.0f} min ago (delete it to force regeneration)")
-        else:
-            with ui.step("Generating HANDOFF.md"):
-                # Never returns None and never raises: a CLI failure yields a TODO-marked template instead.
-                claude_state.make_handoff(local_cwd)
+    # 3. Agent-local prep happens before sync because implementations may create project files such as HANDOFF.md.
+    # The result is deliberately opaque and comes back to the same agent after bootstrap for any remote import.
+    agent_local_state = agent.prepare_local(local_cwd, flags) if agent is not None else None
 
     # 4. Files up.
     with ui.step(f"Syncing {local_cwd.name} to {remote_dir}"):
@@ -741,24 +604,16 @@ def _launch(
     else:
         ui.info("no supported project manifests detected; skipping dependency install")
 
-    # 7. Optional Claude state, then the persistent shell/command itself.
-    resume_id = _transfer_claude_state(endpoint, remote_dir, flags, bundle) if is_claude else None
-    if agent is not None and agent.sync_settings is not None:
-        with ui.step(f"Uploading {agent.name.title()} settings and skills"):
-            agent.sync_settings(endpoint)
-    if is_claude and flags["session"] and not resume_id:
-        # Second rung: the import failed remotely and already warned why. HANDOFF.md is only available if it was
-        # generated pre-sync, so if handoff was off this degrades to a clean session rather than silently pretending.
-        if flags["handoff"]:
-            ui.warn("could not install the transcript remotely; the session will start from HANDOFF.md instead")
-        else:
-            ui.warn(f"could not install the transcript remotely; starting a fresh session (try {ui.command('up --handoff')!r})")
+    # 7. Let the selected agent install settings/state, then ask it for the persistent command. The orchestration has
+    # no name-specific branches: new agents implement the same hooks and register themselves in fwd.agents.
+    if agent is not None:
+        flags.update(agent.prepare_remote(endpoint, remote_dir, flags, agent_local_state))
 
     flags["tool_prefix"] = tool_prefix
     if run_command_as_task:
         startup_cmd = REMOTE_SHELL_COMMAND
-    elif is_claude:
-        startup_cmd = build_claude_command(resume_id=resume_id, use_handoff=flags["handoff"] and not resume_id)
+    elif agent is not None:
+        startup_cmd = agent.startup_command(flags)
     else:
         startup_cmd = build_standard_startup_command(initial_command)
     if agent is not None:
@@ -780,8 +635,6 @@ def _launch(
             ui.warn(str(exc))
         except Exception as exc:
             ui.warn(f"could not install the remote stopafter helper for {agent.name}: {exc}")
-    # Recorded so a later relaunch in a fresh process can rebuild the same command without redoing the transfer.
-    flags["resume_id"] = resume_id
     flags["gpu"] = gpu
     tmux_name = tmux_session_name(session_name)
     tmux_was_running = remote.tmux_exists(endpoint, tmux_name)

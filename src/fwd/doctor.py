@@ -24,7 +24,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from fwd import claude_state, ui
+from fwd import ui
+from fwd.agents import claude_state
 from fwd.backends import make_backend
 from fwd.backends.base import CheckResult
 from fwd.config import Config, ConfigError, TargetConfig, load_config

@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from fwd import claude_state
-from fwd.claude_state import (
+from fwd.agents import claude_state
+from fwd.agents.claude_state import (
     CONFIG_EXCLUDE,
     build_config_bundle,
     encode_project_path,

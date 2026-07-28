@@ -71,4 +71,3 @@ def upload_user_config(endpoint: SSHEndpoint) -> None:
             ui.warn(f"Codex config upload failed ({exc}); the remote will use its own config.")
             return
     ui.ok(f"Uploaded {count} Codex config/skill file(s); authentication was not copied.")
-

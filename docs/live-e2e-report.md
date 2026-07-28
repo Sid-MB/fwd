@@ -82,7 +82,7 @@ Welcome to Claude Code v2.1.220
 That is the expected unauthenticated first-run state. No authentication was attempted.
 
 **HANDOFF:** `claude -p` actually succeeded locally, so a *real* HANDOFF.md was generated (22 lines, project-specific)
-and synced. The template fallback was verified separately by calling `claude_state.make_handoff()` with `claude` off
+and synced. The template fallback was verified separately by calling `agents.claude_state.make_handoff()` with `claude` off
 PATH: it warns `HANDOFF.md generation fell back to a template ([Errno 2] ... 'claude')` and writes the TODO-marked
 template. Both branches work.
 

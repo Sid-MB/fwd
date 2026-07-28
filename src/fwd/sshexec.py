@@ -100,7 +100,7 @@ class SSHError(RuntimeError):
 class SSHEndpoint:
     """Everything needed to reach one remote machine, and nothing about *why* we are reaching it.
 
-    Backends produce these; ``sync``/``remote``/``claude_state``/``ops`` consume them. The dataclass is serialized
+    Backends produce these; ``sync``/``remote``/``agents``/``ops`` consume them. The dataclass is serialized
     verbatim into ``~/.fwd/state.json`` (see :func:`fwd.state.endpoint_to_dict`) so attach can reconnect in a later
     process without re-provisioning. Fields must stay JSON-primitive for that reason.
 

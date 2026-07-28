@@ -30,6 +30,13 @@ def _payload_root() -> Path:
     return package_dir if (package_dir / "SKILL.md").is_file() else package_dir.parents[1]
 
 
+def _payload_directory(payload_root: Path, name: str) -> Path:
+    """Resolve one canonical skill directory in a repository checkout or its collision-free wheel location."""
+    if name == "agents" and (payload_root / "skill_agents").is_dir():
+        return payload_root / "skill_agents"
+    return payload_root / name
+
+
 def _materialize_skill_source() -> Path:
     """Copy only the bundled skill payload into a stable local source directory.
 
@@ -43,7 +50,7 @@ def _materialize_skill_source() -> Path:
     target.mkdir(parents=True, exist_ok=True)
     shutil.copy2(payload_root / "SKILL.md", target / "SKILL.md")
     for directory in ("references", "agents"):
-        source = payload_root / directory
+        source = _payload_directory(payload_root, directory)
         if source.is_dir():
             shutil.copytree(source, target / directory)
     return LOCAL_SKILL_SOURCE
@@ -77,7 +84,7 @@ def _current_revision() -> str:
         digest.update(path.relative_to(package_dir).as_posix().encode())
         digest.update(path.read_bytes())
     payload_root = _payload_root()
-    payload_paths = [payload_root / "SKILL.md", *(payload_root / "agents").rglob("*"), *(payload_root / "references").rglob("*"), *(payload_root / "skills").rglob("*"), payload_root / ".codex-plugin" / "plugin.json"]
+    payload_paths = [payload_root / "SKILL.md", *_payload_directory(payload_root, "agents").rglob("*"), *(payload_root / "references").rglob("*"), *(payload_root / "skills").rglob("*"), payload_root / ".codex-plugin" / "plugin.json"]
     for path in sorted((path for path in payload_paths if path.is_file()), key=lambda item: item.relative_to(payload_root).as_posix()):
         digest.update(path.relative_to(payload_root).as_posix().encode())
         digest.update(path.read_bytes())

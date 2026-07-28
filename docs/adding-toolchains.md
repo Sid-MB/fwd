@@ -134,17 +134,19 @@ The registry is explicit by design. Automatic module discovery and packaging ent
 
 ## Reuse the same machinery for agents
 
-An `AgentSpec` declares requirements exactly like a toolchain:
+Coding agents subclass `fwd.agents.base.Agent` and declare requirements exactly like a toolchain:
 
 ```python
-AgentSpec(
-    name="codex",
-    command=("codex",),
-    tools=(CODEX,),
-)
+class ExampleAgent(Agent):
+    name = "example"
+    command = ("example",)
+    tools = (EXAMPLE,)
 ```
 
-Agent setup must not add installer branches to `bootstrap.sh` or `ops/launch.py`. Put reusable installation policy in `tooling/requirements.py`, and let the resolver merge it with detected project requirements.
+The class also owns local/remote state preparation, startup construction, and send behavior. See
+[`src/fwd/agents/README.md`](../src/fwd/agents/README.md) for the complete extension contract. Agent setup must not add
+installer or name-specific branches to `bootstrap.sh` or `ops/launch.py`. Put reusable installation policy in
+`tooling/requirements.py`, and let the resolver merge it with detected project requirements.
 
 ## Preserve the project escape hatch
 

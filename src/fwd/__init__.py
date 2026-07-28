@@ -5,7 +5,8 @@ The package is layered deliberately so that each layer can be developed and test
 - ``sshexec``      : the only place that shells out to ``ssh``; everything remote goes through an ``SSHEndpoint``.
 - ``config``/``state`` : pure data layers (TOML config, ``~/.fwd/state.json``) with no side effects beyond file IO.
 - ``backends/*``   : provisioning strategies behind the ``Provisioner`` protocol; they return a ``TargetInfo`` and know nothing about Claude.
-- ``sync``/``remote``/``claude_state`` : mechanical steps of a launch (files up, tooling up, Claude state up).
+- ``sync``/``remote`` : mechanical project and remote-environment setup.
+- ``agents/*``     : class-based coding-agent integrations and their state-transfer helpers.
 - ``ops/*``        : orchestration of the above into user-facing operations.
 - ``cli``          : thin Typer surface that only parses flags and delegates to ``ops``.
 """

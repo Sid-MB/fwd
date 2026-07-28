@@ -28,7 +28,9 @@ from typing import Any
 import pytest
 import typer
 
-from fwd import claude_state, codex_state, remote, sshexec, sync, ui
+from fwd import remote, sshexec, sync, ui
+from fwd.agents import claude as claude_agent
+from fwd.agents import claude_state, codex_state
 from fwd.backends.base import TargetInfo, TargetStatus
 from fwd.config import Config, RunpodTargetConfig, SshTargetConfig, SyncConfig
 from fwd.ops import attach as attach_ops
@@ -185,6 +187,7 @@ def stub_world(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(claude_state, "make_handoff", record("make_handoff", Path("HANDOFF.md")))
     monkeypatch.setattr(claude_state, "export_session_bundle", record("export_bundle", Path("/tmp/bundle")))
     monkeypatch.setattr(claude_state, "import_session_bundle", record("import_bundle", "sess-123"))
+    monkeypatch.setattr(codex_state, "upload_user_config", record("upload_codex_config"))
     # exec_attach would replace the process; record it and stop the pipeline the way the real exec would.
     monkeypatch.setattr(launch_ops, "exec_attach", record("exec_attach", None))
     return captured
@@ -233,12 +236,12 @@ def test_tmux_session_name_is_namespaced() -> None:
 
 
 def test_build_claude_command_variants() -> None:
-    assert launch_ops.build_claude_command(resume_id="s-1", use_handoff=False) == "claude --resume s-1"
-    assert launch_ops.build_claude_command(resume_id=None, use_handoff=False) == "claude"
-    handoff = launch_ops.build_claude_command(resume_id=None, use_handoff=True)
-    assert handoff.startswith("claude ") and launch_ops.HANDOFF_PROMPT in handoff
+    assert claude_agent.build_command(resume_id="s-1", use_handoff=False) == "claude --resume s-1"
+    assert claude_agent.build_command(resume_id=None, use_handoff=False) == "claude"
+    handoff = claude_agent.build_command(resume_id=None, use_handoff=True)
+    assert handoff.startswith("claude ") and claude_agent.HANDOFF_PROMPT in handoff
     # A resume id always wins: a transcript already carries the context a handoff would summarize.
-    assert launch_ops.build_claude_command(resume_id="s-1", use_handoff=True) == "claude --resume s-1"
+    assert claude_agent.build_command(resume_id="s-1", use_handoff=True) == "claude --resume s-1"
 
 
 def test_build_tmux_command_default_sources_env_and_cds(calls: list[str]) -> None:
@@ -418,7 +421,7 @@ def test_launch_handoff_flag_forces_handoff_over_session(project, state_store, c
     launch_ops.launch(handoff=True, attach=False)
     assert "export_bundle" not in calls
     assert "import_bundle" not in calls
-    assert launch_ops.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
+    assert claude_agent.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
 
 
 def test_launch_reuses_a_fresh_handoff(project, state_store, config, fake_backend, stub_world, calls) -> None:
@@ -427,14 +430,14 @@ def test_launch_reuses_a_fresh_handoff(project, state_store, config, fake_backen
     launch_ops.launch(handoff=True, attach=False)
     assert "make_handoff" not in calls
     # The session still points at the document; only the regeneration was skipped.
-    assert launch_ops.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
+    assert claude_agent.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
 
 
 def test_launch_regenerates_a_stale_handoff(project, state_store, config, fake_backend, stub_world, calls) -> None:
     """Past the freshness window the conversation has probably moved on, so the summary is rebuilt."""
     handoff = project / "HANDOFF.md"
     handoff.write_text("old handoff", encoding="utf-8")
-    stale = time.time() - launch_ops.HANDOFF_MAX_AGE_SECONDS - 60
+    stale = time.time() - claude_agent.HANDOFF_MAX_AGE_SECONDS - 60
     os.utime(handoff, (stale, stale))
     launch_ops.launch(handoff=True, attach=False)
     assert "make_handoff" in calls
@@ -442,13 +445,13 @@ def test_launch_regenerates_a_stale_handoff(project, state_store, config, fake_b
 
 def test_fresh_handoff_helper_boundaries(tmp_path: Path) -> None:
     """Directly pin the freshness predicate, since the launch tests can only observe it indirectly."""
-    assert launch_ops._fresh_handoff(tmp_path) is None
+    assert claude_agent.fresh_handoff(tmp_path) is None
     handoff = tmp_path / "HANDOFF.md"
     handoff.write_text("x", encoding="utf-8")
-    assert launch_ops._fresh_handoff(tmp_path) == handoff
-    stale = time.time() - launch_ops.HANDOFF_MAX_AGE_SECONDS - 1
+    assert claude_agent.fresh_handoff(tmp_path) == handoff
+    stale = time.time() - claude_agent.HANDOFF_MAX_AGE_SECONDS - 1
     os.utime(handoff, (stale, stale))
-    assert launch_ops._fresh_handoff(tmp_path) is None
+    assert claude_agent.fresh_handoff(tmp_path) is None
 
 
 def test_launch_falls_back_to_handoff_when_export_returns_none(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
@@ -459,7 +462,7 @@ def test_launch_falls_back_to_handoff_when_export_returns_none(project, state_st
     launch_ops.launch(attach=False)
     assert "make_handoff" in calls
     assert "import_bundle" not in calls
-    assert launch_ops.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
+    assert claude_agent.HANDOFF_PROMPT in stub_world["tmux_new"][0][3]
 
 
 def test_launch_falls_back_to_plain_claude_when_export_returns_none(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:

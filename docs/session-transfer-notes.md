@@ -71,7 +71,7 @@ Source transcript: a small 15-line scratch session (`2d8e95ba-…`) whose cwd wa
 
 ## 4. Dry run of the shipped importer
 
-The remote-side installer (`claude_state._IMPORT_SCRIPT`) was exercised locally under `bash` against a fake `$HOME`,
+The remote-side installer (`agents/claude_state.py::_IMPORT_SCRIPT`) was exercised locally under `bash` against a fake `$HOME`,
 using a bundle produced by `export_session_bundle`: cwd `…/localproj` → `/workspace/proj`, home `/Users/sid` → the
 fake home. Exit 0, transcript landed at `<fakehome>/.claude/projects/-workspace-proj/sid-e2e.jsonl`, and both passes
 applied — the line's `cwd` became `/workspace/proj` and the embedded `~/.claude/CLAUDE.md` reference re-pointed at the
@@ -85,7 +85,7 @@ fake home. The only untested link in the chain is the ssh hop itself, which is t
 2. **Version skew.** The remote installs the current claude; a transcript written by a much older/newer CLI may hit
    schema drift. The bundle records the local `claude --version` in `meta.json` for diagnosis.
 3. **Nothing here is a documented contract** — it is reverse-engineered from 2.1.220 and can change without notice.
-   Hence: every failure path in `claude_state` warns and returns `None`, and the launch continues regardless.
+   Hence: every failure path in `agents/claude_state.py` warns and returns `None`, and the launch continues regardless.
 
    Because those failure paths are all soft, `--session` ships **enabled by default** (`ClaudeConfig.session = True`)
    rather than as an opt-in — the verdict above says relocation works, and when it does not the user lands on the
