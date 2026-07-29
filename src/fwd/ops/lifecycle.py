@@ -18,6 +18,7 @@ storage; ``remove`` is not reversible, so it confirms and names exactly what wil
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,6 +35,9 @@ from fwd.state import SessionState
 # Rendered when a backend cannot be reached or has not implemented status yet. Distinct from every real status so the
 # table never implies knowledge fwd does not have.
 UNKNOWN_STATUS = command_docs.UNKNOWN_STATUS
+LIST_MAX_WORKERS = 8
+
+
 def task_store() -> SendTaskStore:
     """Return the durable send-task store through a replaceable test boundary."""
     return SendTaskStore()
@@ -105,7 +109,8 @@ def _live_status(session: SessionState) -> TargetStatus | str:
     except Exception:
         return UNKNOWN_STATUS
     try:
-        return backend.status(session)
+        probe = getattr(backend, "list_status", backend.status)
+        return probe(session)
     except NotImplementedError:
         return UNKNOWN_STATUS
     except Exception:
@@ -127,8 +132,12 @@ def _stop_after_summary(session: SessionState, status: TargetStatus | str, tasks
     if status != TargetStatus.RUNNING or not session.flags.get("stop_after_script"):
         return "-"
     try:
-        backend = launch_ops.backend_for(session)
-        marker = stop_after_ops.status(backend.endpoint(session), session)
+        endpoint = session.ssh_endpoint()
+        try:
+            marker = stop_after_ops.status(endpoint, session, timeout=1.0)
+        except TypeError:
+            # Retain compatibility with third-party/test replacements that implement the original two-argument hook.
+            marker = stop_after_ops.status(endpoint, session)
     except Exception:
         return "-"
     return f"agent ({marker})" if marker in {"scheduled", "stopping", "blocked", "failed"} else "-"
@@ -143,6 +152,31 @@ def _shown_columns(columns: tuple[str, ...] | None) -> tuple[str, ...]:
         raise ValueError(f"unknown session column(s): {', '.join(sorted(unknown))}")
     requested = set(columns)
     return tuple(column for column in LS_COLUMNS if column == "name" or column in requested)
+
+
+def _session_row(
+    session: SessionState,
+    *,
+    shown_columns: tuple[str, ...],
+    needs_status: bool,
+    tasks: list,
+    now: datetime,
+) -> tuple[list[object], TargetStatus | str]:
+    """Build one independent table row so slow provider and SSH probes can run concurrently."""
+    status = _live_status(session) if needs_status else UNKNOWN_STATUS
+    values = {
+        "name": session.name,
+        "backend": session.backend,
+        "status": status,
+        "stop after": _stop_after_summary(session, status, tasks) if "stop after" in shown_columns else "-",
+        "running": _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
+        "tmux": session.tmux_session,
+        "local dir": session.local_cwd,
+        "last attached": _short_time(session.last_attached, now),
+        "ids": _ids_summary(session),
+        "ports": _ports_output(session) if "ports" in shown_columns else "-",
+    }
+    return [values[column] for column in shown_columns], status
 
 
 def ls(
@@ -172,25 +206,20 @@ def ls(
         except Exception:
             # Session listing is the recovery UI and must remain usable even when optional task metadata is unreadable.
             tasks = []
-    rows = []
+    rows: list[list[object]] = []
     session_statuses: list[tuple[SessionState, TargetStatus | str]] = []
-    for session in sessions:
-        status = _live_status(session) if needs_status else UNKNOWN_STATUS
+    def build_row(session: SessionState) -> tuple[list[object], TargetStatus | str]:
+        return _session_row(session, shown_columns=shown_columns, needs_status=needs_status, tasks=tasks, now=now)
+
+    if len(sessions) > 1 and needs_status:
+        with ThreadPoolExecutor(max_workers=min(LIST_MAX_WORKERS, len(sessions)), thread_name_prefix="fwd-ls") as executor:
+            results = list(executor.map(build_row, sessions))
+    else:
+        results = [build_row(session) for session in sessions]
+    for session, (row, status) in zip(sessions, results, strict=True):
         if needs_status:
             session_statuses.append((session, status))
-        values = {
-            "name": session.name,
-            "backend": session.backend,
-            "status": status,
-            "stop after": _stop_after_summary(session, status, tasks) if "stop after" in shown_columns else "-",
-            "running": _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
-            "tmux": session.tmux_session,
-            "local dir": session.local_cwd,
-            "last attached": _short_time(session.last_attached, now),
-            "ids": _ids_summary(session),
-            "ports": _ports_output(session),
-        }
-        rows.append([values[column] for column in shown_columns])
+        rows.append(row)
     ui.table(
         f"{ui.command()} sessions ({len(rows)} active)",
         shown_columns,

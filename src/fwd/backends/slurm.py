@@ -59,6 +59,7 @@ HEREDOC_MARKER = "FWD_JOB_SCRIPT_EOF"
 # should surface as "unreachable", not as a 2-minute freeze.
 PROBE_TIMEOUT = 20.0
 QUERY_TIMEOUT = 30.0
+LIST_TIMEOUT = 4.0
 
 # `squeue -h -o %T` states → fwd's normalized status. Anything squeue still lists but we do not recognise is treated as
 # alive (default ``RUNNING``): squeue only forgets a job after MinJobAge, so a listed job is by definition not gone,
@@ -300,6 +301,14 @@ class SlurmBackend(Backend):
         from the default non-attaching ``fwd up`` before the job appeared — reports ``RUNNING`` after one best-effort rescan, because the
         login node *is* up and there is nothing to relaunch yet.
         """
+        return self._status(session, probe_timeout=PROBE_TIMEOUT, query_timeout=QUERY_TIMEOUT, rescan_missing_job=True)
+
+    def list_status(self, session: SessionState) -> TargetStatus:
+        """Query the pinned login and tracked allocation with table-sized deadlines and no untracked-job rescan."""
+        return self._status(session, probe_timeout=LIST_TIMEOUT, query_timeout=LIST_TIMEOUT, rescan_missing_job=False)
+
+    def _status(self, session: SessionState, *, probe_timeout: float, query_timeout: float, rescan_missing_job: bool) -> TargetStatus:
+        """Implement authoritative and latency-bounded status checks without duplicating state interpretation."""
         # An unreachable login node is never ``GONE``: a dropped VPN or a cluster in maintenance is far more likely
         # than a deleted account, and the job itself may still be queued or running. ``GONE`` would invite the user to
         # prune a session whose allocation is alive and consuming budget (same hazard class as R2-1).
@@ -308,16 +317,18 @@ class SlurmBackend(Backend):
         except ProvisionError:
             return TargetStatus.UNKNOWN
         try:
-            endpoint.run("true", timeout=PROBE_TIMEOUT)
+            endpoint.run("true", timeout=probe_timeout)
         except SSHError:
             return TargetStatus.UNKNOWN
 
-        job_id = session.backend_ids.get("job_id") or self.find_job_id(endpoint, session.name)
+        job_id = session.backend_ids.get("job_id")
+        if not job_id and rescan_missing_job:
+            job_id = self.find_job_id(endpoint, session.name)
         if not job_id:
             return TargetStatus.RUNNING
 
         try:
-            proc = endpoint.run(f"squeue -j {shlex.quote(job_id)} -h -o %T", check=False, timeout=QUERY_TIMEOUT)
+            proc = endpoint.run(f"squeue -j {shlex.quote(job_id)} -h -o %T", check=False, timeout=query_timeout)
         except SSHError:
             # squeue itself failed to run — we still cannot tell whether the allocation is alive.
             return TargetStatus.UNKNOWN

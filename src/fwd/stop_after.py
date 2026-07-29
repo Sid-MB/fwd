@@ -207,9 +207,9 @@ def cancel(endpoint: SSHEndpoint, session: SessionState) -> bool:
     return result.returncode == 0
 
 
-def status(endpoint: SSHEndpoint, session: SessionState) -> str:
+def status(endpoint: SSHEndpoint, session: SessionState, *, timeout: float | None = None) -> str:
     """Return the remote action marker without raising when an older session has no helper."""
-    result = endpoint.run(f"{shlex.quote(action_path(session))} --status", check=False)
+    result = endpoint.run(f"{shlex.quote(action_path(session))} --status", check=False, timeout=timeout)
     value = (result.stdout or "").strip()
     return value if value in {"idle", "scheduled", "stopping", "stopped", "canceled", "blocked", "failed"} else "idle"
 

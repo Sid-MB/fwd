@@ -185,6 +185,15 @@ class SshHostBackend(Backend):
             return TargetStatus.UNKNOWN
         return TargetStatus.RUNNING if wait_for_ssh(endpoint, timeout=8.0, interval=2.0) else TargetStatus.STOPPED
 
+    def list_status(self, session: SessionState) -> TargetStatus:
+        """Probe once with a tight deadline so stale SSH targets do not stall the complete session table."""
+        del session
+        try:
+            endpoint = self._build_endpoint()
+        except ProvisionError:
+            return TargetStatus.UNKNOWN
+        return TargetStatus.RUNNING if wait_for_ssh(endpoint, timeout=2.0, interval=0.25, attempt_timeout=2.0) else TargetStatus.STOPPED
+
     def stop(self, session: SessionState) -> None:
         """Kill the session's tmux only; fwd never powers off a machine it did not create."""
         if not session.tmux_session:

@@ -182,6 +182,11 @@ Map provider-specific states onto `TargetStatus`:
 
 `status()` must never raise. Most importantly, never translate “the provider query failed” into `GONE`: callers may treat `GONE` as permission to discard local state while the resource is still running and billing.
 
+Implement `list_status()` when authoritative `status()` intentionally waits through provisioning, scheduler, or
+network delays. The session table runs these probes concurrently, but each backend must still give its list-specific
+probe a short hard deadline and return `UNKNOWN` on an inconclusive answer. Never weaken `status()` merely to improve
+table latency: attach and destructive lifecycle decisions need its more patient result.
+
 ### Stop and destroy requirements
 
 `stop()` must be repeatable and safe when the resource is already stopped or absent. Clearly define which costs and data survive it.

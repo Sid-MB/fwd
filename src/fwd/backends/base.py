@@ -233,6 +233,15 @@ class Backend(ABC):
         session entry, so reporting it on a mere provider hiccup can strand a running, billing target.
         """
 
+    def list_status(self, session: SessionState) -> TargetStatus:
+        """Return status for the latency-sensitive session table.
+
+        The default preserves the authoritative :meth:`status` behavior. Backends whose ordinary probe deliberately
+        waits through provisioning delays should override this with a shorter read-only check: listing many unrelated
+        sessions must not multiply one unreachable target's timeout across the whole table.
+        """
+        return self.status(session)
+
     @abstractmethod
     def stop(self, session: SessionState) -> None:
         """Suspend the target while preserving data (RunPod ``pod stop``, Slurm ``scancel``).

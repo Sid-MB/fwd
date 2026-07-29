@@ -151,6 +151,10 @@ terminal they use stable `info:`, `ok:`, `warning:`, and `error:` prefixes inste
 Configuration output remains TOML (`fwd config` / `--example`) or JSON Schema (`fwd config --schema`) because those
 formats are already directly machine-readable.
 
+Live session checks run concurrently with short list-only deadlines, so `fwd ls --all-projects` pays roughly one
+bounded provider/SSH window rather than adding every unreachable target's timeout together. Authoritative operations
+such as attach, stop, and remove retain their more patient probes.
+
 ### Session completion
 
 Shell completion for every session-selecting command is state-aware:

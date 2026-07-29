@@ -474,14 +474,14 @@ class RunpodBackend(Backend):
         """
         return parse_pod_list(self._run_ctl(["pod", "list", "-a"]))
 
-    def _get_pod(self, pod_id: str) -> dict[str, Any] | None:
+    def _get_pod(self, pod_id: str, *, timeout: float = 120.0) -> dict[str, Any] | None:
         """Fetch one pod, returning ``None`` if RunPod says it no longer exists.
 
         Raises:
             RunpodError: On failures other than a 404, so genuine outages are not misreported as a deleted pod.
         """
         try:
-            return parse_pod(self._run_ctl(["pod", "get", pod_id, "--include-network-volume"], check=False))
+            return parse_pod(self._run_ctl(["pod", "get", pod_id, "--include-network-volume"], check=False, timeout=timeout))
         except RunpodError as exc:
             if is_missing_pod_error(str(exc)):
                 return None
@@ -683,6 +683,18 @@ class RunpodBackend(Backend):
             return TargetStatus.UNKNOWN
         except KeyError:
             # State written by a different backend, or a truncated entry — not evidence that the pod is gone.
+            return TargetStatus.UNKNOWN
+        if pod is None and session.backend_ids.get("network_volume_id"):
+            return TargetStatus.STOPPED
+        return TargetStatus.GONE if pod is None else pod_status(pod)
+
+    def list_status(self, session: SessionState) -> TargetStatus:
+        """Use the same conservative state mapping as :meth:`status` with a short provider deadline."""
+        try:
+            pod = self._get_pod(self._pod_id(session), timeout=5.0)
+        except RunpodError as exc:
+            return TargetStatus.GONE if is_missing_pod_error(str(exc)) else TargetStatus.UNKNOWN
+        except KeyError:
             return TargetStatus.UNKNOWN
         if pod is None and session.backend_ids.get("network_volume_id"):
             return TargetStatus.STOPPED

@@ -429,6 +429,7 @@ def wait_for_ssh(
     *,
     timeout: float = 300.0,
     interval: float = 3.0,
+    attempt_timeout: float = PROBE_CONNECT_TIMEOUT,
     on_attempt: Callable[[int], None] | None = None,
 ) -> bool:
     """Poll until an endpoint accepts ssh connections and can run a trivial command.
@@ -440,6 +441,8 @@ def wait_for_ssh(
         endpoint: Target to probe. Probes deliberately bypass the ControlMaster.
         timeout: Total seconds to keep trying.
         interval: Delay between attempts.
+        attempt_timeout: SSH connection and subprocess budget for one attempt. Listing uses a short value while
+            provisioning retains the more patient default.
         on_attempt: Called with the 1-based attempt number, for spinner/progress updates.
 
     Returns:
@@ -453,10 +456,11 @@ def wait_for_ssh(
             on_attempt(attempt)
         # ConnectTimeout is inserted ahead of everything else because ssh resolves duplicate options first-wins.
         argv = endpoint.ssh_argv(control=False)
-        argv[1:1] = ["-o", f"ConnectTimeout={PROBE_CONNECT_TIMEOUT}"]
+        connect_timeout = max(1, int(attempt_timeout))
+        argv[1:1] = ["-o", f"ConnectTimeout={connect_timeout}"]
         argv.append("true")
         try:
-            completed = subprocess.run(argv, check=False, capture_output=True, timeout=PROBE_CONNECT_TIMEOUT * 3)
+            completed = subprocess.run(argv, check=False, capture_output=True, timeout=attempt_timeout)
         except subprocess.TimeoutExpired:
             completed = None
         if completed is not None and completed.returncode == 0:
