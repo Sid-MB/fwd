@@ -280,6 +280,24 @@ class SSHEndpoint:
             raise SSHError(f"remote {name} failed (exit {proc.returncode}) on {self.ssh_target()}{detail}")
         return proc
 
+    def upload_file(self, local_path: str | Path, remote_path: str, *, mode: int = 0o755) -> None:
+        """Atomically stream one local file to an exact remote path with the requested POSIX mode."""
+        source = Path(local_path)
+        parent = str(Path(remote_path).parent)
+        temporary = f"{remote_path}.fwd-upload"
+        command = (
+            f"set -eu; mkdir -p {shlex.quote(parent)}; "
+            f"trap 'rm -f {shlex.quote(temporary)}' EXIT; "
+            f"cat > {shlex.quote(temporary)}; chmod {mode:o} {shlex.quote(temporary)}; "
+            f"mv {shlex.quote(temporary)} {shlex.quote(remote_path)}"
+        )
+        _ensure_control_dir()
+        with source.open("rb") as payload:
+            process = subprocess.run([*self.ssh_argv(), command], stdin=payload, capture_output=True)
+        if process.returncode != 0:
+            detail = process.stderr.decode(errors="replace").strip()
+            raise SSHError(f"could not upload {source.name} to {self.ssh_target()}:{remote_path}" + (f": {detail}" if detail else ""))
+
     def exec_interactive(self, remote_cmd: str) -> NoReturn:
         """Replace the current process with an interactive ``ssh -t ... <remote_cmd>``.
 

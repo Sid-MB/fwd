@@ -118,6 +118,10 @@ class Agent(ABC):
     def startup_command(self, flags: Mapping[str, object]) -> str:
         """Build the long-lived command placed in the session's primary tmux pane."""
 
+    def prepare_send(self, endpoint: SSHEndpoint, flags: Mapping[str, object]) -> None:
+        """Ensure optional remote helpers required by a later send command are ready."""
+        del endpoint, flags
+
     @abstractmethod
-    def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
-        """Build a non-interactive command that sends one message into the agent's current conversation."""
+    def send_command(self, message: str, flags: Mapping[str, object], *, tmux_session: str = "", remote_dir: str = "") -> tuple[str, ...]:
+        """Build a command that sends one message into the agent's current conversation."""

@@ -22,7 +22,7 @@ class MyAgent(Agent):
     def startup_command(self, flags: Mapping[str, object]) -> str:
         return "my-agent"
 
-    def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
+    def send_command(self, message: str, flags: Mapping[str, object], *, tmux_session: str = "", remote_dir: str = "") -> tuple[str, ...]:
         return ("my-agent", "--print", message)
 ```
 
@@ -47,6 +47,10 @@ directory beneath the tool prefix before resolving tools; other backends leave t
 
 Override `launch_flags()` only if the agent owns special CLI/config behavior. Agent-independent orchestration should
 never test `agent.name`; put that decision in the implementation instead.
+
+Override `prepare_send()` when an agent needs a remote helper before constructing its turn command. `send_command()`
+receives the exact primary tmux session and remote project directory so a pane-backed integration can address the
+long-lived conversation rather than guessing from global history.
 
 Optional remote-control setup also belongs in the agent implementation because products expose different models.
 Claude decorates its long-lived interactive command, while Codex starts a separate managed app-server daemon beside

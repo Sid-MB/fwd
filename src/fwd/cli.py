@@ -165,7 +165,8 @@ def main(
 
         completion_setup.offer_once()
         skill_setup.offer_once()
-        skill_setup.update_if_needed()
+        if ctx.invoked_subcommand not in {"send", "s"}:
+            skill_setup.update_if_needed()
     if ctx.invoked_subcommand is not None:
         return
     create_argv = [ui.COMMAND_NAME, "up"]

@@ -80,6 +80,9 @@ fwd send agent --immediate "replace the current approach"
 fwd send agent --stop-after "finish and stop compute"
 ```
 
+Codex agent sends type into the exact primary TUI pane and stream its persisted rollout events; they never guess with
+`codex exec resume --last`. This keeps fresh threads addressable and avoids starting a second Codex process per turn.
+
 Normal agent follow-ups serialize. `--stop MESSAGE` and `--immediate MESSAGE` both cancel the active turn and send the replacement. `--stop` alone leaves the agent conversation, tmux session, and remote resource alive.
 
 Registered remote agents can also run the literal `stopafter` helper as their final tool action. Launch installs a

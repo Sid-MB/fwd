@@ -165,8 +165,9 @@ class ClaudeAgent(Agent):
         )
         return self.with_environment_defaults(command, flags)
 
-    def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
+    def send_command(self, message: str, flags: Mapping[str, object], *, tmux_session: str = "", remote_dir: str = "") -> tuple[str, ...]:
         """Send a streaming Claude turn, resuming the exact transferred conversation when known."""
+        del tmux_session, remote_dir
         command = ["claude", *self._runtime_args(flags), "--print", "--verbose", "--output-format", "stream-json"]
         resume_id = flags.get("resume_id")
         if isinstance(resume_id, str) and resume_id:

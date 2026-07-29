@@ -62,6 +62,7 @@ def start(endpoint: SSHEndpoint, session_name: str, remote_dir: str, task: SendT
         f'{remote._source_env()}export FWD_TASK_DIR="$task_dir"; cd {shlex.quote(remote_dir)} && {command}; '
         f'rc=$?; printf "%s\\n" "$rc" > "$task_dir/exit"; printf "done\\n" > "$task_dir/state"; exit "$rc"'
     )
+    redirected_body = f"({body}) >> \"{directory}/output\" 2>&1"
     window = shlex.join(
         [
             "tmux",
@@ -75,7 +76,7 @@ def start(endpoint: SSHEndpoint, session_name: str, remote_dir: str, task: SendT
             remote_dir,
             "bash",
             "-lc",
-            f"{body} >> \"{directory}/output\" 2>&1",
+            redirected_body,
         ]
     )
     endpoint.run(f'task_dir="{directory}"; mkdir -p "$task_dir"; {window}', check=True)

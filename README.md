@@ -326,6 +326,10 @@ not match the agent running in the selected fwd session.
 Interactive terminals render agent text and tool activity concisely. Pipes, scripts, and recognized agent
 environments receive the agents' original JSONL event stream.
 
+Codex sends address the exact long-lived TUI pane created by `fwd up codex`, then follow that pane's persisted rollout
+events. They do not start a second `codex exec resume --last` process, so a fresh conversation responds normally,
+concurrent Codex histories cannot steal the message, and each turn avoids a second CLI/model startup.
+
 Remote Claude Code and Codex sessions also receive a small managed user-instruction block explaining the literal
 `stopafter` command. An agent can run it as its final tool action to schedule remote shutdown; `stopafter --cancel`
 disarms the delay before shutdown begins. fwd installs the helper under its existing tool prefix and adds the managed

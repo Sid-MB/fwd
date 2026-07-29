@@ -26,6 +26,7 @@ packages = ["src/fwd"]
 # bootstrap.sh must land inside the installed package so remote.BOOTSTRAP_PATH can resolve it via importlib.resources.
 [tool.hatch.build.targets.wheel.force-include]
 "src/fwd/scripts/bootstrap.sh" = "fwd/scripts/bootstrap.sh"
+"src/fwd/scripts/codex_tui_send.py" = "fwd/scripts/codex_tui_send.py"
 "SKILL.md" = "fwd/SKILL.md"
 "agents" = "fwd/skill_agents"
 "references" = "fwd/references"

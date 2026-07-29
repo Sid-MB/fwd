@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import shlex
+from pathlib import Path
 from typing import Mapping
 
 from fwd import ui
@@ -12,6 +14,7 @@ from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.tooling.requirements import CODEX
 
 MANAGED_CODEX = '"$HOME/.codex/packages/standalone/current/codex"'
+CODEX_TUI_SEND_PATH = Path(__file__).parent.parent / "scripts" / "codex_tui_send.py"
 
 
 def _remote_control_status(endpoint: SSHEndpoint) -> int:
@@ -76,7 +79,24 @@ class CodexAgent(Agent):
         command = shlex.join(["codex", *self._runtime_args(flags)])
         return self.with_environment_defaults(command, flags)
 
-    def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
-        """Resume the most recent Codex conversation and emit JSONL suitable for streaming."""
-        command = ["codex", *self._runtime_args(flags), "exec", "--json", "resume", "--last", message]
-        return self.environment_command(command, flags)
+    def prepare_send(self, endpoint: SSHEndpoint, flags: Mapping[str, object]) -> None:
+        """Install the small pane-to-rollout bridge used to address the exact live Codex TUI."""
+        tool_prefix = flags.get("tool_prefix")
+        if not isinstance(tool_prefix, str) or not tool_prefix:
+            raise SSHError("this Codex session predates its recorded tool prefix; rerun `fwd up codex` once to repair it")
+        remote_path = f"{tool_prefix.rstrip('/')}/bin/fwd-codex-tui-send"
+        digest = hashlib.sha256(CODEX_TUI_SEND_PATH.read_bytes()).hexdigest()
+        present = endpoint.run(
+            f"test -x {shlex.quote(remote_path)} && test \"$(sha256sum {shlex.quote(remote_path)} | cut -d' ' -f1)\" = {shlex.quote(digest)}",
+            check=False,
+        )
+        if present.returncode != 0:
+            endpoint.upload_file(CODEX_TUI_SEND_PATH, remote_path)
+
+    def send_command(self, message: str, flags: Mapping[str, object], *, tmux_session: str = "", remote_dir: str = "") -> tuple[str, ...]:
+        """Drive the existing Codex TUI and stream its exact persisted response instead of spawning a second Codex."""
+        tool_prefix = flags.get("tool_prefix")
+        if not isinstance(tool_prefix, str) or not tool_prefix or not tmux_session or not remote_dir:
+            raise SSHError("the live Codex send bridge is missing session metadata; rerun `fwd up codex` once to repair it")
+        helper = f"{tool_prefix.rstrip('/')}/bin/fwd-codex-tui-send"
+        return (helper, "--tmux-session", tmux_session, "--cwd", remote_dir, message)

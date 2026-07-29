@@ -48,10 +48,10 @@ def test_task_store_round_trip_and_active_semantics(tmp_path) -> None:
 
 def test_agent_send_commands_resume_existing_conversations() -> None:
     claude = agents.AGENTS["claude"].send_command("fix it", {"resume_id": "session-123"})
-    codex = agents.AGENTS["codex"].send_command("fix it", {})
+    codex = agents.AGENTS["codex"].send_command("fix it", {"tool_prefix": "/tools"}, tmux_session="fwd-demo", remote_dir="/workspace/project")
 
     assert claude == ("claude", "--permission-mode", "bypassPermissions", "--print", "--verbose", "--output-format", "stream-json", "--resume", "session-123", "fix it")
-    assert codex == ("codex", "--dangerously-bypass-approvals-and-sandbox", "exec", "--json", "resume", "--last", "fix it")
+    assert codex == ("/tools/bin/fwd-codex-tui-send", "--tmux-session", "fwd-demo", "--cwd", "/workspace/project", "fix it")
 
 
 def test_remote_task_start_uses_manager_window_logs_and_queue_marker() -> None:
@@ -76,6 +76,7 @@ def test_remote_task_start_uses_manager_window_logs_and_queue_marker() -> None:
     assert 'printf "queued\\n"' in endpoint.commands[1]
     assert 'export FWD_TASK_DIR="$task_dir"' in endpoint.commands[1]
     assert "/output" in endpoint.commands[1]
+    assert ') >> "$HOME/.fwd/tasks/demo/agt-a1/output" 2>&1' in endpoint.commands[1]
 
 
 def test_remote_task_status_recognizes_completion_queue_and_running() -> None:
@@ -111,7 +112,7 @@ def test_remote_task_follower_fails_instead_of_hanging_when_window_disappears() 
 def _send_world(monkeypatch, tmp_path, *, initial_command=("codex",)):
     task_store = SendTaskStore(tmp_path / "tasks.json")
     endpoint = FakeEndpoint()
-    session = SimpleNamespace(name="demo", remote_dir="/workspace/project", tmux_session="fwd-demo", flags={"initial_command": list(initial_command)})
+    session = SimpleNamespace(name="demo", remote_dir="/workspace/project", tmux_session="fwd-demo", flags={"initial_command": list(initial_command), "tool_prefix": "/tools"})
     backend = SimpleNamespace(endpoint=lambda value: endpoint)
     monkeypatch.setattr(send_ops, "store", lambda: task_store)
     monkeypatch.setattr(send_ops.launch_ops, "resolve_session", lambda name: session)

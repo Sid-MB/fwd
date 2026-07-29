@@ -400,12 +400,13 @@ def dispatch(
                 ui.die(f"a command task cannot be replaced with a message; start another command with {ui.command('send -- COMMAND')!r}")
             agent = agents.AGENTS[exact.agent]
             message = " ".join(remainder)
+            agent.prepare_send(endpoint, session.flags)
             replacement = SendTask(
                 id=new_task_id("agent"),
                 session=session.name,
                 kind="agent",
                 agent=agent.name,
-                command=list(agent.send_command(message, session.flags)),
+                command=list(agent.send_command(message, session.flags, tmux_session=session.tmux_session, remote_dir=session.remote_dir)),
                 label=message,
             )
             return _start_task(session, endpoint, replacement, detach=detach, timeout=timeout, stop_after=stop_after)
@@ -442,7 +443,11 @@ def dispatch(
             if stop_after:
                 _schedule_stop_after(session, endpoint, (active[0].id,))
             return follow(active[0], endpoint, timeout=timeout)
-        command = agent.send_command(message, session.flags)
+        try:
+            agent.prepare_send(endpoint, session.flags)
+            command = agent.send_command(message, session.flags, tmux_session=session.tmux_session, remote_dir=session.remote_dir)
+        except SSHError as exc:
+            ui.die(str(exc))
         dependency = active[0].id if active else None
         task = SendTask(
             id=new_task_id("agent"),
