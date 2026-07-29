@@ -23,10 +23,21 @@ PROGRESS_PREFIX = "__FWD_UPLOAD_PROGRESS__"
 
 
 def _write_all(fd: int, content: bytes) -> None:
-    """Write a complete protocol chunk without relying on buffered Python streams during thread shutdown."""
+    """Write a complete protocol chunk, waiting for pipe backpressure instead of leaking ``BlockingIOError``.
+
+    Rsync marks the file descriptors connected to its remote-shell helper as nonblocking. Both directions of this
+    relay therefore need to treat ``EAGAIN`` as flow control even though ordinary terminal and subprocess pipes are
+    usually blocking.
+    """
     view = memoryview(content)
     while view:
-        written = os.write(fd, view)
+        try:
+            written = os.write(fd, view)
+        except BlockingIOError:
+            select.select([], [fd], [], 0.1)
+            continue
+        if written == 0:
+            raise BrokenPipeError("protocol pipe closed during write")
         view = view[written:]
 
 
@@ -87,8 +98,7 @@ def relay(limit_bytes: int, sentinel: Path, ssh_argv: Sequence[str]) -> int:
     input_thread.start()
     try:
         while chunk := proc.stdout.read1(CHUNK_SIZE):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
+            _write_all(sys.stdout.fileno(), chunk)
         returncode = proc.wait()
     except KeyboardInterrupt:
         proc.terminate()
