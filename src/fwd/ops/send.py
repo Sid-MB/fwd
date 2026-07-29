@@ -25,7 +25,6 @@ from fwd.output import OutputFormat
 from fwd.send_tasks import SendTask, SendTaskStore, new_task_id, now
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
-from fwd.tooling.requirements import GH
 
 
 def store() -> SendTaskStore:
@@ -309,9 +308,19 @@ def _cancel_tasks(session: SessionState, endpoint: SSHEndpoint, selectors: tuple
     return 0
 
 
-def _run_command_task(session: SessionState, endpoint: SSHEndpoint, arguments: tuple[str, ...], *, detach: bool, timeout: float | None, stop_after: bool = False) -> int:
+def _run_command_task(
+    session: SessionState,
+    endpoint: SSHEndpoint,
+    arguments: tuple[str, ...],
+    *,
+    detach: bool,
+    timeout: float | None,
+    stop_after: bool = False,
+    setup_github: bool | None = None,
+) -> int:
     """Create and run one literal command task against an already-resolved live session."""
-    _prepare_github_push(session, endpoint, arguments)
+    if arguments and Path(arguments[0]).name == "git" and "push" in arguments[1:]:
+        _prepare_github_auth(session, endpoint, setup_github=setup_github)
     task = SendTask(
         id=new_task_id("command"),
         session=session.name,
@@ -327,45 +336,54 @@ def _run_command_task(session: SessionState, endpoint: SSHEndpoint, arguments: t
         ui.die(f"could not start task on session {session.name!r}: {exc}")
 
 
-def _prepare_github_push(session: SessionState, endpoint: SSHEndpoint, arguments: tuple[str, ...]) -> None:
-    """Apply opted-in GitHub authentication to an existing session immediately before a direct ``git push``.
+def _prepare_github_auth(session: SessionState, endpoint: SSHEndpoint, *, setup_github: bool | None = None) -> None:
+    """Apply configured GitHub authentication to an existing session without synchronizing repository content.
 
-    Launch normally performs this setup, but a user may enable ``github.auth`` after an agent has already made remote
-    commits. Re-running launch would synchronize the local checkout over that work, so the send path repairs only the
-    credential layer in place. Unrelated commands and projects that retain the default ``github.auth = false`` are
-    untouched.
+    Both direct pushes and coding-agent turns use this path. Preparing agent turns matters because Codex or Claude may
+    decide to run ``git push`` internally, after fwd has already handed control to the live conversation.
     """
-    if arguments[:2] != ("git", "push"):
+    if setup_github is None and session.flags.get("github_auth_ready") is True:
         return
     local_cwd = Path(session.local_cwd).expanduser().resolve()
     try:
         cfg = load_config(local_cwd)
     except ConfigError as exc:
         ui.die(str(exc))
-    if not cfg.github.auth:
+    setup_github_effective = cfg.github.auth if setup_github is None else setup_github
+    if not setup_github_effective:
         return
     tool_prefix = session.flags.get("tool_prefix")
     if not isinstance(tool_prefix, str) or not tool_prefix:
         ui.die(f"session {session.name!r} predates remote tool metadata; retrieve any remote-only work before repairing it with {ui.command('up')!r}")
-    env_file = f"{tool_prefix.rstrip('/')}/fwd-env.sh"
-    status = endpoint.run(f". {shlex.quote(env_file)} 2>/dev/null; GH_PROMPT_DISABLED=1 gh auth status --active --hostname github.com >/dev/null 2>&1", check=False)
-    if status.returncode == 0:
-        return
     try:
-        github_auth.validate_local()
-        with ui.step("Preparing GitHub authentication for existing session"):
-            remote.ensure_tools(endpoint, (GH,))
-            github_auth.install_remote(endpoint, local_cwd, session.remote_dir, tool_prefix)
+        ready = github_auth.ensure_remote(
+            endpoint,
+            local_cwd,
+            session.remote_dir,
+            tool_prefix,
+            required=setup_github is True,
+        )
+        if ready:
+            session.flags["github_auth_ready"] = True
+            launch_ops.store().update(session.name, flags=session.flags)
     except (github_auth.GitHubAuthError, SSHError) as exc:
         ui.die(str(exc))
 
 
-def run_command(arguments: tuple[str, ...], *, name: str | None = None, detach: bool = False, timeout: float | None = None, stop_after: bool = False) -> int:
+def run_command(
+    arguments: tuple[str, ...],
+    *,
+    name: str | None = None,
+    detach: bool = False,
+    timeout: float | None = None,
+    stop_after: bool = False,
+    setup_github: bool | None = None,
+) -> int:
     """Run literal argv through the durable task streamer without reinterpreting its first token as a task ID."""
     if not arguments:
         ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}")
     session, endpoint = _running_endpoint(name)
-    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after)
+    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after, setup_github=setup_github)
 
 
 def dispatch(
@@ -437,6 +455,7 @@ def dispatch(
                 ui.die(f"a command task cannot be replaced with a message; start another command with {ui.command('send -- COMMAND')!r}")
             agent = agents.AGENTS[exact.agent]
             message = " ".join(remainder)
+            _prepare_github_auth(session, endpoint)
             agent.prepare_send(endpoint, session.flags)
             replacement = SendTask(
                 id=new_task_id("agent"),
@@ -481,6 +500,7 @@ def dispatch(
                 _schedule_stop_after(session, endpoint, (active[0].id,))
             return follow(active[0], endpoint, timeout=timeout)
         try:
+            _prepare_github_auth(session, endpoint)
             agent.prepare_send(endpoint, session.flags)
             command = agent.send_command(message, session.flags, tmux_session=session.tmux_session, remote_dir=session.remote_dir)
         except SSHError as exc:

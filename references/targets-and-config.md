@@ -141,3 +141,8 @@ are shell defaults, not overrides, and apply consistently to the primary session
 Modern Claude Code exposes background agents and agent teams by default, and modern Codex enables multi-agent support
 by default. No opt-in environment variable is necessary; agent-specific future tuning belongs in `args` or
 `environment`.
+
+GitHub setup follows the same configuration-plus-invocation pattern. `[github] auth = true` is the default for
+development VMs; set it to false persistently, or use `--setup-github/--no-setup-github` on `fwd up` and `fwd attach`
+for one operation. Credential discovery checks `GH_TOKEN`, `GITHUB_TOKEN`, the active local gh account, Git's
+credential helper, then `~/.netrc` before offering an interactive hidden PAT prompt.

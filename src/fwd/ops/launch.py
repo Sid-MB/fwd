@@ -446,6 +446,7 @@ def launch(
     handoff: bool = False,
     user_config: bool = False,
     creds: bool = False,
+    setup_github: bool | None = None,
     attach: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
@@ -464,6 +465,7 @@ def launch(
             handoff=handoff,
             user_config=user_config,
             creds=creds,
+            setup_github=setup_github,
             attach=attach,
             push_only=push_only,
             run_command_as_task=run_command_as_task,
@@ -486,6 +488,7 @@ def _launch(
     handoff: bool = False,
     user_config: bool = False,
     creds: bool = False,
+    setup_github: bool | None = None,
     attach: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
@@ -506,6 +509,7 @@ def _launch(
         handoff: Generate and use ``HANDOFF.md`` instead of a transcript.
         user_config: Upload the user's Claude config bundle.
         creds: Lift local Claude credentials to the remote machine (warns).
+        setup_github: Per-launch GitHub setup override; ``None`` uses the merged ``github.auth`` configuration.
         attach: Exec into the remote tmux session when everything is ready.
         push_only: Stop after syncing files, before bootstrap.
         run_command_as_task: Start a shell as the primary pane so the caller can run a separate explicit command
@@ -522,11 +526,16 @@ def _launch(
         cfg = load_config(local_cwd)
     except ConfigError as exc:
         ui.die(str(exc))
-    if cfg.github.auth and not push_only:
+    setup_github_effective = cfg.github.auth if setup_github is None else setup_github
+    github_credential: github_auth.GitHubCredential | None = None
+    if setup_github_effective and not push_only:
         try:
-            github_auth.validate_local()
+            github_credential = github_auth.resolve_local_credential(local_cwd, required=setup_github is True)
         except github_auth.GitHubAuthError as exc:
             ui.die(str(exc))
+        if github_credential is None:
+            ui.warn("GitHub setup skipped because no usable local credential was available; pass --setup-github to require it")
+            setup_github_effective = False
 
     st = interrupt_cleanup.store
     if new and name is not None:
@@ -627,7 +636,7 @@ def _launch(
     if agent is not None and info.ephemeral_home:
         with ui.step(f"Preparing persistent {agent.name} state"):
             agent.prepare_remote_home(endpoint, tool_prefix, ephemeral=True)
-    if cfg.github.auth:
+    if setup_github_effective:
         with ui.step("Preparing persistent GitHub authentication"):
             github_auth.prepare_remote_storage(endpoint, tool_prefix, ephemeral_home=info.ephemeral_home)
     try:
@@ -638,17 +647,22 @@ def _launch(
         ui.warn(f"could not install the remote tmux configuration; continuing with tmux defaults ({exc})")
 
     project_plan = remote.detect_toolchain_plan(local_cwd)
-    github_requirements = (GH,) if cfg.github.auth else ()
+    github_requirements = (GH,) if setup_github_effective else ()
     requirements = merge_requirements(project_plan.requirements, agent.tools if agent is not None else (), github_requirements)
     if requirements:
         with ui.step(f"Preparing remote tools ({len(requirements)} requirement(s))"):
             remote.ensure_tools(endpoint, requirements)
-    if cfg.github.auth:
+    if setup_github_effective:
         try:
             with ui.step("Installing GitHub authentication"):
-                github_auth.install_remote(endpoint, local_cwd, remote_dir, tool_prefix)
+                assert github_credential is not None
+                github_auth.install_remote(endpoint, local_cwd, remote_dir, tool_prefix, github_credential)
+                flags["github_auth_ready"] = True
         except github_auth.GitHubAuthError as exc:
             ui.die(str(exc))
+        finally:
+            if github_credential is not None:
+                github_credential.clear()
 
     # 6. Project dependencies, inferred by class-based toolchains; the project escape hatch remains last.
     dep_commands = project_plan.commands

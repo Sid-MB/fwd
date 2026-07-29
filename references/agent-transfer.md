@@ -61,16 +61,16 @@ fwd diff -q TARGET
 
 ## Authentication
 
-Prefer logging in on the remote machine. Never copy credentials automatically. `--creds` writes a live Claude OAuth token to remote disk and requires explicit authorization in the current conversation. Codex authentication is never copied.
+Prefer logging in on the remote machine for coding-agent authentication. `--creds` writes a live Claude OAuth token to remote disk and requires explicit authorization in the current conversation. Codex authentication is never copied.
 
-GitHub authentication is separately opt-in with `[github] auth = true`. Fwd validates the active local github.com
-account before provisioning, streams `gh auth token` to remote standard input, configures `gh` as Git's HTTPS
-credential helper, and persists the remote gh store on RunPod volumes. The token never enters project files, argv,
-logs, config, or session state. Enabling the option requires explicit authorization because the remote receives a
-live GitHub credential. The next launch applies the setting, and a direct `fwd send git push` repairs the credential
-in place when auth was enabled after the session started. Do not describe `fwd pull && git push` as a way to transfer
-a remote commit: pull intentionally omits `.git/`. It can retrieve uncommitted files for a new local commit;
-preserving an existing remote commit requires a remote push or an explicitly exported patch or Git bundle.
+GitHub authentication defaults on for development VMs and can be disabled with `[github] auth = false` or
+`--no-setup-github`. Fwd resolves `GH_TOKEN`, `GITHUB_TOKEN`, the active local gh account, Git's credential helper,
+then `~/.netrc`; an interactive caller can paste a PAT as the final fallback. It streams the selected credential to remote standard
+input, configures HTTPS Git access, and persists the remote credential on RunPod volumes. The token never enters
+project files, argv, logs, config, or session state. A direct `fwd send git push`, any sent coding-agent turn, and
+`fwd attach` can repair an older session in place. Do not describe `fwd pull && git push` as a way to transfer a remote
+commit: pull intentionally omits `.git/`. It can retrieve uncommitted files for a new local commit; preserving an
+existing remote commit requires a remote push or an explicitly exported patch or Git bundle.
 
 ## Human handoff
 

@@ -293,13 +293,13 @@ class ClaudeConfig:
 
 @dataclass(slots=True)
 class GitHubConfig:
-    """Opt-in transfer of the active local GitHub CLI identity to the remote environment.
+    """Automatic transfer of an available local GitHub credential to the remote development environment.
 
-    Authentication stays disabled by default because enabling it places a GitHub token on the selected remote
-    machine. The token itself is never stored in fwd configuration or session state.
+    Development VMs default to authenticated Git access. Set ``auth = false`` for an untrusted target or project; the
+    token itself is never stored in fwd configuration or session state.
     """
 
-    auth: bool = False
+    auth: bool = True
 
 
 @dataclass(slots=True)
@@ -551,7 +551,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
     )
     if not isinstance(github_raw, dict):
         raise ConfigError("github must be a table")
-    github_auth = github_raw.get("auth", False)
+    github_auth = github_raw.get("auth", True)
     if not isinstance(github_auth, bool):
         raise ConfigError("github.auth must be true or false")
     github = GitHubConfig(auth=github_auth)

@@ -113,7 +113,7 @@ def test_remote_task_follower_fails_instead_of_hanging_when_window_disappears() 
 def _send_world(monkeypatch, tmp_path, *, initial_command=("codex",)):
     task_store = SendTaskStore(tmp_path / "tasks.json")
     endpoint = FakeEndpoint()
-    session = SimpleNamespace(name="demo", remote_dir="/workspace/project", tmux_session="fwd-demo", flags={"initial_command": list(initial_command), "tool_prefix": "/tools"})
+    session = SimpleNamespace(name="demo", local_cwd=str(tmp_path), remote_dir="/workspace/project", tmux_session="fwd-demo", flags={"initial_command": list(initial_command), "tool_prefix": "/tools", "github_auth_ready": True})
     backend = SimpleNamespace(endpoint=lambda value: endpoint)
     monkeypatch.setattr(send_ops, "store", lambda: task_store)
     monkeypatch.setattr(send_ops.launch_ops, "resolve_session", lambda name: session)

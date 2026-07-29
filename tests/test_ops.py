@@ -32,7 +32,7 @@ from fwd import remote, sshexec, sync, ui
 from fwd.agents import claude as claude_agent
 from fwd.agents import claude_state, codex_state
 from fwd.backends.base import TargetInfo, TargetStatus
-from fwd.config import Config, SshTargetConfig, SyncConfig
+from fwd.config import Config, GitHubConfig, SshTargetConfig, SyncConfig
 from fwd.ops import attach as attach_ops
 from fwd.ops import launch as launch_ops
 from fwd.ops import lifecycle, transfer
@@ -200,6 +200,7 @@ def config(monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg = Config(
         default_target="dev",
         targets={"dev": SshTargetConfig(name="dev", host="10.0.0.5", user="root")},
+        github=GitHubConfig(auth=False),
         sync=SyncConfig(),
     )
     monkeypatch.setattr(launch_ops, "load_config", lambda project_dir=None: cfg)
@@ -485,7 +486,7 @@ def test_launch_user_config_and_creds_flags(project, state_store, config, fake_b
 
 
 def test_launch_skips_secret_bearing_steps_by_default(project, state_store, config, fake_backend, stub_world, calls) -> None:
-    """Anything touching dotfiles or credentials stays opt-in, however convenient it would be."""
+    """Claude dotfiles and OAuth credentials stay opt-in independently of the GitHub development default."""
     launch_ops.launch(attach=False)
     assert "upload_user_config" not in calls
     assert "read_keychain_creds" not in calls

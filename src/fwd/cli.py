@@ -248,6 +248,7 @@ def _run_up(
     handoff: bool = False,
     user_config: bool = False,
     creds: bool = False,
+    setup_github: bool | None = None,
     stop_after: bool = False,
     ports: tuple[str, ...] | None = None,
     create_argv: tuple[str, ...] | None = None,
@@ -280,6 +281,7 @@ def _run_up(
     chosen_match = launch_ops.choose_session(matches, selector.describe()) if matches else None
     managed_command = selector.command is not None and not attach
     desired_ports = ports if ports is not None else tuple(config.forwarding.ports)
+    github_override = {} if setup_github is None else {"setup_github": setup_github}
 
     if chosen_match is not None and managed_command and not new:
         from fwd.ops import send as send_ops
@@ -288,7 +290,7 @@ def _run_up(
         ports_ops.preflight_launch_ports(chosen_match, desired_ports)
         ports_ops.ensure_session_ports(chosen_match, desired_ports)
         ui.info(f"selectors matched session {chosen_match.name!r}; running the command as a managed task")
-        return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after)
+        return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after, **github_override)
 
     if reuse and chosen_match is not None:
         chosen = chosen_match
@@ -299,9 +301,9 @@ def _run_up(
                 f"Run {ui.command(f'attach {chosen.name}')!r} in a terminal; agents can use {ui.command(f'send --name {chosen.name} -- COMMAND')!r}."
             )
         if desired_ports:
-            attach_ops.attach(chosen.name, restart=restart, forward_ports=desired_ports)
+            attach_ops.attach(chosen.name, restart=restart, forward_ports=desired_ports, **github_override)
         else:
-            attach_ops.attach(chosen.name, restart=restart)
+            attach_ops.attach(chosen.name, restart=restart, **github_override)
         return
 
     if reuse and not matches and not _interactive_terminal():
@@ -345,11 +347,12 @@ def _run_up(
         creds=creds,
         attach=effective_attach,
         forward_ports=ports,
+        **github_override,
     )
     if stream_command:
         from fwd.ops import send as send_ops
 
-        return send_ops.run_command(initial_command or (), name=state.name, stop_after=stop_after)
+        return send_ops.run_command(initial_command or (), name=state.name, stop_after=stop_after, **github_override)
     return None
 
 
@@ -369,6 +372,7 @@ def _up(
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
     creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
+    setup_github: Annotated[bool | None, typer.Option("--setup-github/--no-setup-github", help="Set up GitHub authentication for this launch; defaults to github.auth (enabled by default).", rich_help_panel=PANEL_TARGET)] = None,
     stop_after: Annotated[bool, typer.Option("--stop-after", help="After an explicit streamed command finishes, stop the remote session from the server even if this computer disconnects.", rich_help_panel=PANEL_TARGET)] = False,
     ports: Annotated[list[str] | None, typer.Option("--ports", "-p", help="Open PORT or LOCAL:REMOTE after launch; repeat to replace project-configured defaults for this invocation.", rich_help_panel=PANEL_TARGET)] = None,
 ) -> None:
@@ -398,6 +402,7 @@ def _up(
         handoff=handoff,
         user_config=user_config,
         creds=creds,
+        setup_github=setup_github,
         stop_after=stop_after,
         ports=tuple(ports) if ports else None,
         create_argv=_argv_without_reuse(ctx),
@@ -429,6 +434,7 @@ def _attach(
     name: Annotated[str | None, typer.Option("--name", "-n", help="Require this exact session name.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
     raw: Annotated[bool, typer.Option("--raw", help="If the primary tmux session is missing, start a plain recovery shell without rerunning launch preparation.")] = False,
+    setup_github: Annotated[bool | None, typer.Option("--setup-github/--no-setup-github", help="Set up GitHub authentication before attaching; defaults to github.auth (enabled by default).")] = None,
 ) -> None:
     """Attach to the unambiguous session matching every supplied selector.
 
@@ -454,10 +460,11 @@ def _attach(
             f"Run {ui.command(f'attach {chosen.name}')!r} in a terminal."
         )
     ui.info(f"selectors matched session {chosen.name!r}; attaching")
+    github_override = {} if setup_github is None else {"setup_github": setup_github}
     if raw:
-        attach_ops.attach(chosen.name, restart=restart, raw=True)
+        attach_ops.attach(chosen.name, restart=restart, raw=True, **github_override)
     else:
-        attach_ops.attach(chosen.name, restart=restart)
+        attach_ops.attach(chosen.name, restart=restart, **github_override)
 
 
 ATTACH_HELP = f"""{command_docs.ATTACH.summary}

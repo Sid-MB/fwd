@@ -19,10 +19,10 @@ from pathlib import Path
 
 import typer
 
-from fwd import sync, ui
+from fwd import github_auth, sync, ui
 from fwd.config import load_config
 from fwd.ops import launch as launch_ops
-from fwd.sshexec import SSHEndpoint
+from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
 
 
@@ -79,6 +79,15 @@ def push(name: str | None = None) -> None:
                 on_progress=transfer,
                 on_path=transfer.path,
             )
+    session.flags["github_auth_ready"] = False
+    tool_prefix = session.flags.get("tool_prefix")
+    if cfg.github.auth and isinstance(tool_prefix, str) and tool_prefix:
+        try:
+            if github_auth.ensure_remote(endpoint, local_cwd, session.remote_dir, tool_prefix):
+                session.flags["github_auth_ready"] = True
+        except (github_auth.GitHubAuthError, SSHError) as exc:
+            ui.warn(f"project push succeeded, but GitHub authentication could not be restored ({exc})")
+    launch_ops.store().update(session.name, flags=session.flags)
     ui.ok(f"pushed to {session.name!r}")
 
 

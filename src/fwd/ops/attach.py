@@ -33,14 +33,15 @@ from typing import NoReturn
 
 import typer
 
-from fwd import agents, remote, stop_after as stop_after_ops, ui
+from fwd import agents, github_auth, remote, stop_after as stop_after_ops, ui
 from fwd.backends.base import TargetStatus
+from fwd.config import ConfigError
 from fwd.ops import launch as launch_ops
-from fwd.sshexec import SSHEndpoint
+from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState, endpoint_to_dict
 
 
-def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = None) -> NoReturn:
+def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = None, setup_github: bool | None = None) -> NoReturn:
     """Re-run the full launch pipeline for an existing session, reusing its recorded launch flags.
 
     Never returns: ``launch`` execs into attach on success.
@@ -54,6 +55,7 @@ def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = 
         handoff=bool(flags.get("handoff")),
         user_config=bool(flags.get("user_config")),
         creds=bool(flags.get("creds")),
+        setup_github=setup_github,
         attach=True,
         forward_ports=forward_ports,
     )
@@ -151,7 +153,14 @@ def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
         raise typer.Exit(1)
 
 
-def attach(name: str | None = None, *, restart: bool = False, raw: bool = False, forward_ports: tuple[str, ...] | None = None) -> NoReturn:
+def attach(
+    name: str | None = None,
+    *,
+    restart: bool = False,
+    raw: bool = False,
+    forward_ports: tuple[str, ...] | None = None,
+    setup_github: bool | None = None,
+) -> NoReturn:
     """Attach to an existing session's remote tmux, reconciling live status first.
 
     Args:
@@ -160,6 +169,7 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False,
             non-interactive run, since the alternative is silently spending money.
         raw: When the target is running but its primary tmux session is missing, create a plain recovery shell without rerunning sync, tool installation, dependency installation, project setup, or agent startup.
         forward_ports: Optional mappings requested by the ``fwd up --reuse`` compatibility path; direct attach leaves forwarding unchanged.
+        setup_github: Per-attach GitHub setup override; ``None`` uses the current project configuration.
 
     Never returns: either execs into ssh, relaunches, or exits with a message.
     """
@@ -190,7 +200,7 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False,
         # A stopped pod has a wiped container disk, so only the full launch pipeline can repair it.
         ui.warn(f"session {session.name!r}: target is stopped")
         _confirm_restart(f"restart session {session.name!r}?", restart=restart, action="restart billable compute")
-        _relaunch(session, forward_ports=forward_ports)
+        _relaunch(session, forward_ports=forward_ports, setup_github=setup_github)
 
     # Re-resolve rather than trusting the cached address: RunPod reassigns IP and port on every restart.
     try:
@@ -224,7 +234,33 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False,
         else:
             # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline, so it goes through the same gate rather than inventing a second policy.
             _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
-            _relaunch(session, forward_ports=forward_ports)
+            _relaunch(session, forward_ports=forward_ports, setup_github=setup_github)
+
+    local_cwd = Path(session.local_cwd).expanduser().resolve()
+    try:
+        cfg = launch_ops.load_config(local_cwd)
+    except ConfigError as exc:
+        ui.die(str(exc))
+    setup_github_effective = cfg.github.auth if setup_github is None else setup_github
+    if setup_github_effective:
+        tool_prefix = session.flags.get("tool_prefix")
+        if not isinstance(tool_prefix, str) or not tool_prefix:
+            if setup_github is True:
+                ui.die(f"session {session.name!r} predates remote tool metadata; rerun {ui.command('up')!r} to repair it")
+            ui.warn("GitHub setup skipped because this session predates its recorded remote tool path")
+        else:
+            try:
+                ready = github_auth.ensure_remote(
+                    endpoint,
+                    local_cwd,
+                    session.remote_dir,
+                    tool_prefix,
+                    required=setup_github is True,
+                )
+                if ready:
+                    session.flags["github_auth_ready"] = True
+            except (github_auth.GitHubAuthError, SSHError) as exc:
+                ui.die(str(exc))
 
     if forward_ports is not None:
         ports_ops.ensure_session_ports(session, forward_ports, endpoint=endpoint)

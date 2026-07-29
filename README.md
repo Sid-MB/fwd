@@ -375,6 +375,7 @@ neither the checkout nor the remote project is modified.
 | `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
+| `--setup-github` / `--no-setup-github` | Require or skip GitHub credential setup for this launch | `fwd up --no-setup-github codex` |
 | `--attach/-a` | Attach directly after startup instead of streaming an explicit command | `fwd up -a -- bash` |
 | `--no-attach`, `--detach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --detach codex` |
 | `--stop-after` | Stop the remote session server-side after an explicit streamed command completes | `fwd up --stop-after -- pytest -q` |
@@ -475,35 +476,47 @@ Set defaults for any of these under `[claude]` in your config.
 
 ### GitHub authentication
 
-Remote repositories include `.git`, so agents can create commits, but fwd does not copy a GitHub credential by
-default. Opt in explicitly when the remote should fetch private dependencies or push commits:
+Remote repositories include `.git`, so agents can create commits. Development VMs set up GitHub authentication by
+default so those commits can be pushed without stopping to repair credentials:
 
 ```toml
 [github]
 auth = true
 ```
 
-The command form writes the same project-local setting:
+Set `auth = false` for an untrusted target or project. The command form writes either project-local preference:
 
 ```sh
 fwd config set --project github.auth true
+fwd config set --project github.auth false
 ```
 
-This requires a working local `gh auth status --active --hostname github.com`. Before provisioning, fwd validates that
-login; during launch it installs the official GitHub CLI release if needed and streams `gh auth token` directly into
-remote `gh auth login --with-token`. The token is never placed in argv, logs, fwd config, or session state.
-`gh auth setup-git` configures HTTPS pushes, while the effective local `user.name` and `user.email` fill only missing
-repository-local values. On RunPod GPU targets, the remote gh credential store lives under the persistent tool prefix
-and its standard `~/.config/gh` path is recreated after `/root` resets. Enabling this places a live GitHub credential
-on the remote volume; omit the section for untrusted targets. The setting is applied by the next `fwd up`. A direct
-`fwd send git push` also applies it in place when the setting was enabled after the session started, preserving
-remote-only work without a launch-time resynchronization. Existing SSH Git remotes continue to use remote SSH
-credentials, so use an HTTPS GitHub remote when opting into token transfer.
+For a one-off override, use `fwd up --setup-github`, `fwd up --no-setup-github`, `fwd attach --setup-github`, or
+`fwd attach --no-setup-github`. An explicit `--setup-github` requires successful setup; the default-on behavior is
+best effort in unattended launches so a missing credential does not prevent provisioning.
+
+Fwd checks standard local sources in order: `GH_TOKEN`, `GITHUB_TOKEN`, the active `gh` account, Git's configured
+credential helper (including Git Credential Manager and the macOS Keychain), and `~/.netrc`. If none works in an
+interactive terminal, fwd offers a hidden PAT prompt. During launch it installs the official GitHub CLI release if needed and streams the
+credential over standard input. The token is never placed in argv, logs, fwd config, project files, or session state.
+`gh auth setup-git` configures HTTPS pushes; fine-grained PATs that GitHub CLI cannot store use a private persistent
+credential-helper file instead. Repository-local URL rewriting transparently carries GitHub SSH remotes over HTTPS
+inside the VM, while the effective local `user.name` and `user.email` fill only missing repository-local values.
+On RunPod GPU targets, credentials live under the persistent tool prefix and survive `/root` resets.
+
+Launch applies authentication before starting Codex or Claude. A direct `fwd send git push`, an agent message, or
+`fwd attach` also repairs an older running session in place, preserving remote-only work without launch-time
+resynchronization. Once prepared, the session records only a non-secret readiness flag so later agent messages remain
+fast. Because `fwd push` uploads local `.git` metadata, it reapplies the remote-only credential and URL configuration
+after the transfer.
 
 `fwd pull && git push` is not an equivalent fallback for a commit created remotely. Pull deliberately excludes
 `.git/`, so it retrieves working-tree content but not remote commits, refs, or objects. For uncommitted remote changes,
 pull the files, commit locally, and push locally. For an already-created remote commit, enable GitHub authentication
 and push it from the remote session, or explicitly export and apply a patch or Git bundle before pushing locally.
+An authenticated `fetch first` or non-fast-forward rejection means GitHub was reached successfully but the remote
+branch advanced; fetch and rebase or merge normally. Fwd never rewrites history or starts an automatic rebase during
+credential setup.
 
 ## Project toolchains
 
@@ -728,7 +741,7 @@ user_config = false   # upload ~/.claude bundle
 creds = false         # copy credentials to the remote machine
 
 [github]
-auth = false          # opt in to local gh authentication transfer and remote Git pushes
+auth = true           # default; set false to keep GitHub credentials off the remote
 
 [agents.claude]
 full_access = true    # VM is the isolation boundary; launch with bypassPermissions
