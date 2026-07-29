@@ -19,6 +19,11 @@ fwd up --target TARGET --agent codex
 
 Agents should run them without `--attach`. Non-interactive detection keeps the launch in the background.
 
+On RunPod, fwd prepares agent state before tool installation because `/root` is erased on every stop. GPU pods keep
+`~/.claude` or `~/.codex` beneath the persistent tool prefix and recreate the home symlink on relaunch, so remote
+authentication, conversations, settings, and Codex's managed standalone payload survive. CPU pods have no persistent
+volume; their full relaunch reconstructs local inputs but cannot retain state that existed only on the stopped pod.
+
 After launch, communicate with the running remote conversation through durable send tasks:
 
 ```sh

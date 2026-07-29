@@ -192,6 +192,12 @@ fwd attach --target work --agent codex
 
 Detach with tmux `ctrl-b d`.
 
+During launch, fwd installs `~/.config/fwd/tmux.conf` from the first local config found at `~/.tmux.conf` or
+`~/.config/tmux/tmux.conf`. If neither path exists, the generated fallback enables the mouse, retains 100,000 history
+lines, uses vi copy mode, reduces escape delay, enables clipboard and focus integration, and binds selection plus
+half-page scrolling. The remote user's `~/.tmux.conf` is never overwritten. Existing tmux servers source the installed
+file immediately; newly started servers load it with `tmux -f`.
+
 ## Stop and destroy
 
 ```sh

@@ -72,6 +72,7 @@ class ClaudeAgent(Agent):
     name = "claude"
     command = ("claude",)
     tools = (CLAUDE,)
+    remote_home_entry = ".claude"
 
     def launch_flags(self, config: Config, options: AgentLaunchOptions) -> dict[str, Any]:
         """Merge explicit transfer switches with Claude config, preserving handoff/session precedence."""

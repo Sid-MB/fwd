@@ -12,6 +12,8 @@ When the remote CLI and account support it, agent launches also enable cross-dev
 interactive conversation with Remote Control enabled for claude.ai and the Claude mobile app. Codex starts its
 persistent Remote Control app-server daemon beside the terminal TUI, making the remote machine discoverable to
 supported signed-in Codex clients. Missing support, authentication, or enrollment never blocks the tmux session.
+Missing agent CLIs are installed from their native vendor installers: Claude uses Anthropic's native distribution,
+and Codex uses OpenAI's managed standalone distribution because npm/Bun Codex installations cannot host app-server.
 
 Existing tools either remote-*view* a session that stays pinned to your laptop, or provision machines with no session
 story at all. `fwd` does the handoff itself.
@@ -85,6 +87,12 @@ match an existing session they attach, and when none matches they create and att
 selectors choose or provision the session and the command uses the same durable task runner as `fwd send -- COMMAND`;
 it therefore appears in `fwd send --ls` and supports the same streaming, backgrounding, cancellation, and
 `--stop-after` behavior. Inside an attached session, detach with `ctrl-b d` (tmux); the primary process keeps running.
+
+Every launch installs a remote tmux configuration at `~/.config/fwd/tmux.conf`. Fwd copies the first local config found
+at `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; when neither exists, it uses a dependency-free fallback with mouse
+support, 100,000 lines of history, vi copy mode, fast escape handling, clipboard integration, focus events, and
+selection/scroll bindings. The separate fwd path preserves any remote `~/.tmux.conf`. New tmux servers load the file
+at startup, while an already-running server reloads it during `fwd up`.
 
 `--reuse` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
 Instead it prints the exact `fwd up` command without `--reuse` that an agent or script can use to create the session.
@@ -608,11 +616,15 @@ Needs `runpodctl` installed and configured (>= 2.6.0). Three things worth knowin
 (`docs/runpod-notes.md`):
 
 - **The container disk is wiped on stop; only a GPU pod's persistent volume survives.** On a GPU target,
-  `remote_base` and `tool_prefix` therefore belong under `volume_mount_path`.
+  `remote_base` and `tool_prefix` therefore belong under `volume_mount_path`. Fwd relocates the selected agent's
+  mutable home (`~/.claude` or `~/.codex`) beneath that tool prefix before installation, preserving logins,
+  conversations, settings, and Codex's managed app-server payload while recreating the conventional home path as a
+  symlink on every full launch.
 - **CPU-only pods silently get no persistent volume.** `--volume-in-gb` is folded into the container disk and
   `/workspace` never exists. `fwd` detects this, relocates the project to `/root/fwd/...` on the container disk, and
-  warns loudly that everything there is wiped on stop. `volume_gb` is irrelevant and omitted from CPU setup. Use a
-  GPU pod if work must survive `fwd stop`.
+  warns loudly that everything there is wiped on stop. A restart still reruns the full sync/bootstrap/install/settings
+  pipeline, but no implementation can preserve remote-only credentials or conversations without durable storage.
+  `volume_gb` is irrelevant and omitted from CPU setup. Use a GPU pod if work must survive `fwd stop`.
 - **`cloud_type = "community"` is the cheap option and still works fully.** Community-cloud pods were verified to
   expose a direct `ip:port` for 22/tcp with no extra flags, so rsync stays available.
 

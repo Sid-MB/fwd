@@ -11,9 +11,12 @@ from fwd.tooling.base import ToolRequirement, merge_requirements
 
 
 def _probe(endpoint: SSHEndpoint, requirement: ToolRequirement) -> tuple[bool, str]:
-    """Return whether an executable resolves and its version probe succeeds."""
-    version = shlex.join(requirement.version_command)
-    command = f"{source_env()}command -v {shlex.quote(requirement.command)} >/dev/null 2>&1 && {version}"
+    """Return whether the requirement's standard or distribution-specific health probe succeeds."""
+    if requirement.probe_script is not None:
+        command = f"{source_env()}{requirement.probe_script}"
+    else:
+        version = shlex.join(requirement.version_command)
+        command = f"{source_env()}command -v {shlex.quote(requirement.command)} >/dev/null 2>&1 && {version}"
     result = endpoint.run(command, check=False)
     output = (result.stdout or result.stderr or "").strip().splitlines()
     return result.returncode == 0, output[0] if output else ""

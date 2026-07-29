@@ -553,6 +553,7 @@ class RunpodBackend(Backend):
             backend_ids={"pod_id": pod_id, "pod_name": pod_name},
             tool_prefix=tool_prefix,
             scratch=scratch,
+            ephemeral_home=True,
             notes=notes,
         )
 

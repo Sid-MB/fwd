@@ -7,7 +7,7 @@ description: Move a coding project or active Claude Code/Codex workflow to remot
 
 Use `fwd` to provision or reuse a remote machine, synchronize the current project, bootstrap its tools, and run a persistent shell, command, Claude Code, or Codex session in tmux. The invocation of this skill indicates that the user wants `fwd` to be used.
 
-Agent launches enable remote-control capabilities when the installed CLI and remote account support them. Claude publishes its interactive conversation to Claude web/mobile; Codex runs its managed Remote Control app-server beside the primary terminal TUI. Capability or authentication failures are informational and must not block normal launch.
+Agent launches enable remote-control capabilities when the installed CLI and remote account support them. Claude publishes its interactive conversation to Claude web/mobile; Codex runs its managed Remote Control app-server beside the primary terminal TUI. Missing CLIs use native vendor installers; fwd migrates npm/Bun Codex to OpenAI's daemon-capable managed standalone distribution. Capability or authentication failures are informational and must not block normal launch.
 
 ## Installation
 If `fwd` is not on `PATH`, install the GitHub version with `uv tool install git+https://github.com/Sid-MB/fwd`. If `uv` is unavailable, tell the user that Python 3.12+, `uv`, `ssh`, and `rsync` are the local prerequisites instead of improvising another installer.
@@ -74,6 +74,7 @@ Use `fwd ls --json` to discover session names and live state. Existing-session c
 Every session has one primary persistent process started by `fwd up`. It may be a shell, the layered `default_command`, or a registered agent. An explicit arbitrary command—including a root shortcut such as `fwd runpod pytest -q`—selects or provisions the session, then uses the same durable task manager as `fwd send -- COMMAND`; it therefore appears in `fwd send --ls`. The primary pane remains a shell unless `--attach` explicitly runs the command there and enters tmux. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
 
 Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running.
+Launch installs `~/.config/fwd/tmux.conf` on the remote from the first existing local `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; if neither exists, fwd installs a portable mouse-enabled fallback with deep history and improved copy-mode scrolling. The isolated path preserves the remote user's ordinary tmux config and is reloaded on repair launches.
 When preparation failed before the primary tmux session was created, `fwd attach SESSION --raw` creates a plain
 login-shell tmux in the synced project and attaches to it without repeating launch preparation.
 

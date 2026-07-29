@@ -11,12 +11,15 @@ from fwd.agents.base import Agent
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.tooling.requirements import CODEX
 
+MANAGED_CODEX = '"$HOME/.codex/packages/standalone/current/codex"'
+
 
 def _remote_control_status(endpoint: SSHEndpoint) -> int:
-    """Return 0 when Remote Control and ChatGPT auth are ready, 2 for missing auth, or 1 when unsupported."""
+    """Return 0 when managed Remote Control and ChatGPT auth are ready, 2 for missing auth, or 1 when unsupported."""
     probe = endpoint.run(
-        "codex remote-control start --help >/dev/null 2>&1 || exit 1; "
-        "codex login status 2>/dev/null | grep -q 'Logged in using ChatGPT' || exit 2; "
+        f"test -x {MANAGED_CODEX} || exit 1; "
+        f"{MANAGED_CODEX} remote-control start --help >/dev/null 2>&1 || exit 1; "
+        f"{MANAGED_CODEX} login status 2>/dev/null | grep -q 'Logged in using ChatGPT' || exit 2; "
         "printf fwd-codex-remote-control-ready",
         check=False,
     )
@@ -28,7 +31,7 @@ def _remote_control_status(endpoint: SSHEndpoint) -> int:
 def _start_remote_control(endpoint: SSHEndpoint) -> bool:
     """Start the managed app-server daemon without making an optional capability block the primary TUI."""
     try:
-        result = endpoint.run("codex remote-control start --json >/dev/null", check=False, timeout=120)
+        result = endpoint.run(f"{MANAGED_CODEX} remote-control start --json >/dev/null", check=False, timeout=120)
     except SSHError as exc:
         ui.warn(f"could not start Codex Remote Control; continuing with the terminal session ({exc})")
         return False
@@ -45,6 +48,7 @@ class CodexAgent(Agent):
     name = "codex"
     command = ("codex",)
     tools = (CODEX,)
+    remote_home_entry = ".codex"
 
     def _runtime_args(self, flags: Mapping[str, object]) -> list[str]:
         """Apply VM-safe full access unless configured argv already selects an approval or sandbox policy."""

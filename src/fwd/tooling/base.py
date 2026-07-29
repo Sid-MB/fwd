@@ -25,7 +25,12 @@ class ToolInstaller:
 
 @dataclass(frozen=True, slots=True)
 class ToolRequirement:
-    """A remote executable, its health probe, and ordered installation fallbacks."""
+    """A remote executable, its health probe, and ordered installation fallbacks.
+
+    ``probe_script`` is reserved for distributions whose identity is part of readiness, such as Codex's managed
+    standalone install. Most tools should retain the portable command-plus-version probe represented by the other
+    fields.
+    """
 
     name: str
     command: str
@@ -33,6 +38,7 @@ class ToolRequirement:
     installers: tuple[ToolInstaller, ...] = ()
     required: bool = True
     hint: str | None = None
+    probe_script: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

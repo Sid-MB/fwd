@@ -41,6 +41,10 @@ to upload settings or import conversation state, and return serializable flags n
 later restart. Keep optional state transfer best-effort: failure to copy convenience state should not discard a
 successfully provisioned machine.
 
+Set `remote_home_entry` to the product-owned hidden directory when authentication, conversations, or managed payloads
+live beneath remote `$HOME`. Backends with disposable homes ask the shared base implementation to relocate that
+directory beneath the tool prefix before resolving tools; other backends leave the user's home untouched.
+
 Override `launch_flags()` only if the agent owns special CLI/config behavior. Agent-independent orchestration should
 never test `agent.name`; put that decision in the implementation instead.
 
@@ -48,6 +52,8 @@ Optional remote-control setup also belongs in the agent implementation because p
 Claude decorates its long-lived interactive command, while Codex starts a separate managed app-server daemon beside
 the primary TUI. Probe both CLI support and compatible account authentication, degrade to the normal terminal session
 when unavailable, and never make remote-control enrollment a prerequisite for launching the agent.
+Codex must invoke the standalone binary at `~/.codex/packages/standalone/current/codex` for daemon probes and startup;
+the npm/Bun CLI exposing the same subcommand help does not establish that the managed daemon payload is installed.
 
 ## Register and test it
 

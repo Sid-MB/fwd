@@ -17,6 +17,7 @@ from typing import Any, Mapping
 from fwd.config import Config
 from fwd.sshexec import SSHEndpoint
 from fwd.tooling import ToolRequirement
+from fwd.agents.remote_state import install_persistent_home
 
 ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -51,6 +52,7 @@ class Agent(ABC):
     name: str
     command: tuple[str, ...]
     tools: tuple[ToolRequirement, ...]
+    remote_home_entry: str | None = None
 
     def launch_flags(self, config: Config, options: AgentLaunchOptions) -> dict[str, Any]:
         """Resolve CLI/config options into serializable session flags.
@@ -97,6 +99,11 @@ class Agent(ABC):
         """Prepare state that must exist before project synchronization and return opaque transfer state."""
         del local_cwd, flags
         return None
+
+    def prepare_remote_home(self, endpoint: SSHEndpoint, tool_prefix: str, *, ephemeral: bool) -> None:
+        """Relocate product-owned home state when the backend reports that the normal remote home is disposable."""
+        if ephemeral and self.remote_home_entry is not None:
+            install_persistent_home(endpoint, tool_prefix, self.remote_home_entry)
 
     def prepare_remote(self, endpoint: SSHEndpoint, remote_dir: str, flags: dict[str, Any], local_state: object | None) -> dict[str, Any]:
         """Install settings/state after bootstrap and return additional serializable session flags."""

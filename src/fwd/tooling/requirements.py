@@ -225,9 +225,8 @@ exit 1
 """.strip(),
             requirements=(CURL,),
         ),
-        ToolInstaller("npm", 'npm_config_prefix="$FWD_TOOL_PREFIX/npm" npm install -g @anthropic-ai/claude-code', requirements=(NPM,)),
     ),
-    hint="Install Claude Code on the remote host, or provide curl/npm for fwd's persistent user-space installer.",
+    hint="Install Claude Code on the remote host, or provide curl for fwd's persistent native installer.",
 )
 
 CODEX = ToolRequirement(
@@ -235,21 +234,23 @@ CODEX = ToolRequirement(
     command="codex",
     version_command=("codex", "--version"),
     installers=(
-        ToolInstaller("npm", 'npm_config_prefix="$FWD_TOOL_PREFIX/npm" npm install -g @openai/codex', requirements=(NPM,)),
         ToolInstaller(
-            "Bun",
+            "Codex managed standalone installer",
             """
-BUN_INSTALL="$FWD_TOOL_PREFIX/bun" bun install --global @openai/codex >/dev/null 2>&1
-codex_entry="$FWD_TOOL_PREFIX/bun/install/global/node_modules/@openai/codex/bin/codex.js"
-test -f "$codex_entry" || exit 1
-cat >"$FWD_TOOL_PREFIX/bin/codex" <<EOF
-#!/bin/sh
-exec "$FWD_TOOL_PREFIX/bun/bin/bun" "$codex_entry" "\\$@"
-EOF
-chmod +x "$FWD_TOOL_PREFIX/bin/codex"
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+managed_codex="$HOME/.codex/packages/standalone/current/codex"
+test -x "$managed_codex"
+ln -sf "$managed_codex" "$FWD_TOOL_PREFIX/bin/codex"
 """.strip(),
-            requirements=(BUN,),
+            requirements=(CURL,),
         ),
     ),
-    hint="Install Codex on the remote host, or provide npm/Bun (or curl and unzip) for fwd's persistent user-space installer.",
+    hint="Install Codex with its managed standalone installer, or provide curl so fwd can install the daemon-capable distribution.",
+    probe_script="""
+managed_codex="$HOME/.codex/packages/standalone/current/codex"
+resolved_codex="$(command -v codex 2>/dev/null)" || exit 1
+test -x "$managed_codex"
+test "$(readlink -f "$resolved_codex")" = "$(readlink -f "$managed_codex")"
+"$managed_codex" --version
+""".strip(),
 )

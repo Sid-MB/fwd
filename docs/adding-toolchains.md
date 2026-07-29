@@ -101,7 +101,9 @@ EXAMPLE = ToolRequirement(
 )
 ```
 
-Prerequisites belong to the specific installer that uses them, not unconditionally to the resulting tool. For example, Codex's npm installer declares `requirements=(NPM,)`, while its Bun installer declares `requirements=(BUN,)`. The resolver first reuses an existing Codex; otherwise it recursively resolves only the current installer path, skips that path if a prerequisite cannot be prepared, and continues to the next installer. Successfully resolved prerequisites are shared across every agent and toolchain requirement in the launch. Cycles fail before running an installer and show the complete executable chain.
+Prerequisites belong to the specific installer that uses them, not unconditionally to the resulting tool. For example, the native Claude and managed standalone Codex installers declare `requirements=(CURL,)`, while JavaScript package managers declare only their own prerequisites. The resolver first reuses an installation that passes the requirement's health probe; otherwise it recursively resolves only the current installer path, skips that path if a prerequisite cannot be prepared, and continues to the next installer. Successfully resolved prerequisites are shared across every agent and toolchain requirement in the launch. Cycles fail before running an installer and show the complete executable chain.
+
+Most requirements use `command` and `version_command` as their health probe. Set `probe_script` only when distribution identity is a required capability rather than an installation preference. Codex uses it because npm and Bun releases can run the terminal CLI but cannot host the managed app-server daemon; its probe accepts only the standalone binary managed under `~/.codex/packages/standalone/current`.
 
 The JavaScript toolchain requests nvm directly whenever `.nvmrc` exists, including Bun projects, so runtime requirements are independent from the package manager that owns `node_modules`. The built-in npm requirement first reuses npm, then tries mise when it is already installed, and finally reuses that nvm requirement to install persistent Node under `FWD_TOOL_PREFIX`. From the synced project directory, nvm runs `nvm install` and `nvm use` against `.nvmrc` when that file exists, or selects the latest LTS otherwise. Bootstrap exposes the persistent nvm function in attached shells, and the installer links the selected Node version's executable commands into the existing fwd bin directory so later non-interactive probes and dependent installers see the same runtime.
 
@@ -109,7 +111,7 @@ When every installer path for a required tool fails, the resolver's error must p
 
 Installer requirements:
 
-- use an already working remote command instead of replacing it;
+- use an already working remote command instead of replacing it, unless a documented `probe_script` requires a capability-bearing distribution;
 - install without sudo under `FWD_TOOL_PREFIX`;
 - put executables in `$FWD_TOOL_PREFIX/bin` or another directory already exported by `fwd-env.sh`;
 - put caches under `FWD_SCRATCH`;

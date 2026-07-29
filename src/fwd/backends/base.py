@@ -67,6 +67,8 @@ class TargetInfo:
             launches skip re-downloading uv/bun/node/claude.
         scratch: Optional cache/temp root exported to bootstrap and dependency installs.
         notes: Human-readable warnings to surface after provisioning, e.g. "using RunPod proxy, rsync unavailable".
+        ephemeral_home: Whether ``$HOME`` is erased across target stops even when ``tool_prefix`` persists. Agent
+            integrations use this signal to relocate their mutable home directories before installing or launching.
     """
 
     endpoint: SSHEndpoint
@@ -76,6 +78,7 @@ class TargetInfo:
     tool_prefix: str | None = None
     scratch: str | None = None
     notes: list[str] = field(default_factory=list)
+    ephemeral_home: bool = False
 
 
 @dataclass(slots=True)

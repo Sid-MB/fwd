@@ -24,6 +24,7 @@ from pathlib import Path
 from fwd import command_docs, ui
 from fwd.remote_env import FWD_ENV_RELPATH, HOME_ENV_RELPATH, source_env as _source_env
 from fwd.sshexec import SSHEndpoint, SSHError
+from fwd.tmux_config import REMOTE_TMUX_CONFIG_RELPATH, install as _install_tmux_config
 from fwd.toolchains import PROJECT_SETUP_RELPATH, plan as toolchain_plan
 from fwd.tooling import ToolchainPlan, ensure_tools
 
@@ -75,6 +76,11 @@ def run_bootstrap(
     endpoint.run_script(BOOTSTRAP_PATH, env=env, check=True, stream=True)
 
 
+def install_tmux_config(endpoint: SSHEndpoint) -> str:
+    """Install the preferred local tmux configuration, or fwd's portable fallback when none exists."""
+    return _install_tmux_config(endpoint)
+
+
 def detect_toolchain_plan(local_dir: str | Path) -> ToolchainPlan:
     """Detect project ecosystems locally and return their complete shared-tool setup plan."""
     return toolchain_plan(local_dir)
@@ -123,7 +129,9 @@ def tmux_new(
     # The inner command is wrapped in `bash -lc` so fwd-env.sh, the user's profile and shell functions are all live
     # inside the session — a raw tmux command would run with tmux's own minimal environment.
     inner = f"{_source_env()}{exports}{command}"
-    tmux_cmd = shlex.join(["tmux", "new-session", "-d", "-s", session, "-c", cwd, "bash", "-lc", inner])
+    tmux_args = shlex.join(["new-session", "-d", "-s", session, "-c", cwd, "bash", "-lc", inner])
+    config_path = f"$HOME/{REMOTE_TMUX_CONFIG_RELPATH}"
+    tmux_cmd = f'if [ -f "{config_path}" ]; then tmux -f "{config_path}" {tmux_args}; else tmux {tmux_args}; fi'
     endpoint.run(f"{_source_env()}{tmux_cmd}", check=True)
     _verify_tmux_alive(endpoint, session, command)
 

@@ -606,6 +606,15 @@ def _launch(
     tool_prefix = info.tool_prefix or f"{remote_dir.rstrip('/')}/.fwd-tools"
     with ui.step("Bootstrapping remote tooling"):
         remote.run_bootstrap(endpoint, tool_prefix=tool_prefix, remote_dir=remote_dir, scratch=info.scratch)
+    if agent is not None and info.ephemeral_home:
+        with ui.step(f"Preparing persistent {agent.name} state"):
+            agent.prepare_remote_home(endpoint, tool_prefix, ephemeral=True)
+    try:
+        with ui.step("Installing tmux configuration"):
+            tmux_config_source = remote.install_tmux_config(endpoint)
+        ui.info(f"remote tmux configuration uses {tmux_config_source}")
+    except (OSError, sshexec.SSHError) as exc:
+        ui.warn(f"could not install the remote tmux configuration; continuing with tmux defaults ({exc})")
 
     project_plan = remote.detect_toolchain_plan(local_cwd)
     requirements = merge_requirements(project_plan.requirements, agent.tools if agent is not None else ())

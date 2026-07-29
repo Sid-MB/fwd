@@ -205,33 +205,31 @@ def test_resolver_reports_prerequisite_cycles(monkeypatch: pytest.MonkeyPatch) -
         ensure_tools(_Endpoint(), (first,))
 
 
-def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_wrapper(tmp_path: Path) -> None:
+def test_codex_requirement_replaces_a_legacy_cli_with_the_managed_standalone_install(tmp_path: Path) -> None:
     home = tmp_path / "home"
     prefix = tmp_path / "tools"
     fake_bin = tmp_path / "fake-bin"
     home.mkdir()
     fake_bin.mkdir()
-    npm = fake_bin / "npm"
-    npm.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    npm.chmod(0o755)
+    legacy_codex = fake_bin / "codex"
+    legacy_codex.write_text('#!/bin/sh\necho "legacy codex 1.0"\n', encoding="utf-8")
+    legacy_codex.chmod(0o755)
     curl = fake_bin / "curl"
-    curl.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    curl.chmod(0o755)
-    bun = fake_bin / "bun"
-    bun.write_text(
+    curl.write_text(
         "#!/bin/sh\n"
-        'if [ "${1:-}" = "--version" ]; then echo "bun 1.0"; exit 0; fi\n'
-        'if [ -f "${1:-}" ]; then entry="$1"; shift; exec "$entry" "$@"; fi\n'
-        'mkdir -p "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin" "$BUN_INSTALL/bin"\n'
-        'cp "$0" "$BUN_INSTALL/bin/bun"\n'
-        'printf \'#!/bin/sh\\necho "codex 1.0"\\n\' >"$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js"\n'
-        'chmod +x "$BUN_INSTALL/install/global/node_modules/@openai/codex/bin/codex.js"\n',
+        "cat <<'INSTALLER'\n"
+        "#!/bin/sh\n"
+        'managed_dir="$HOME/.codex/packages/standalone/current"\n'
+        'mkdir -p "$managed_dir"\n'
+        'printf \'#!/bin/sh\\necho "codex 2.0"\\n\' >"$managed_dir/codex"\n'
+        'chmod +x "$managed_dir/codex"\n'
+        "INSTALLER\n",
         encoding="utf-8",
     )
-    bun.chmod(0o755)
+    curl.chmod(0o755)
     prefix.mkdir()
     env_file = prefix / "fwd-env.sh"
-    env_file.write_text(f'export FWD_TOOL_PREFIX="{prefix}"\nexport FWD_SCRATCH="{tmp_path / "scratch"}"\nexport BUN_INSTALL="{prefix / "bun"}"\nexport PATH="{prefix / "bin"}:{prefix / "bun" / "bin"}:$PATH"\n', encoding="utf-8")
+    env_file.write_text(f'export FWD_TOOL_PREFIX="{prefix}"\nexport FWD_SCRATCH="{tmp_path / "scratch"}"\nexport PATH="{prefix / "bin"}:$PATH"\n', encoding="utf-8")
     (home / ".fwd-env.sh").write_text(f'. "{env_file}"\n', encoding="utf-8")
     endpoint = _LocalEndpoint({**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
 
@@ -239,10 +237,11 @@ def test_codex_requirement_uses_bun_fallback_and_produces_a_working_persistent_w
 
     assert len(endpoint.scripts) == 1
     wrapper = prefix / "bin" / "codex"
-    assert wrapper.is_file()
+    assert wrapper.is_symlink()
+    assert wrapper.resolve() == home / ".codex/packages/standalone/current/codex"
     result = subprocess.run([str(wrapper), "--version"], env=endpoint.env, capture_output=True, text=True)
     assert result.returncode == 0
-    assert "codex 1.0" in result.stdout
+    assert "codex 2.0" in result.stdout
 
 
 def test_swift_installs_through_swiftly_without_making_swiftly_an_unconditional_root(tmp_path: Path) -> None:

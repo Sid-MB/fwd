@@ -173,6 +173,7 @@ def stub_world(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(sync, "sync_down", record("sync_down", capture="sync_down"))
     monkeypatch.setattr(sync, "tar_down", record("tar_down", capture="tar_down"))
     monkeypatch.setattr(remote, "run_bootstrap", record("run_bootstrap", capture="run_bootstrap"))
+    monkeypatch.setattr(remote, "install_tmux_config", record("install_tmux_config", "fwd default"))
     monkeypatch.setattr(remote, "detect_toolchain_plan", record("detect_tools", ToolchainPlan(names=("python",), requirements=(UV,), commands=("uv sync",))))
     monkeypatch.setattr(remote, "ensure_tools", record("ensure_tools", capture="ensure_tools"))
     monkeypatch.setattr(remote, "run_dep_install", record("run_dep_install", capture="run_dep_install"))
@@ -278,6 +279,7 @@ def test_launch_runs_stages_in_order(project, state_store, config, fake_backend,
         "export_bundle",
         "sync_up",
         "run_bootstrap",
+        "install_tmux_config",
         "ensure_tools",
         "run_dep_install",
         "import_bundle",
