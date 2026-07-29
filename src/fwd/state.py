@@ -78,6 +78,11 @@ class SessionState:
     ``created_at`` is the durable identity timestamp and survives every restart. ``started_at`` is the local estimate
     for the current run and resets only when launch creates a new tmux session; separating them keeps ``fwd ls``
     uptime meaningful without requiring every backend to expose provider-specific creation metadata.
+
+    ``ports`` records local-to-remote loopback mappings owned by the session's dedicated local SSH control master.
+    ``ports_endpoint`` fingerprints the machine behind that master separately from the session's latest provider
+    endpoint, allowing endpoint churn to be reconciled without accidentally forwarding into the previous machine.
+    Listing checks that socket so persisted intent is never mistaken for an active tunnel.
     """
 
     name: str
@@ -91,6 +96,8 @@ class SessionState:
     started_at: str = field(default_factory=_now)
     last_attached: str | None = None
     flags: dict[str, Any] = field(default_factory=dict)
+    ports: list[dict[str, int]] = field(default_factory=list)
+    ports_endpoint: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dict of this session."""
@@ -106,6 +113,8 @@ class SessionState:
             "started_at": self.started_at,
             "last_attached": self.last_attached,
             "flags": dict(self.flags),
+            "ports": [dict(mapping) for mapping in self.ports],
+            "ports_endpoint": dict(self.ports_endpoint),
         }
 
     @classmethod
@@ -120,6 +129,9 @@ class SessionState:
         # time, which would make every legacy session appear to have started whenever `fwd ls` happened to run.
         created_at = kwargs.setdefault("created_at", _now())
         kwargs.setdefault("started_at", created_at)
+        ports = kwargs.get("ports")
+        kwargs["ports"] = [dict(mapping) for mapping in ports if isinstance(mapping, dict)] if isinstance(ports, list) else []
+        kwargs["ports_endpoint"] = dict(kwargs["ports_endpoint"]) if isinstance(kwargs.get("ports_endpoint"), dict) else {}
         return cls(**kwargs)
 
     def ssh_endpoint(self) -> SSHEndpoint:
@@ -129,6 +141,10 @@ class SessionState:
         ``endpoint(session)`` re-resolution instead of trusting this cached value.
         """
         return endpoint_from_dict(self.endpoint)
+
+    def ports_ssh_endpoint(self) -> SSHEndpoint:
+        """Return the endpoint that owns the current forwarding master, falling back for state written before endpoint fingerprints were stored."""
+        return endpoint_from_dict(self.ports_endpoint) if self.ports_endpoint else self.ssh_endpoint()
 
     def touch_attached(self) -> None:
         """Stamp ``last_attached`` to now; caller is responsible for persisting via :meth:`StateStore.upsert`."""

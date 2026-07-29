@@ -20,7 +20,7 @@ import typer
 from fwd import config as config_mod
 from fwd import selection
 from fwd import ui
-from fwd.config import DEFAULT_EXCLUDES, SyncConfig
+from fwd.config import ALWAYS_SYNC_EXCLUDES, DEFAULT_EXCLUDES, SyncConfig
 from fwd.sshexec import SSHEndpoint
 from fwd.sync import RSYNC_BASE, rsync_filters
 
@@ -162,7 +162,9 @@ def test_rsync_shell_mirrors_ssh_options_without_the_target() -> None:
 
 def test_rsync_filters_default_shape(tmp_path: Path) -> None:
     args = rsync_filters(SyncConfig(), tmp_path)
-    assert args[0] == "--filter=:- .gitignore"
+    assert args[len(ALWAYS_SYNC_EXCLUDES)] == "--filter=:- .gitignore"
+    for pattern in ALWAYS_SYNC_EXCLUDES:
+        assert f"--exclude={pattern}" in args
     for pattern in DEFAULT_EXCLUDES:
         assert f"--exclude={pattern}" in args
     # .git must reach the remote so the session can diff, blame and commit.
@@ -175,9 +177,12 @@ def test_rsync_filters_omits_gitignore_when_disabled(tmp_path: Path) -> None:
 
 
 def test_rsync_filters_uses_config_excludes_verbatim(tmp_path: Path) -> None:
-    """A project must be able to *shrink* the exclude list, so config wins outright over DEFAULT_EXCLUDES."""
+    """A project can shrink configurable defaults, while permanent platform exclusions remain."""
     args = rsync_filters(SyncConfig(exclude=["only-this"]), tmp_path)
-    assert [a for a in args if a.startswith("--exclude=")] == ["--exclude=only-this"]
+    assert [a for a in args if a.startswith("--exclude=")] == [
+        *(f"--exclude={pattern}" for pattern in ALWAYS_SYNC_EXCLUDES),
+        "--exclude=only-this",
+    ]
 
 
 def test_rsync_filters_picks_up_fwdignore(tmp_path: Path) -> None:
@@ -251,11 +256,18 @@ def test_rsync_transport_stops_outbound_wire_bytes_at_the_limit(tmp_path: Path) 
         ]
     )
     progress: list[int] = []
-    sync_mod._run_bounded_rsync([*RSYNC_BASE, "-e", bounded_shell, f"{source}/", f"fake:{destination}/"], successful_sentinel, progress.append)
+    transferred_paths: list[str] = []
+    sync_mod._run_bounded_rsync(
+        [*RSYNC_BASE, "--out-format=%n%L", "-e", bounded_shell, f"{source}/", f"fake:{destination}/"],
+        successful_sentinel,
+        progress.append,
+        transferred_paths.append,
+    )
     assert (destination / "hello.txt").read_text(encoding="utf-8") == "hello"
     assert not successful_sentinel.exists()
     assert progress == sorted(progress)
     assert progress[-1] > 0
+    assert "hello.txt" in transferred_paths
 
     sentinel = tmp_path / "exceeded"
     consumer = [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"]
@@ -298,14 +310,18 @@ def test_tar_upload_always_stages_and_traps_cleanup() -> None:
     assert command.index("tar xzf") < command.index("cp -a")
 
     progress: list[int] = []
+    transferred_paths: list[str] = []
     sync_mod._pipe(
-        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'abcdef')"],
+        [sys.executable, "-c", "import sys; print('a ./artifact.bin', file=sys.stderr); sys.stdout.buffer.write(b'abcdef')"],
         [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
         what="test tar push",
         max_bytes=100,
         on_progress=progress.append,
+        on_path=transferred_paths.append,
+        producer_paths_from_stderr=True,
     )
     assert progress == [6]
+    assert transferred_paths == ["artifact.bin"]
 
 
 def test_upload_limit_error_offers_project_and_user_config_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -410,15 +410,16 @@ def _sync_project(
     cfg: Config,
     *,
     on_progress: sync.TransferProgress | None = None,
+    on_path: sync.TransferPath | None = None,
 ) -> None:
     """Mirror the project up, choosing rsync or the tar fallback based on what the transport supports."""
     if endpoint.supports_rsync:
-        sync.sync_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress)
+        sync.sync_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress, on_path=on_path)
         return
     # RunPod's proxy transport cannot run a remote rsync binary, so delta transfer is lost entirely. Loud, because
     # the user is about to wonder why every push is slow.
     ui.warn("transport does not support rsync; falling back to tar-over-ssh (no delta transfer, slower pushes)")
-    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress)
+    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress, on_path=on_path)
 
 
 def launch(
@@ -435,6 +436,7 @@ def launch(
     attach: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
+    forward_ports: tuple[str, ...] | None = None,
 ) -> SessionState:
     """Run the launch pipeline and safely clean up invocation-owned resources on Ctrl-C."""
     cleanup = _InterruptCleanup(store=store(), session_name=name or derive_session_name(Path.cwd()))
@@ -452,6 +454,7 @@ def launch(
             attach=attach,
             push_only=push_only,
             run_command_as_task=run_command_as_task,
+            forward_ports=forward_ports,
             interrupt_cleanup=cleanup,
         )
     except KeyboardInterrupt:
@@ -473,6 +476,7 @@ def _launch(
     attach: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
+    forward_ports: tuple[str, ...] | None = None,
     interrupt_cleanup: _InterruptCleanup,
 ) -> SessionState:
     """Provision, sync and bootstrap a target, then start a persistent shell, command, or Claude session.
@@ -494,6 +498,7 @@ def _launch(
         run_command_as_task: Start a shell as the primary pane so the caller can run a separate explicit command
             through the durable task manager after launch. The caller passes an empty ``initial_command`` because the
             managed task, rather than the primary session, owns the requested command argv and task metadata.
+        forward_ports: Explicit launch mappings from ``--ports``; ``None`` uses ``forwarding.ports`` from configuration.
 
     Returns:
         The persisted :class:`~fwd.state.SessionState`. Does not return when ``attach`` is ``True``, since the
@@ -522,6 +527,10 @@ def _launch(
             session_name = existing.name
         target_hint = existing
     interrupt_cleanup.session_name = session_name
+    desired_ports = tuple(cfg.forwarding.ports) if forward_ports is None else forward_ports
+    from fwd.ops import ports as ports_ops
+
+    ports_ops.preflight_launch_ports(existing, desired_ports)
 
     target_cfg = _resolve_target_or_setup(cfg, target, target_hint, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
@@ -588,7 +597,7 @@ def _launch(
 
     # 4. Files up.
     with ui.transfer_step(f"Syncing {local_cwd.name} to {remote_dir}") as update_transfer:
-        _sync_project(endpoint, local_cwd, remote_dir, cfg, on_progress=update_transfer)
+        _sync_project(endpoint, local_cwd, remote_dir, cfg, on_progress=update_transfer, on_path=ui.transfer_path)
 
     if push_only:
         return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
@@ -658,6 +667,8 @@ def _launch(
     info.backend_ids = backend_ids
 
     state = _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=tmux_was_running)
+    ports_ops.ensure_session_ports(state, desired_ports, endpoint=endpoint)
+    state = st.get(session_name) or state
     if not attach:
         ui.ok(f"session {session_name!r} ready; attach with {ui.command(f'attach {session_name}')!r}")
         return state
@@ -698,6 +709,8 @@ def _persist(
     )
     if previous is not None:
         state.created_at = previous.created_at
+        state.ports = [dict(mapping) for mapping in previous.ports]
+        state.ports_endpoint = dict(previous.ports_endpoint)
         state.last_attached = previous.last_attached
         if preserve_started_at:
             state.started_at = previous.started_at

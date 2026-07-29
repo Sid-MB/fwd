@@ -3,6 +3,7 @@
 ## Contents
 
 - Configuration discovery
+- Launch-time port forwarding
 - Target resolution
 - First-time setup
 - Backend notes
@@ -25,6 +26,19 @@ User config is `~/.fwd/config.toml`. Project `.fwd/config.toml` deep-merges over
 Uploads are capped at 1 GB by default so accidentally running fwd from a broad directory fails before provisioning.
 Raise the boundary for one known-large project with `fwd config set --project sync.max_size_gb N`; the refusal also
 prints the exact project and user config paths for direct TOML editing.
+
+## Launch-time port forwarding
+
+Local loopback forwards can be declared per project in `.fwd/config.toml`:
+
+```toml
+[forwarding]
+ports = ["3000", "8080:3000"]
+```
+
+The list is validated before provisioning and replaces the user-level list during normal deep merging. Repeat
+`fwd up --ports PORT` to replace configured mappings for one invocation. Launch ensures exact mappings are active,
+preserves unrelated manual forwards, and refuses conflicting or occupied local ports before starting compute.
 
 ## Target resolution
 
@@ -102,3 +116,28 @@ fwd default --target runpod -- python -m agent
 ```
 
 This aliases `fwd config set default_command ...`. Precedence is target, then project, then user, then built-in Claude. Remove one scoped override with `fwd config rm default_command` and the matching scope flag.
+
+## Agent runtime defaults
+
+Each registered agent uses the same configuration shape:
+
+```toml
+[agents.claude]
+full_access = true
+args = []
+environment = { MY_DEFAULT = "1" }
+
+[agents.codex]
+full_access = false
+args = ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"]
+environment = {}
+```
+
+`full_access` defaults to true for fwd's VM-oriented workflow. Claude receives `--permission-mode bypassPermissions`;
+Codex receives `--dangerously-bypass-approvals-and-sandbox`. Set it to false when the target itself is not an adequate
+isolation boundary. Explicit permission or sandbox arguments suppress fwd's full-access argument. Environment entries
+are shell defaults, not overrides, and apply consistently to the primary session, restarts, and sent agent turns.
+
+Modern Claude Code exposes background agents and agent teams by default, and modern Codex enables multi-agent support
+by default. No opt-in environment variable is necessary; agent-specific future tuning belongs in `args` or
+`environment`.

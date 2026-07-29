@@ -104,6 +104,18 @@ def _selected_output_format(output_format: OutputFormat, *, json_output: bool) -
     return OutputFormat.json
 
 
+def _selected_ls_columns(requested: tuple[str, ...], **choices: bool) -> tuple[str, ...] | None:
+    """Combine generic column names with shortcut flags, returning canonical order or the complete-table sentinel."""
+    from fwd.session_columns import LS_COLUMNS, parse_columns
+
+    try:
+        selected = set(parse_columns(requested))
+    except ValueError as exc:
+        ui.die(str(exc))
+    selected.update(column for column, enabled in choices.items() if enabled)
+    return tuple(column for column in LS_COLUMNS if column in selected) or None
+
+
 def _announce_root_alias(ctx: typer.Context, *, target: str | None, agent: str | None, name: str | None, restart: bool) -> None:
     """Announce static and bare-command expansions before onboarding or operation logs can obscure them."""
     invoked = ctx.invoked_subcommand
@@ -236,6 +248,7 @@ def _run_up(
     user_config: bool = False,
     creds: bool = False,
     stop_after: bool = False,
+    ports: tuple[str, ...] | None = None,
     create_argv: tuple[str, ...] | None = None,
 ) -> int | None:
     """Shared launch/reuse implementation, returning an explicit streamed-command exit code when applicable."""
@@ -265,10 +278,14 @@ def _run_up(
     matches = selection.matches
     chosen_match = launch_ops.choose_session(matches, selector.describe()) if matches else None
     managed_command = selector.command is not None and not attach
+    desired_ports = ports if ports is not None else tuple(config.forwarding.ports)
 
     if chosen_match is not None and managed_command and not new:
         from fwd.ops import send as send_ops
+        from fwd.ops import ports as ports_ops
 
+        ports_ops.preflight_launch_ports(chosen_match, desired_ports)
+        ports_ops.ensure_session_ports(chosen_match, desired_ports)
         ui.info(f"selectors matched session {chosen_match.name!r}; running the command as a managed task")
         return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after)
 
@@ -280,7 +297,10 @@ def _run_up(
                 f"session {chosen.name!r} matches, but attaching requires an interactive terminal. "
                 f"Run {ui.command(f'attach {chosen.name}')!r} in a terminal; agents can use {ui.command(f'send --name {chosen.name} -- COMMAND')!r}."
             )
-        attach_ops.attach(chosen.name, restart=restart)
+        if desired_ports:
+            attach_ops.attach(chosen.name, restart=restart, forward_ports=desired_ports)
+        else:
+            attach_ops.attach(chosen.name, restart=restart)
         return
 
     if reuse and not matches and not _interactive_terminal():
@@ -323,6 +343,7 @@ def _run_up(
         user_config=user_config,
         creds=creds,
         attach=effective_attach,
+        forward_ports=ports,
     )
     if stream_command:
         from fwd.ops import send as send_ops
@@ -348,6 +369,7 @@ def _up(
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
     creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
     stop_after: Annotated[bool, typer.Option("--stop-after", help="After an explicit streamed command finishes, stop the remote session from the server even if this computer disconnects.", rich_help_panel=PANEL_TARGET)] = False,
+    ports: Annotated[list[str] | None, typer.Option("--ports", "-p", help="Open PORT or LOCAL:REMOTE after launch; repeat to replace project-configured defaults for this invocation.", rich_help_panel=PANEL_TARGET)] = None,
 ) -> None:
     """Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
 
@@ -376,6 +398,7 @@ def _up(
         user_config=user_config,
         creds=creds,
         stop_after=stop_after,
+        ports=tuple(ports) if ports else None,
         create_argv=_argv_without_reuse(ctx),
     )
     if code is not None:
@@ -512,13 +535,78 @@ app.command("s", hidden=True, context_settings={"allow_extra_args": True, "ignor
 @app.command("ls", help=command_docs.LIST.summary)
 def ls_cmd(
     all_projects: Annotated[bool, typer.Option("--all-projects", help="Show sessions from every locally tracked project instead of only the current project.")] = False,
+    columns: Annotated[list[str] | None, typer.Option("--columns", "-c", help="Show selected columns by comma-separated name; repeat to combine. Session names remain as row identity.")] = None,
+    names: Annotated[bool, typer.Option("--names", help="Show only session names.")] = False,
+    backends: Annotated[bool, typer.Option("--backends", "--backend", help="Show session names and backends.")] = False,
+    statuses: Annotated[bool, typer.Option("--statuses", "--status", help="Show session names and live statuses.")] = False,
+    stop_after: Annotated[bool, typer.Option("--stop-after", help="Show session names and queued stop-after state.")] = False,
+    running: Annotated[bool, typer.Option("--running", help="Show session names and current run durations.")] = False,
+    tmux: Annotated[bool, typer.Option("--tmux", help="Show session names and remote tmux names.")] = False,
+    local_dirs: Annotated[bool, typer.Option("--local-dirs", "--local-dir", help="Show session names and local project directories.")] = False,
+    last_attached: Annotated[bool, typer.Option("--last-attached", help="Show session names and last-attachment times.")] = False,
+    ids: Annotated[bool, typer.Option("--ids", help="Show session names and provider identifiers.")] = False,
+    ports: Annotated[bool, typer.Option("--ports", help="Show session names and local port forwarding.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
     json_output: JsonOutputOption = False,
 ) -> None:
     """List this project's managed sessions with live status queried from each backend."""
     from fwd.ops import lifecycle
 
-    lifecycle.ls(output_format=_selected_output_format(output_format, json_output=json_output), all_projects=all_projects)
+    columns = _selected_ls_columns(
+        tuple(columns or ()),
+        name=names,
+        backend=backends,
+        status=statuses,
+        **{
+            "stop after": stop_after,
+            "running": running,
+            "tmux": tmux,
+            "local dir": local_dirs,
+            "last attached": last_attached,
+            "ids": ids,
+            "ports": ports,
+        },
+    )
+    lifecycle.ls(output_format=_selected_output_format(output_format, json_output=json_output), all_projects=all_projects, columns=columns)
+
+
+@app.command("ports", help=command_docs.PORTS.summary)
+def ports_cmd(
+    arguments: Annotated[list[str] | None, typer.Argument(help="An optional session, target, backend, agent, or tmux selector followed by PORT or LOCAL:REMOTE mappings.", autocompletion=complete_session_selector)] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="Exact session name; defaults to shared positional selectors or the current project.", autocompletion=complete_existing_session)] = None,
+    list_only: Annotated[bool, typer.Option("--ls", help="Alias for fwd ls --ports; one optional selector narrows it to a session.")] = False,
+    close: Annotated[bool, typer.Option("--close", help="Close listed local ports, or every forward for the selected/current session when no ports are listed.")] = False,
+    all_projects: Annotated[bool, typer.Option("--all-projects", help="List or close forwarding across every locally tracked project.")] = False,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="In listing mode, choose the output format.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
+) -> None:
+    """Open background SSH forwards, inspect them, or close them without stopping remote compute."""
+    from fwd import port_forwarding
+    from fwd.ops import ports as ports_ops
+
+    values = tuple(arguments or ())
+    selected_format = _selected_output_format(output_format, json_output=json_output)
+    if list_only and close:
+        ui.die("--ls and --close are mutually exclusive")
+    if close:
+        if output_format is not OutputFormat.auto or json_output:
+            ui.die("--format and --json are available only when listing ports")
+        if all_projects:
+            if values or name is not None:
+                ui.die("--close --all-projects cannot be combined with a session selector or port mapping")
+            ports_ops.close_all_projects()
+        else:
+            ports_ops.close_ports(values, name=name)
+        return
+    contains_mapping = bool(values) and (port_forwarding.mapping_argument(values[0]) or len(values) > 1)
+    if list_only or not contains_mapping:
+        ports_ops.list_ports(values, name=name, all_projects=all_projects, output_format=selected_format)
+        return
+    if all_projects:
+        ui.die("--all-projects cannot be combined with mappings")
+    if output_format is not OutputFormat.auto or json_output:
+        ui.die("--format and --json are available only when listing ports")
+    ports_ops.open_ports(values, name=name)
 
 
 @app.command("push")
@@ -547,12 +635,20 @@ def diff_cmd(
     target: Annotated[str | None, typer.Argument(help="Session name, configured target, or backend; defaults to this directory's session.", autocompletion=complete_diff_target)] = None,
     path: Annotated[str | None, typer.Argument(help="Project-relative file or directory; omit to compare the entire synced project.")] = None,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Print no diff; communicate identical/different/error through exit status only.")] = False,
+    include_gitignored: Annotated[bool, typer.Option("--include-gitignored", help="Also compare Git-ignored content, while retaining .fwdignore and configured sync exclusions.")] = False,
+    include_unsynced: Annotated[bool, typer.Option("--include-unsynced", help="Compare all ordinarily unsynced content; .git and permanent OS metadata exclusions still apply.")] = False,
 ) -> None:
-    """Compare local and remote content: exit 0 if identical, 1 if different, and 2 on errors."""
+    """Compare local and remote content with Git-style output: exit 0 if identical, 1 if different, and 2 on errors."""
     from fwd.ops import diff as diff_ops
 
     try:
-        code = diff_ops.diff(target, path, quiet=quiet)
+        code = diff_ops.diff(
+            target,
+            path,
+            quiet=quiet,
+            include_gitignored=include_gitignored,
+            include_unsynced=include_unsynced,
+        )
     except typer.Exit as exc:
         raise typer.Exit(max(2, exc.exit_code)) from exc
     except Exception as exc:

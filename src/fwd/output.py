@@ -50,6 +50,14 @@ class RecordElement:
     fields: tuple[tuple[str, Any], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class OutputValue:
+    """One table cell with concise human display text and a richer JSON representation."""
+
+    display: str
+    json: Any
+
+
 OutputElement = TableElement | RecordElement
 
 # Experimental ordered format preference used only by automatic rendering. Unknown names are intentionally ignored so
@@ -90,6 +98,8 @@ def resolve_format(requested: OutputFormat | str, *, terminal: bool) -> OutputFo
 
 def _text(value: Any) -> str:
     """Convert a cell to display text while keeping ``None`` explicit and predictable."""
+    if isinstance(value, OutputValue):
+        return value.display
     return "" if value is None else str(value)
 
 
@@ -109,14 +119,19 @@ def _render_markdown(element: OutputElement) -> str:
     return prefix + "\n".join((header, separator, *rows)) + "\n"
 
 
+def _machine_value(value: Any) -> Any:
+    """Return a cell's typed JSON representation while leaving ordinary scalar and container values unchanged."""
+    return value.json if isinstance(value, OutputValue) else value
+
+
 def _json_value(element: OutputElement) -> dict[str, Any]:
     if isinstance(element, RecordElement):
-        return {"type": "record", "title": element.title, "fields": {key: value for key, value in element.fields}}
+        return {"type": "record", "title": element.title, "fields": {key: _machine_value(value) for key, value in element.fields}}
     return {
         "type": "table",
         "title": element.title,
         "columns": list(element.columns),
-        "rows": [{column: value for column, value in zip(element.columns, row, strict=True)} for row in element.rows],
+        "rows": [{column: _machine_value(value) for column, value in zip(element.columns, row, strict=True)} for row in element.rows],
     }
 
 

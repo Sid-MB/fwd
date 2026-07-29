@@ -6,6 +6,7 @@
 - Durable send tasks
 - Synchronization
 - Session inspection
+- Local port forwarding
 - Attachment
 - Stop and destroy
 - Uninstall
@@ -91,12 +92,24 @@ locations, and keeps the executable under fwd's tool prefix. This does not modif
 fwd diff                  # unified diff for the whole current session
 fwd diff pod src/         # target/session/backend selector and one path
 fwd diff -q pod           # status only: 0 same, 1 different, 2 error
+fwd diff --include-gitignored  # add Git-ignored content
+fwd diff --include-unsynced    # add every ordinary sync exclusion
 fwd push                  # mirror local to remote, deleting remote-only files
 fwd pull                  # additive whole-project download
 fwd pull outputs/ logs/   # additive path-scoped download
 ```
 
-`fwd diff` compares temporary filtered snapshots and changes neither side. Prefer it before choosing push or pull.
+`fwd diff` compares temporary filtered snapshots and changes neither side. By default it uses the synchronized content
+domain without `.git/`; `--include-gitignored` retains `.fwdignore` and configured exclusions while adding ignored
+files, including tracked paths that still match an ignore rule, and `--include-unsynced` adds all ordinarily unsynced
+content. Launch/push includes `.git/` for remote agent continuity, but pull and diff never import or compare it.
+Permanent platform junk such as `.DS_Store`, AppleDouble `._*`, `Thumbs.db`, and `Desktop.ini` is excluded from push,
+pull, and diff in every mode. Human terminals receive Git-style colored output, while pipes receive plain unified text.
+Prefer it before choosing push or pull.
+
+Push, pull, and launch-time upload print every selected project-relative path to stderr as it transfers. Rsync reports
+its item stream directly; tar fallback reports archive members while producing the same filtered stream. Keeping this
+listing on stderr preserves stdout for structured command output and piping.
 
 Launch and push preflight the local upload before provisioning or transfer. `sync.max_size_gb` defaults to 1 GB; an
 over-limit error gives the exact `fwd config set --project sync.max_size_gb N` command and both applicable config
@@ -115,12 +128,58 @@ Otherwise it reports every candidate and requires an exact session name.
 ```sh
 fwd ls --json                 # current project
 fwd ls --all-projects --json  # every locally tracked project
+fwd ls --ports                # names and local-to-remote forwarding only
+fwd ls --backend --status     # combine focused column flags
+fwd ls --columns backend,status,ports
 fwd doctor --json
 fwd info --json
 ```
 
 Machine-readable stdout is stable; progress and errors use stderr. In a human terminal, current-project `fwd ls`
 reports when other projects have tracked sessions and points to `--all-projects`; non-interactive and agent runs have no hint.
+The complete table includes exposed ports. Supplying one or more of `--names`, `--backends`, `--statuses`,
+`--stop-after`, `--running`, `--tmux`, `--local-dirs`, `--last-attached`, `--ids`, and `--ports` retains session names
+and shows only the requested fields. These shortcuts combine with repeated or comma-separated `--columns/-c` values.
+
+## Local port forwarding
+
+```sh
+fwd ports 3000 3210
+fwd ports runpod 8080:3000
+fwd ports fwd-myproject-abc123 3000
+fwd ports --ls
+fwd ports --ls --all-projects
+fwd ports --close 3000
+fwd ports runpod --close
+fwd ports --close --all-projects
+fwd up --ports 3000 --ports 8080:3000
+```
+
+Forwards bind local `127.0.0.1` and connect to remote `127.0.0.1`, so they expose a service only to the local machine
+instead of publishing a provider port. `PORT` maps the same number and `LOCAL:REMOTE` remaps it. Session selection is
+shared with attach for one optional selector: exact session and displayed tmux names, configured targets, backends,
+agents, and the implicit current project retain their normal precedence and ambiguity checks. Use `--name` when an
+exact session must be selected independently of positional parsing.
+
+Before SSH is contacted, every requested local port is parsed, deduplicated, and bind-probed. One occupied port aborts
+the complete request. Successful mappings live on a dedicated persistent OpenSSH control master per session. Mapping
+state remains inspectable across CLI processes; a dead master renders its mappings as inactive. Closing with specific
+ports removes those local mappings, closing without ports removes every mapping for the selected/current session, and
+`--close --all-projects` closes all tracked tunnels. Stop and remove also close that session's local forwarding before
+changing remote lifecycle state. Failed closure retains state so a potentially live listener never becomes untracked.
+The forwarding master records its SSH endpoint separately from the session's latest endpoint; endpoint churn closes
+the old master and recreates desired mappings on the current machine. JSON listings expose each mapping as a typed
+`{local, remote, active}` object.
+
+Project launch defaults live in `.fwd/config.toml` and use the same validated mapping grammar:
+
+```toml
+[forwarding]
+ports = ["3000", "8080:3000"]
+```
+
+The project list replaces a user-level list. Repeated `fwd up --ports/-p` values replace configured defaults for one
+invocation, accept already-active exact mappings, and preserve unrelated mappings opened separately with `fwd ports`.
 
 ## Attachment
 

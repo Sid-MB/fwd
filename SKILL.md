@@ -7,9 +7,7 @@ description: Move a coding project or active Claude Code/Codex workflow to remot
 
 Use `fwd` to provision or reuse a remote machine, synchronize the current project, bootstrap its tools, and run a persistent shell, command, Claude Code, or Codex session in tmux. The invocation of this skill indicates that the user wants `fwd` to be used.
 
-Agent launches enable remote-control capabilities when the installed CLI and remote account support them. Claude
-publishes its interactive conversation to Claude web/mobile; Codex runs its managed Remote Control app-server beside
-the primary terminal TUI. Capability or authentication failures are informational and must not block normal launch.
+Agent launches enable remote-control capabilities when the installed CLI and remote account support them. Claude publishes its interactive conversation to Claude web/mobile; Codex runs its managed Remote Control app-server beside the primary terminal TUI. Capability or authentication failures are informational and must not block normal launch.
 
 ## Installation
 If `fwd` is not on `PATH`, install the GitHub version with `uv tool install git+https://github.com/Sid-MB/fwd`. If `uv` is unavailable, tell the user that Python 3.12+, `uv`, `ssh`, and `rsync` are the local prerequisites instead of improvising another installer.
@@ -47,10 +45,7 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Launch and push stop uploads when their streaming size crosses `sync.max_size_gb` (1 GB by default), discard the incomplete remote stage, leave the live project unchanged, and list the largest included files or aggregate folders over 200 MB. If fwd refuses a deliberately large project, use the exact project-scoped `fwd config set` command in its error only after confirming the selected directory is intentional.
 - In non-interactive environments, use explicit flags. Never invoke a setup wizard or invent a missing target.
 - Missing `npx`, the optional `skills` CLI, or an unsuccessful skill refresh must not block normal fwd commands.
-- If launch preparation fails after the target is running and synced, hand the human `fwd attach SESSION --raw` to
-  open a plain recovery shell without rerunning tool or dependency installation. The human can repair the remote
-  environment, exit the recovery shell, and rerun the normal launch; `--raw` does not authorize restarting stopped
-  billable compute.
+- If launch preparation fails after the target is running and synced, hand the human `fwd attach SESSION --raw` to open a plain recovery shell without rerunning tool or dependency installation. The human can repair the remote environment, exit the recovery shell, and rerun the normal launch; `--raw` does not authorize restarting stopped billable compute.
 
 ## Performance checks
 
@@ -72,7 +67,7 @@ Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSS
 
 A session is one locally tracked remote project runtime created by `fwd up`. It binds a local project directory to a target, provider resource or SSH endpoint, synchronized remote directory, and primary tmux session. Its session name identifies that concrete runtime; pass `--name NAME` to choose one or `--new` to create another instead of reusing the current project's saved session.
 
-Use `fwd ls --json` to discover session names and live state. Existing-session commands accept target labels and backend names as aliases: `attach`, `stop`, `rm`, and `diff` accept them positionally, while `send`, `push`, and `pull` accept them through `--name`. Exact session names win. A sole saved alias match is unambiguous; with several matches, fwd selects the sole running or pending target only when every other candidate's status is known, otherwise it requires an exact session name. Stopping a session ends its primary process and suspends supported compute; removing it destroys its remote resource and local tracking.
+Use `fwd ls --json` to discover session names and live state. Existing-session commands accept target labels and backend names as aliases: `attach`, `stop`, `rm`, and `diff` accept them positionally, while `send`, `push`, and `pull` accept them through `--name`. Exact session names win. A sole saved alias match is unambiguous; with several matches, fwd selects the sole running or pending target only when every other candidate's status is known, otherwise it requires an exact session name. Stopping a session ends its primary process and suspends supported compute; removing it destroys its remote resource and local tracking. `fwd ports` opens, lists, and closes loopback-only forwarding through the same selectors; `forwarding.ports` and repeated `fwd up --ports` open launch defaults, while `fwd ls --columns` and `--ports` focus inspection. See the lifecycle reference for mapping and closure details.
 
 ### Startup processes and agents
 
@@ -90,13 +85,16 @@ A send task is durable work started inside an already-running session with `fwd 
 
 ### Synchronization
 
-The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Standalone Git repositories use Git's own tracked plus untracked/non-ignored manifest, so nested `.gitignore` rules do not depend on the local rsync implementation; `.git/` remains included. Launch and `fwd push` mirror local content to the remote project through rsync or tar fallback; stale synchronized files are deleted while excluded remote environments remain. Linked Git worktrees whose `.git` file points outside the project are not supported. `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side. During upload, `sync.max_size_gb` limits compressed outbound wire bytes to 1 GB by default; both transports discard their remote staging directory instead of changing the live project when the limit is crossed. Interactive uploads show cumulative MB/GB and live throughput without requiring a serial size preflight.
+The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Standalone Git repositories use Git's own tracked plus untracked/non-ignored manifest and remove tracked paths that still match repository ignore rules, so nested `.gitignore` behavior does not depend on the local rsync implementation. `.git/` remains included in uploads for remote agent continuity, but pull and diff never import or compare repository metadata. Launch and `fwd push` mirror local content to the remote project through rsync or tar fallback; stale synchronized files are deleted while excluded remote environments remain. Linked Git worktrees whose `.git` file points outside the project are not supported. `fwd pull` copies remote results back additively. Push, pull, and launch-time upload stream every selected project-relative path to stderr as it transfers. `fwd diff` compares the same filtered content domain; `--include-gitignored` adds Git-ignored content and `--include-unsynced` adds ordinary excluded content, but permanent OS metadata such as `.DS_Store`, AppleDouble `._*`, and Windows shell metadata is excluded from push, pull, and diff in every mode. During upload, `sync.max_size_gb` limits compressed outbound wire bytes to 1 GB by default; both transports discard their remote staging directory instead of changing the live project when the limit is crossed. Interactive uploads show cumulative MB/GB and live throughput without requiring a serial size preflight.
 
 ### Toolchains and requirements
 
 A toolchain detects a project ecosystem such as Python, JavaScript, or Swift Package Manager and declares its remote setup steps and tool requirements. Requirements reuse compatible tools already present on the remote and install only missing dependencies, including prerequisite tools. Use an idempotent `.fwd/setup.sh` for project-specific setup that no built-in toolchain covers.
 JavaScript projects with `.nvmrc` receive a persistent nvm installation and selected Node version even when Bun owns `node_modules`; attached shells source that nvm environment from fwd's tool prefix. JavaScript requirements can also bootstrap npm through nvm when neither npm nor mise is available. The installer runs `nvm install` and `nvm use` against `.nvmrc` when present, otherwise it selects the latest Node LTS; pnpm, Yarn, Claude Code, and Codex can reuse that npm prerequisite.
 
+### Agent runtime policy
+
+Remote VMs and allocations are the isolation boundary, so registered Claude and Codex sessions default to full access without approval prompts or an additional agent sandbox. Configure every agent consistently under `[agents.<name>]` with `full_access`, `args`, and `environment`; explicit permission/sandbox arguments take precedence, and environment entries are defaults that never replace values already exported by the remote shell. The recorded policy also applies after restart and to `fwd send agent` turns. Current Claude background agents/teams and Codex multi-agent support are already enabled by their CLIs, so fwd does not inject obsolete feature environment variables.
 
 ## Common operations
 

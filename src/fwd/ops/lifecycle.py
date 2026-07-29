@@ -22,18 +22,17 @@ from pathlib import Path
 
 import typer
 
-from fwd import command_docs, remote, remote_tasks, stop_after as stop_after_ops, ui
+from fwd import command_docs, port_forwarding, remote, remote_tasks, stop_after as stop_after_ops, ui
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
-from fwd.output import OutputFormat
+from fwd.output import OutputFormat, OutputValue
 from fwd.send_tasks import SendTaskStore
+from fwd.session_columns import LS_COLUMNS
 from fwd.state import SessionState
 
 # Rendered when a backend cannot be reached or has not implemented status yet. Distinct from every real status so the
 # table never implies knowledge fwd does not have.
 UNKNOWN_STATUS = command_docs.UNKNOWN_STATUS
-
-
 def task_store() -> SendTaskStore:
     """Return the durable send-task store through a replaceable test boundary."""
     return SendTaskStore()
@@ -83,6 +82,14 @@ def _ids_summary(session: SessionState) -> str:
     return " ".join(f"{k}={v}" for k, v in sorted(session.backend_ids.items()))
 
 
+def _ports_output(session: SessionState) -> OutputValue:
+    """Return concise forwarding text for humans and typed mapping records for JSON consumers."""
+    mappings = port_forwarding.mappings_from_state(session.ports)
+    master_active = bool(mappings) and port_forwarding.active(session.ports_ssh_endpoint(), session.name)
+    payload = [{"local": mapping.local, "remote": mapping.remote, "active": master_active} for mapping in mappings]
+    return OutputValue(port_forwarding.summary(session.ports_ssh_endpoint(), session.name, mappings, master_active=master_active), payload)
+
+
 def _live_status(session: SessionState) -> TargetStatus | str:
     """Return a session's live status, isolating every failure mode to this one cell.
 
@@ -126,46 +133,73 @@ def _stop_after_summary(session: SessionState, status: TargetStatus | str, tasks
     return f"agent ({marker})" if marker in {"scheduled", "stopping"} else "-"
 
 
-def ls(*, output_format: OutputFormat | str = OutputFormat.auto, all_projects: bool = False) -> None:
-    """List current-project sessions by default, or every local session with ``all_projects``, using live status."""
+def _shown_columns(columns: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Return canonical columns, retaining session names when focused output selects another field."""
+    if not columns:
+        return LS_COLUMNS
+    unknown = set(columns) - set(LS_COLUMNS)
+    if unknown:
+        raise ValueError(f"unknown session column(s): {', '.join(sorted(unknown))}")
+    requested = set(columns)
+    return tuple(column for column in LS_COLUMNS if column == "name" or column in requested)
+
+
+def ls(
+    *,
+    output_format: OutputFormat | str = OutputFormat.auto,
+    all_projects: bool = False,
+    columns: tuple[str, ...] | None = None,
+    session_names: tuple[str, ...] | None = None,
+) -> None:
+    """List sessions with optional project, session, and column filtering."""
     tracked_sessions = launch_ops.store().all()
     current_project = Path.cwd().resolve()
     current_sessions = [session for session in tracked_sessions if Path(session.local_cwd).expanduser().resolve() == current_project]
     other_sessions = [session for session in tracked_sessions if Path(session.local_cwd).expanduser().resolve() != current_project]
-    sessions = tracked_sessions if all_projects else current_sessions
+    if session_names is not None:
+        selected_names = set(session_names)
+        sessions = [session for session in tracked_sessions if session.name in selected_names]
+    else:
+        sessions = tracked_sessions if all_projects else current_sessions
+    shown_columns = _shown_columns(columns)
+    needs_status = any(column in shown_columns for column in ("status", "stop after", "running"))
     now = datetime.now(UTC)
-    try:
-        tasks = task_store().all()
-    except Exception:
-        # Session listing is the recovery UI and must remain usable even when optional task metadata is unreadable.
-        tasks = []
+    tasks = []
+    if "stop after" in shown_columns:
+        try:
+            tasks = task_store().all()
+        except Exception:
+            # Session listing is the recovery UI and must remain usable even when optional task metadata is unreadable.
+            tasks = []
     rows = []
     session_statuses: list[tuple[SessionState, TargetStatus | str]] = []
     for session in sessions:
-        status = _live_status(session)
-        session_statuses.append((session, status))
-        rows.append(
-            [
-                session.name,
-                session.backend,
-                status,
-                _stop_after_summary(session, status, tasks),
-                _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
-                session.tmux_session,
-                session.local_cwd,
-                _short_time(session.last_attached, now),
-                _ids_summary(session),
-            ]
-        )
+        status = _live_status(session) if needs_status else UNKNOWN_STATUS
+        if needs_status:
+            session_statuses.append((session, status))
+        values = {
+            "name": session.name,
+            "backend": session.backend,
+            "status": status,
+            "stop after": _stop_after_summary(session, status, tasks) if "stop after" in shown_columns else "-",
+            "running": _compact_duration(session.started_at, now) if status == TargetStatus.RUNNING else "-",
+            "tmux": session.tmux_session,
+            "local dir": session.local_cwd,
+            "last attached": _short_time(session.last_attached, now),
+            "ids": _ids_summary(session),
+            "ports": _ports_output(session),
+        }
+        rows.append([values[column] for column in shown_columns])
     ui.table(
         f"{ui.command()} sessions ({len(rows)} active)",
-        ["name", "backend", "status", "stop after", "running", "tmux", "local dir", "last attached", "ids"],
+        shown_columns,
         rows,
         output_format=output_format,
     )
-    examples = command_docs.manage_session_examples(session_statuses) if session_statuses else command_docs.start_session_examples()
-    heading = command_docs.MANAGE_HEADING if session_statuses else command_docs.START_HEADING
-    ui.show_code_examples(examples, heading=heading)
+    if columns is None:
+        examples = command_docs.manage_session_examples(session_statuses) if session_statuses else command_docs.start_session_examples()
+        heading = command_docs.MANAGE_HEADING if session_statuses else command_docs.START_HEADING
+        ui.show_code_examples(examples, heading=heading)
     if not all_projects and other_sessions and ui.interactive_terminal():
         session_count = len(other_sessions)
         if session_count == 1:
@@ -189,6 +223,12 @@ def stop(name: str | None = None) -> None:
     session = launch_ops.resolve_session(name)
     backend = launch_ops.backend_for(session)
     interrupted = False
+    try:
+        from fwd.ops import ports as ports_ops
+
+        ports_ops.close_session_ports(session)
+    except Exception as exc:
+        ui.warn(f"could not close local port forwarding ({exc}); continuing to stop the target")
 
     try:
         endpoint = backend.endpoint(session)
@@ -248,6 +288,12 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
 
     backend = launch_ops.backend_for(session)
     status = launch_ops.status_of(backend, session)
+    try:
+        from fwd.ops import ports as ports_ops
+
+        ports_ops.close_session_ports(session)
+    except Exception as exc:
+        ui.die(f"could not close local port forwarding ({exc}); target destruction was canceled so the tunnel remains tracked")
     try:
         endpoint = backend.endpoint(session)
     except Exception:

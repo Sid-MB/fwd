@@ -38,6 +38,7 @@ UP = CommandDoc("up", "Provision or reuse a target, synchronize the project, boo
 ATTACH = CommandDoc("attach", "Attach to the unambiguous existing session matching the supplied selectors.")
 SEND = CommandDoc("send", "Start, follow, background, list, or cancel durable remote tasks.")
 LIST = CommandDoc("ls", "List managed sessions with live backend status.")
+PORTS = CommandDoc("ports", "Open, list, or close loopback-only local ports forwarded to a running session.")
 STOP = CommandDoc("stop", "Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.")
 REMOVE = CommandDoc("rm", "Destroy one session target, or every tracked target with --all, and forget their state.")
 

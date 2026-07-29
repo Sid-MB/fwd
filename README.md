@@ -187,7 +187,10 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
 | `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
 | `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls --json` |
-| `fwd ls [--all-projects]` | List this project's sessions, or every locally tracked project, with live backend status | `fwd ls --all-projects` |
+| `fwd ls [--all-projects] [column flags]` | List sessions with live status and exposed ports; column flags narrow the table while retaining names | `fwd ls --ports` |
+| `fwd ports [SELECTOR] PORT...` | Open persistent loopback-only SSH forwards; `PORT` maps equally and `LOCAL:REMOTE` remaps | `fwd ports runpod 3000 8080:3000` |
+| `fwd ports --ls` | Alias for `fwd ls --ports`; one selector or `--all-projects` narrows or expands the view | `fwd ports --ls --all-projects` |
+| `fwd ports --close [SELECTOR] [PORT...]` | Close selected forwards, every forward for one session, or every tracked project | `fwd ports --close --all-projects` |
 | `fwd push` | Re-sync local changes up | `fwd push --name work` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull --name work outputs/` |
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
@@ -253,6 +256,46 @@ fwd send -- bash -lc 'cat outputs/*.json | jq .'
 For Slurm targets, command tasks run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
 when a command must run inside an allocation.
 
+### Local port forwarding
+
+`fwd ports` exposes a remote loopback service only on this computer's `127.0.0.1`; it does not publish a RunPod or
+cluster port to the internet. A bare port maps the same number on both ends, while `LOCAL:REMOTE` selects a different
+local port. One optional session, target, backend, agent, or displayed tmux-session selector uses the same matching
+rules as attach; `--name` is the unambiguous exact-session form. When no mapping is present, `fwd ports [selector]`
+lists the selected session's forwarding.
+
+```sh
+fwd ports 3000 3210                    # current project's remote ports on the same local ports
+fwd ports runpod 8080:3000             # local 8080 -> remote 127.0.0.1:3000
+fwd ports fwd-desktop-4c24e0 3000      # a displayed tmux name is accepted as a session alias
+fwd ports --ls --all-projects          # alias for fwd ls --all-projects --ports
+fwd ports --close 3000                 # close one local port in the current project
+fwd ports runpod --close               # close every forward for the matching session
+fwd ports --close --all-projects       # close all locally managed forwards
+fwd up --ports 3000 --ports 8080:3000  # override configured launch mappings for this invocation
+```
+
+The command probes every requested local bind before contacting SSH. If any local port is occupied or repeated, the
+whole request fails and opens nothing. Successful forwards run through a dedicated background SSH control connection,
+survive after the command returns, appear in the normal `fwd ls` ports column, and close automatically with `fwd stop`
+or `fwd rm`. An SSH connection lost underneath a tunnel is shown as `(inactive)` instead of being reported as exposed.
+When a provider changes SSH endpoints, the old forwarding master is closed and the tracked mappings are recreated
+against the current machine. A failed close retains its mappings in local state instead of hiding a potentially live
+tunnel. In JSON output, `ports` is an array of `{local, remote, active}` records rather than formatted display text.
+
+Set project defaults in `.fwd/config.toml`; the project list replaces any user-level forwarding list. Repeated
+`fwd up --ports/-p` values replace the configured defaults for that invocation while preserving unrelated forwards
+already opened manually:
+
+```toml
+[forwarding]
+ports = ["3000", "8080:3000"]
+```
+
+Use `fwd ls --columns backend,status,ports` for a focused view. The existing `--names`, `--backends`, `--statuses`,
+`--stop-after`, `--running`, `--tmux`, `--local-dirs`, `--last-attached`, `--ids`, and `--ports` flags remain shortcuts
+and can be combined with `--columns`; session names remain present as row identity.
+
 ### Sending agent turns
 
 When the session was launched with `fwd up claude` or `fwd up codex`, `agent` resolves to that exact agent:
@@ -291,14 +334,19 @@ fwd diff pod                  # exact session, target label, or backend selector
 fwd diff pod src/model.py     # compare one project-relative file
 fwd diff pod outputs/         # compare one directory recursively
 fwd diff -q pod               # no diff text; inspect only the exit status
+fwd diff --include-gitignored # include Git-ignored files, but retain explicit sync exclusions
+fwd diff --include-unsynced   # include all ordinary unsynced files
 ```
 
 Exit `0` means identical, `1` means differences were found, and `2` means resolution, transfer, or comparison failed.
-Differences are normal unified recursive diff text on stdout; progress and errors stay on stderr. Exact session names,
-target labels, and backend names use the same safe existing-session resolver as lifecycle and transfer commands. The comparison uses
-the same `.gitignore`, `.fwdignore`, and configured exclusions as sync, so intentionally unsynced environments and
-build caches do not produce false differences. Both sides are copied into temporary snapshots; neither the checkout
-nor the remote project is modified.
+Differences use familiar Git unified formatting and retain color in a human terminal; redirected output is plain text, and progress and errors stay on stderr. Exact session names,
+target labels, and backend names use the same safe existing-session resolver as lifecycle and transfer commands. The comparison applies
+`.gitignore`, `.fwdignore`, and configured sync exclusions, so intentionally unsynced environments and
+build caches do not produce false differences; for diagnostic safety, even a tracked path matching `.gitignore` stays
+hidden by default. `--include-gitignored` restores only Git-ignored content, while
+`--include-unsynced` restores every ordinary sync exclusion. `.git/`, `.DS_Store`, AppleDouble `._*`, Windows
+metadata, and similar permanent junk remain excluded in every mode. Both sides are copied into temporary snapshots;
+neither the checkout nor the remote project is modified.
 
 ### `fwd up` flags
 
@@ -462,6 +510,7 @@ The equivalent general command is `fwd config set default_command ...`:
 fwd config set default_command codex
 fwd config set --project default_command -- python -m agent
 fwd config set sync.delete false
+fwd config set --project forwarding.ports 3000 8080:3000
 fwd config rm --project default_command       # confirms in a terminal
 fwd config rm --target runpod default_command # removes only the target override
 ```
@@ -630,6 +679,16 @@ handoff = false       # generate HANDOFF.md instead
 user_config = false   # upload ~/.claude bundle
 creds = false         # copy credentials to the remote machine
 
+[agents.claude]
+full_access = true    # VM is the isolation boundary; launch with bypassPermissions
+args = []             # extra Claude CLI arguments
+environment = {}      # defaults only: an existing remote shell value wins
+
+[agents.codex]
+full_access = true    # VM is the isolation boundary; bypass approvals and the Codex sandbox
+args = []             # extra Codex CLI arguments
+environment = {}      # e.g. { MY_AGENT_TUNING = "1" }
+
 [sync]
 exclude = [".venv", "node_modules", "dist"]   # replaces the defaults; see below
 use_gitignore = true                          # honour the repo's own .gitignore
@@ -637,16 +696,32 @@ delete = true                                 # push mirrors local (removes remo
 max_size_gb = 1.0                             # stop unexpectedly broad uploads while streaming
 ```
 
-`exclude` is **seeded** with sensible defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`, `.next`,
-`dist`, `build`, `.turbo`, the various caches, `.DS_Store`) and setting it *replaces* the list rather than adding to
-it — so a project that genuinely ships a checked-in `dist/` can shrink the list, not just grow it. `.git` is never
-excluded: the remote session needs history to diff, blame and commit. Run `fwd` from a standalone checkout; linked
-Git worktrees whose `.git` file points outside the project directory are not currently supported.
+Registered agents run in full-access mode by default because fwd's remote VM or allocation is already the security
+boundary. Set `agents.<name>.full_access = false` for a less trusted target. An explicit permission/sandbox option in
+`args` takes precedence over the built-in full-access option, and `environment` entries are exported only when the
+remote shell has not already defined that name. The same settings are recorded with the session and apply to the
+interactive TUI, restarts, and `fwd send agent` turns.
+
+Claude Code's current background-agent and agent-team features are enabled by default; fwd therefore does not set the
+obsolete, undocumented `ENABLE_BACKGROUND_TASKS` switch. Likewise, current Codex enables multi-agent support by
+default. Use per-agent `args` or `environment` only for a real override rather than pinning defaults that the installed
+agent already supplies.
+
+`exclude` is **seeded** with sensible configurable defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`,
+`.next`, `dist`, `build`, `.turbo`, and the various caches) and setting it *replaces* that list rather than adding to
+it — so a project that genuinely ships a checked-in `dist/` can shrink the list, not just grow it. Platform metadata
+such as `.DS_Store`, AppleDouble `._*`, `Thumbs.db`, and `Desktop.ini` is always excluded and cannot be re-enabled by
+configuration. Push includes `.git` because the remote agent needs history, branches, and an index; pull never imports
+remote `.git` state into the local checkout. Run `fwd` from a standalone checkout; linked Git worktrees whose `.git`
+file points outside the project directory are not currently supported.
 
 For standalone Git repositories, Git itself enumerates tracked files plus untracked, non-ignored WIP with
 `git ls-files --cached --others --exclude-standard`; this avoids implementation-specific nested `.gitignore` bugs in
-macOS openrsync. Fwd then applies `sync.exclude` and `.fwdignore`, and explicitly retains `.git/`. Non-Git directories
-fall back to transport-native filtering.
+macOS openrsync. Fwd also applies repository ignore rules to tracked paths, so an accidentally committed credential or
+generated artifact that still matches `.gitignore` is not synchronized. It then applies `sync.exclude` and
+`.fwdignore`, and explicitly retains `.git/` on upload. A self-ignored nested `.gitignore` is retained as a narrow
+exception so the remote mirror can preserve ignored remote-only state. Non-Git directories fall back to
+transport-native filtering.
 
 During `fwd up` and `fwd push`, `sync.max_size_gb` (1 GB by default) acts as a streaming circuit breaker instead of a
 serial full-tree preflight. Both rsync and tar-over-SSH count their compressed outbound wire bytes. Uploads land in a
@@ -654,6 +729,9 @@ sibling staging directory, and fwd only applies that stage to the live remote pr
 the stream completes under budget. Crossing the limit stops the stream, removes the incomplete stage, prints the exact
 project `.fwdignore` path for excluding unintended entries, and provides a project-scoped command such as
 `fwd config set --project sync.max_size_gb 4` plus the project/user config paths.
+
+Push, pull, and the launch-time upload print each selected project-relative path to stderr as it is transferred.
+Transfer listings therefore remain visible beside the progress UI without contaminating structured command stdout.
 Only after a limit failure, fwd reuses the transport filters to list up to ten included files or aggregate folders
 larger than 200 MB, making accidental dataset, checkpoint, or build-tree uploads visible without slowing successful
 uploads.

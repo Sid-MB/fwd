@@ -150,7 +150,11 @@ def parse(
 ) -> SessionSelector:
     """Parse flags and positional selectors using the shared session-target-agent-command precedence."""
     remaining = list(positional)
-    known_sessions = {session.name for session in sessions}
+    # The tmux name is displayed prominently inside attached shells, so accept it as an alias everywhere selectors
+    # are parsed. Exact fwd session names retain precedence if a deliberately unusual name collides with an alias.
+    session_names = {session.name: session.name for session in sessions}
+    for session in sessions:
+        session_names.setdefault(session.tmux_session, session.name)
     selected_name = name
     selected_target = target_selector(target, config, sessions) if target else None
     selected_agent = agent
@@ -158,8 +162,8 @@ def parse(
     if selected_agent is not None and selected_agent not in agents.AGENTS:
         ui.die(f"unknown coding agent {selected_agent!r}; choose one of: {', '.join(sorted(agents.AGENTS))}")
 
-    if remaining and remaining[0] in known_sessions:
-        positional_name = remaining.pop(0)
+    if remaining and remaining[0] in session_names:
+        positional_name = session_names[remaining.pop(0)]
         if selected_name is not None and selected_name != positional_name:
             ui.die(f"session specified twice: {selected_name!r} and {positional_name!r}")
         selected_name = positional_name
@@ -265,7 +269,7 @@ def recognized_root_selector(token: str) -> bool:
     try:
         state = StateStore()
         sessions = state.all()
-        if token in {session.name for session in sessions}:
+        if token in {value for session in sessions for value in (session.name, session.tmux_session)}:
             return True
         from fwd.config import load_config
 

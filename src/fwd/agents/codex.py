@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import Mapping
 
 from fwd import ui
@@ -45,6 +46,14 @@ class CodexAgent(Agent):
     command = ("codex",)
     tools = (CODEX,)
 
+    def _runtime_args(self, flags: Mapping[str, object]) -> list[str]:
+        """Apply VM-safe full access unless configured argv already selects an approval or sandbox policy."""
+        configured = self.runtime_args(flags)
+        policy_flags = {"--yolo", "--dangerously-bypass-approvals-and-sandbox", "--sandbox", "-s", "--ask-for-approval", "-a"}
+        has_policy = any(part in policy_flags or any(part.startswith(f"{flag}=") for flag in policy_flags if flag.startswith("--")) for part in configured)
+        access = ["--dangerously-bypass-approvals-and-sandbox"] if bool(flags.get("agent_full_access", True)) and not has_policy else []
+        return [*access, *configured]
+
     def prepare_remote(self, endpoint: SSHEndpoint, remote_dir: str, flags: dict[str, object], local_state: object | None) -> dict[str, object]:
         """Upload portable state and start the independent remote-control daemon when supported."""
         del remote_dir, flags, local_state
@@ -60,10 +69,10 @@ class CodexAgent(Agent):
 
     def startup_command(self, flags: Mapping[str, object]) -> str:
         """Start a new interactive Codex conversation."""
-        del flags
-        return "codex"
+        command = shlex.join(["codex", *self._runtime_args(flags)])
+        return self.with_environment_defaults(command, flags)
 
     def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
         """Resume the most recent Codex conversation and emit JSONL suitable for streaming."""
-        del flags
-        return ("codex", "exec", "--json", "resume", "--last", message)
+        command = ["codex", *self._runtime_args(flags), "exec", "--json", "resume", "--last", message]
+        return self.environment_command(command, flags)

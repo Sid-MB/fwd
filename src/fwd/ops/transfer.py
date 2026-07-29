@@ -59,10 +59,26 @@ def push(name: str | None = None) -> None:
     endpoint = _endpoint_for(session)
     with ui.transfer_step(f"Pushing {local_cwd.name} to {session.remote_dir}") as update_transfer:
         if endpoint.supports_rsync:
-            sync.sync_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=update_transfer)
+            sync.sync_up(
+                endpoint,
+                local_cwd,
+                session.remote_dir,
+                cfg.sync,
+                delete=cfg.sync.delete,
+                on_progress=update_transfer,
+                on_path=ui.transfer_path,
+            )
         else:
             ui.warn("transport does not support rsync; using tar-over-ssh (whole-tree transfer)")
-            sync.tar_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=update_transfer)
+            sync.tar_up(
+                endpoint,
+                local_cwd,
+                session.remote_dir,
+                cfg.sync,
+                delete=cfg.sync.delete,
+                on_progress=update_transfer,
+                on_path=ui.transfer_path,
+            )
     ui.ok(f"pushed to {session.name!r}")
 
 
@@ -84,8 +100,8 @@ def pull(name: str | None = None, paths: Sequence[str] = ()) -> None:
     what = ", ".join(paths) if paths else "everything"
     with ui.step(f"Pulling {what} from {session.remote_dir}"):
         if endpoint.supports_rsync:
-            sync.sync_down(endpoint, session.remote_dir, local_cwd, paths, cfg.sync)
+            sync.sync_down(endpoint, session.remote_dir, local_cwd, paths, cfg.sync, on_path=ui.transfer_path)
         else:
             ui.warn("transport does not support rsync; using tar-over-ssh (whole-tree transfer)")
-            sync.tar_down(endpoint, session.remote_dir, local_cwd, paths)
+            sync.tar_down(endpoint, session.remote_dir, local_cwd, paths, cfg.sync, on_path=ui.transfer_path)
     ui.ok(f"pulled from {session.name!r} into {local_cwd}")

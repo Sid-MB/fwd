@@ -24,9 +24,9 @@ HANDOFF_PROMPT = "Read HANDOFF.md, then continue the work it describes"
 HANDOFF_MAX_AGE_SECONDS = 15 * 60
 
 
-def build_command(*, resume_id: str | None, use_handoff: bool, remote_control_name: str | None = None) -> str:
+def build_command(*, resume_id: str | None, use_handoff: bool, remote_control_name: str | None = None, runtime_args: tuple[str, ...] = ()) -> str:
     """Build a Claude startup command with the selected context and optional cross-device control."""
-    command = ["claude"]
+    command = ["claude", *runtime_args]
     if resume_id:
         command.extend(("--resume", resume_id))
     elif use_handoff:
@@ -75,6 +75,7 @@ class ClaudeAgent(Agent):
 
     def launch_flags(self, config: Config, options: AgentLaunchOptions) -> dict[str, Any]:
         """Merge explicit transfer switches with Claude config, preserving handoff/session precedence."""
+        runtime_flags = super().launch_flags(config, AgentLaunchOptions())
         if options.handoff:
             want_session, want_handoff = False, True
         elif options.session:
@@ -82,11 +83,20 @@ class ClaudeAgent(Agent):
         else:
             want_session, want_handoff = config.claude.session, config.claude.handoff
         return {
+            **runtime_flags,
             "session": want_session,
             "handoff": want_handoff,
             "user_config": options.user_config or config.claude.user_config,
             "creds": options.creds or config.claude.creds,
         }
+
+    def _runtime_args(self, flags: Mapping[str, object]) -> list[str]:
+        """Apply bypassPermissions by default while respecting an explicitly configured permission-mode argument."""
+        configured = self.runtime_args(flags)
+        permission_flags = {"--permission-mode", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions"}
+        has_permission_mode = any(part in permission_flags or part.startswith("--permission-mode=") for part in configured)
+        access = ["--permission-mode", "bypassPermissions"] if bool(flags.get("agent_full_access", True)) and not has_permission_mode else []
+        return [*access, *configured]
 
     def prepare_local(self, local_cwd: Path, flags: dict[str, Any]) -> object | None:
         """Export a resumable transcript and ensure any requested handoff is present before project sync."""
@@ -146,19 +156,21 @@ class ClaudeAgent(Agent):
     def startup_command(self, flags: Mapping[str, object]) -> str:
         """Start Claude with the context chosen during this launch."""
         resume_id = flags.get("resume_id")
-        return build_command(
+        command = build_command(
             resume_id=resume_id if isinstance(resume_id, str) else None,
             use_handoff=bool(flags.get("handoff")) and not resume_id,
             remote_control_name=flags.get("remote_control_name") if isinstance(flags.get("remote_control_name"), str) else None,
+            runtime_args=tuple(self._runtime_args(flags)),
         )
+        return self.with_environment_defaults(command, flags)
 
     def send_command(self, message: str, flags: Mapping[str, object]) -> tuple[str, ...]:
         """Send a streaming Claude turn, resuming the exact transferred conversation when known."""
-        command = ["claude", "--print", "--verbose", "--output-format", "stream-json"]
+        command = ["claude", *self._runtime_args(flags), "--print", "--verbose", "--output-format", "stream-json"]
         resume_id = flags.get("resume_id")
         if isinstance(resume_id, str) and resume_id:
             command.extend(("--resume", resume_id))
         else:
             command.append("--continue")
         command.append(message)
-        return tuple(command)
+        return self.environment_command(command, flags)

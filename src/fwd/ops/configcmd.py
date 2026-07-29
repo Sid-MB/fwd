@@ -34,6 +34,9 @@ from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 from fwd import config as config_mod
 from fwd import ui
 from fwd.config import (
+    ALWAYS_SYNC_EXCLUDES,
+    AgentConfig,
+    BUILTIN_AGENT_NAMES,
     DEFAULT_EXCLUDES,
     PROJECT_CONFIG_RELPATH,
     RUNPOD_CLOUD_TYPES,
@@ -41,6 +44,7 @@ from fwd.config import (
     ClaudeConfig,
     Config,
     ConfigError,
+    ForwardingConfig,
     SyncConfig,
     TARGET_TYPES,
     implicit_target,
@@ -94,10 +98,14 @@ SECTION_DOCS: dict[str, str] = {
     "creds": "copy your Claude OAuth token to the remote disk — off for a reason",
     "session": "move the real transcript so the remote claude resumes this conversation",
     "handoff": "summarize into HANDOFF.md instead of moving the transcript",
-    "exclude": "rsync excludes; REPLACES the built-in list rather than adding to it, so it can shrink",
+    "full_access": "run without approval prompts or an agent sandbox; disable when the remote VM is not the isolation boundary",
+    "args": "additional agent CLI arguments; explicit permission/sandbox arguments take precedence over full_access",
+    "environment": "environment defaults applied only when the remote shell has not already set each variable",
+    "exclude": "project excludes; REPLACES configurable defaults, while platform metadata remains always excluded",
     "use_gitignore": "use Git's own file enumeration so every nested .gitignore is honoured exactly",
     "delete": "push mirrors local, removing remote-only files",
     "max_size_gb": "streaming upload circuit breaker in GB; defaults to 1 GB to catch accidentally broad directories",
+    "ports": "loopback-only PORT or LOCAL:REMOTE mappings opened after launch; project values replace user defaults",
 }
 
 DEFAULT_COMMAND_DOC = f"argv launched by bare {ui.command()!r}; target_defaults.<name>.default_command takes precedence"
@@ -125,6 +133,13 @@ OPTIONAL_PLACEHOLDERS: dict[str, Any] = {
 EXAMPLE_TARGET_NAMES: dict[str, str] = {"ssh": "box", "runpod": "pod", "slurm": "hpc"}
 
 
+def _toml_key(value: str) -> str:
+    """Render a bare TOML key when possible and a quoted key for arbitrary environment variable names."""
+    if _KEY_SEGMENT.fullmatch(value):
+        return value
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _toml_scalar(value: Any) -> str:
     """Render a Python scalar as TOML. Only the types the config schema actually uses are supported."""
     if isinstance(value, bool):
@@ -133,6 +148,8 @@ def _toml_scalar(value: Any) -> str:
         return str(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_scalar(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{_toml_key(str(key))} = {_toml_scalar(item)}" for key, item in value.items()) + " }"
     text = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{text}"'
 
@@ -205,6 +222,20 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
         lines += ["", f"[{section}]"]
         for key, value in _dataclass_items(obj):
             lines.append(_annotated(key, value, (section, key), origins))
+    if cfg.forwarding.ports:
+        lines += ["", "[forwarding]"]
+        lines.append(_annotated("ports", cfg.forwarding.ports, ("forwarding", "ports"), origins))
+
+    for name, agent_config in sorted(cfg.agents.items()):
+        lines += ["", f"[agents.{name}]"]
+        for key, value in _dataclass_items(agent_config):
+            if key == "environment" and value:
+                continue
+            lines.append(_annotated(key, value, ("agents", name, key), origins))
+        if agent_config.environment:
+            lines += ["", f"[agents.{name}.environment]"]
+            for key, value in sorted(agent_config.environment.items()):
+                lines.append(_annotated(_toml_key(key), value, ("agents", name, "environment", key), origins))
 
     for name, command in sorted(cfg.target_default_commands.items()):
         lines += ["", f"[target_defaults.{name}]"]
@@ -258,7 +289,7 @@ def _render_example_target(backend: str) -> list[str]:
 
 
 def _render_example_section(section: str, obj: Any) -> list[str]:
-    """Render a commented ``[claude]`` or ``[sync]`` block from its dataclass defaults."""
+    """Render one commented non-target configuration block from its dataclass defaults."""
     lines = [f"[{section}]"]
     for key, value in _dataclass_items(obj):
         comment = SECTION_DOCS.get(key, "")
@@ -298,10 +329,14 @@ def render_example(which: str = "all") -> str:
         'default_command = ["codex"]  # overrides project/user default_command whenever this target is selected',
     ]
     lines += ["", *_render_example_section("claude", ClaudeConfig())]
+    for agent_name in BUILTIN_AGENT_NAMES:
+        lines += ["", *_render_example_section(f"agents.{agent_name}", AgentConfig())]
     lines += ["", *_render_example_section("sync", SyncConfig())]
+    lines += ["", *_render_example_section("forwarding", ForwardingConfig())]
     lines += [
         "",
         f"# The built-in exclude list, for reference: {', '.join(DEFAULT_EXCLUDES)}",
+        f"# Always excluded platform metadata: {', '.join(ALWAYS_SYNC_EXCLUDES)}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -314,6 +349,8 @@ def _json_type(annotation: Any) -> dict[str, Any]:
         return {"enum": list(args)}
     if origin is list:
         return {"type": "array", "items": _json_type(args[0])}
+    if origin is dict:
+        return {"type": "object", "additionalProperties": _json_type(args[1])}
     if origin in (Union, UnionType):
         non_null = [arg for arg in args if arg is not type(None)]
         if len(non_null) == 1 and len(non_null) != len(args):
@@ -361,8 +398,15 @@ def render_schema() -> str:
         "properties": {
             "default_target": {"type": "string", "description": "Target used when --target is omitted."},
             "default_command": {"type": "array", "items": {"type": "string"}, "minItems": 1, "default": ["claude"], "description": DEFAULT_COMMAND_DOC},
+            "agents": {
+                "type": "object",
+                "description": "Per-agent runtime policy with one consistent schema for built-in and future agents.",
+                "additionalProperties": _section_schema(AgentConfig, SECTION_DOCS),
+                "default": {name: {"full_access": True, "args": [], "environment": {}} for name in BUILTIN_AGENT_NAMES},
+            },
             "claude": _section_schema(ClaudeConfig, SECTION_DOCS),
             "sync": _section_schema(SyncConfig, SECTION_DOCS),
+            "forwarding": _section_schema(ForwardingConfig, SECTION_DOCS),
             "targets": {"type": "object", "description": "Named remote targets.", "additionalProperties": {"oneOf": target_refs}},
             "target_defaults": {
                 "type": "object",
@@ -416,7 +460,7 @@ def _config_value(key: str, values: tuple[str, ...]) -> Any:
     """
     if not values:
         raise ConfigError("a value is required")
-    if key == "default_command":
+    if key in {"default_command", "forwarding.ports"}:
         return list(values)
     if len(values) > 1:
         return list(values)

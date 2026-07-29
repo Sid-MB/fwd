@@ -3,9 +3,10 @@
 Rsync's per-directory merge support is not consistent across implementations: macOS openrsync can miss deeply nested
 ``.gitignore`` files when the source root is several directories above them. Git itself is the only trustworthy
 interpreter of Git ignore semantics, so uploads ask ``git ls-files --cached --others --exclude-standard`` for the
-tracked and non-ignored working tree. Fwd's configured exclusions and ``.fwdignore`` are then applied through an
-isolated temporary Git repository, ensuring they also remove tracked paths. The real ``.git/`` directory is appended
-explicitly because remote coding sessions need repository history for diff, blame, and commits.
+working tree and apply the repository rules once more with ``--no-index`` so even tracked paths matching an ignore
+rule stay outside the sync domain. Fwd's configured exclusions and ``.fwdignore`` are then applied through an isolated
+temporary Git repository. The real ``.git/`` directory is appended explicitly because remote coding sessions need
+repository history for diff, blame, and commits.
 """
 
 from __future__ import annotations
@@ -40,23 +41,31 @@ def _git_worktree_root(source: Path) -> bool:
         return False
 
 
-def _custom_ignore_text(source: Path, sync_cfg: SyncConfig) -> str:
-    """Combine project rules with configured excludes ordered so the latter cannot be negated by ``.fwdignore``."""
+def _custom_ignore_text(
+    source: Path,
+    sync_cfg: SyncConfig,
+    extra_excludes: tuple[str, ...] = (),
+    *,
+    include_fwdignore: bool = True,
+) -> str:
+    """Combine project rules with configured and caller-owned exclusions in increasing precedence order."""
     patterns: list[str] = []
     fwdignore = source / FWDIGNORE_NAME
-    if fwdignore.is_file():
+    if include_fwdignore and fwdignore.is_file():
         patterns.extend(fwdignore.read_text(encoding="utf-8").splitlines())
     # Git ignore rules use last-match-wins, whereas rsync's filter list used first-match-wins. Putting configured
     # exclusions last preserves their prior precedence over any negated pattern in .fwdignore.
     patterns.extend(sync_cfg.exclude)
+    patterns.extend(extra_excludes)
     return "".join(f"{pattern}\n" for pattern in patterns if pattern)
 
 
-def _git_candidates(source: Path) -> list[bytes]:
+def _git_candidates(source: Path, *, include_ignored_rule_files: bool = True) -> list[bytes]:
     """Return tracked plus untracked/non-ignored paths and every nested ``.gitignore`` as NUL-safe bytes.
 
     A ``.gitignore`` is allowed to ignore itself (the Convex local-state layout does exactly this). Including those
     files explicitly lets the remote GNU rsync commit preserve ignored remote-only state on later mirrored pushes.
+    Read-only comparisons disable this upload-specific exception so a self-ignored rule file remains ignored.
     """
     proc = subprocess.run(
         ["git", "-C", str(source), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
@@ -67,11 +76,11 @@ def _git_candidates(source: Path) -> list[bytes]:
         detail = proc.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"git could not enumerate the upload selection (exit {proc.returncode})" + (f": {detail}" if detail else ""))
     candidates = [path for path in proc.stdout.split(b"\0") if path]
-    nested_ignore_files = [
-        path
-        for path in _git_ignored_paths(source)
-        if path == b".gitignore" or path.endswith(b"/.gitignore")
-    ]
+    nested_ignore_files = (
+        [path for path in _git_ignored_paths(source) if path == b".gitignore" or path.endswith(b"/.gitignore")]
+        if include_ignored_rule_files
+        else []
+    )
     return list(dict.fromkeys([*candidates, *nested_ignore_files]))
 
 
@@ -86,6 +95,24 @@ def _git_ignored_paths(source: Path) -> list[bytes]:
         detail = ignored_proc.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"git could not enumerate ignored paths (exit {ignored_proc.returncode})" + (f": {detail}" if detail else ""))
     return [path for path in ignored_proc.stdout.split(b"\0") if path]
+
+
+def _git_ignored_candidates(source: Path, candidates: list[bytes]) -> set[bytes]:
+    """Return candidate paths matching repository ignore rules even when Git already tracks those paths.
+
+    ``git ls-files --cached`` normally retains tracked paths regardless of ignore rules. Fwd deliberately applies
+    ``--no-index`` so an accidentally tracked credential or generated artifact still remains outside synchronization.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(source), "check-ignore", "--no-index", "--stdin", "-z"],
+        input=b"\0".join(candidates) + (b"\0" if candidates else b""),
+        check=False,
+        capture_output=True,
+    )
+    if proc.returncode not in (0, 1):
+        detail = proc.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"git could not apply repository ignore rules to the comparison selection (exit {proc.returncode})" + (f": {detail}" if detail else ""))
+    return {path for path in proc.stdout.split(b"\0") if path}
 
 
 def git_ignored_patterns(source: str | Path, sync_cfg: SyncConfig) -> str:
@@ -113,12 +140,54 @@ def _custom_ignored_paths(candidates: list[bytes], ignore_file: Path, filter_rep
     return {path for path in proc.stdout.split(b"\0") if path}
 
 
+def filtered_candidates(
+    source: str | Path,
+    candidates: list[bytes],
+    sync_cfg: SyncConfig,
+    *,
+    apply_gitignore: bool,
+    include_fwdignore: bool = True,
+    extra_excludes: tuple[str, ...] = (),
+) -> list[bytes]:
+    """Filter arbitrary local or remote candidate names through the local project's comparison policy.
+
+    Remote-only names are intentionally evaluated against local rules: the local checkout is the source of truth for
+    what the next push would synchronize, and a stale or missing remote `.gitignore` must not disclose ignored files.
+    """
+    root = Path(source).expanduser().resolve()
+    with tempfile.TemporaryDirectory(prefix="fwd-candidate-selection-") as temporary:
+        temp_root = Path(temporary)
+        ignore_file = temp_root / "fwdignore"
+        ignore_file.write_text(_custom_ignore_text(root, sync_cfg, extra_excludes, include_fwdignore=include_fwdignore), encoding="utf-8")
+        ignored = _custom_ignored_paths(candidates, ignore_file, temp_root / "filter-repo")
+        if apply_gitignore:
+            ignored.update(_git_ignored_candidates(root, candidates))
+    return [path for path in candidates if path not in ignored]
+
+
 @contextmanager
-def upload_manifest(source: str | Path, sync_cfg: SyncConfig) -> Iterator[Path | None]:
+def upload_manifest(
+    source: str | Path,
+    sync_cfg: SyncConfig,
+    *,
+    include_git_metadata: bool = True,
+    include_ignored_rule_files: bool = True,
+    exclude_ignored_tracked: bool = True,
+    extra_excludes: tuple[str, ...] = (),
+) -> Iterator[Path | None]:
     """Yield a NUL-delimited upload manifest, or ``None`` when Git-based selection is unavailable or disabled.
 
     The temporary manifest remains alive for the caller's transfer. Non-Git directories retain the existing rsync/tar
     filter fallback, while standalone Git roots get exact nested-ignore behavior on every local rsync implementation.
+
+    Args:
+        include_git_metadata: Append ``.git/`` for upload callers; comparisons disable it because repository databases
+            are runtime state rather than project content.
+        include_ignored_rule_files: Re-add self-ignored nested ``.gitignore`` files for uploads; comparisons disable
+            the exception so their visible domain matches ordinary Git ignore semantics.
+        exclude_ignored_tracked: Apply repository ignore rules to tracked candidates too. Enabled by default so upload
+            and comparison domains agree and an accidentally tracked ignored credential is not synchronized.
+        extra_excludes: Caller-owned patterns applied after `.fwdignore` and configured exclusions.
     """
     root = Path(source).expanduser().resolve()
     if not sync_cfg.use_gitignore or not _git_worktree_root(root):
@@ -127,16 +196,28 @@ def upload_manifest(source: str | Path, sync_cfg: SyncConfig) -> Iterator[Path |
 
     with tempfile.TemporaryDirectory(prefix="fwd-upload-selection-") as temporary:
         temp_root = Path(temporary)
-        ignore_file = temp_root / "fwdignore"
-        ignore_file.write_text(_custom_ignore_text(root, sync_cfg), encoding="utf-8")
-        candidates = _git_candidates(root)
-        ignored = _custom_ignored_paths(candidates, ignore_file, temp_root / "filter-repo")
+        candidates = _git_candidates(root, include_ignored_rule_files=include_ignored_rule_files)
+        selected = filtered_candidates(
+            root,
+            candidates,
+            sync_cfg,
+            apply_gitignore=False,
+            extra_excludes=extra_excludes,
+        )
+        if exclude_ignored_tracked:
+            repository_ignored = _git_ignored_candidates(root, selected)
+            selected = [
+                path
+                for path in selected
+                if path not in repository_ignored
+                or (include_ignored_rule_files and (path == b".gitignore" or path.endswith(b"/.gitignore")))
+            ]
         manifest = temp_root / "manifest"
         with manifest.open("wb") as stream:
-            for path in candidates:
-                if path not in ignored:
-                    stream.write(path + b"\0")
-            stream.write(b".git/\0")
+            for path in selected:
+                stream.write(path + b"\0")
+            if include_git_metadata:
+                stream.write(b".git/\0")
         yield manifest
 
 

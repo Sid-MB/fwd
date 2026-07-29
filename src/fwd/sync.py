@@ -7,7 +7,8 @@ faithful copy of local, while pull is additive and path-scoped so a careless pul
 
 Git working trees use Git's own tracked/untracked enumeration as the ignore authority, then layer an optional
 ``.fwdignore`` and ``SyncConfig.exclude`` over that manifest. Non-Git directories retain rsync/tar filter fallbacks.
-``.git`` is never excluded — the remote session needs history to diff, blame and commit.
+Push includes ``.git`` because the remote session needs history to diff, blame and commit; pull never imports remote
+repository metadata into the local checkout. Platform metadata is excluded permanently in both directions.
 
 ``tar_up``/``tar_down`` exist because RunPod's proxy transport cannot run a remote rsync binary. Uploads use a
 byte-bounded stream into a remote stage before changing the live project; callers warn when the no-delta tar fallback
@@ -22,6 +23,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -30,7 +32,7 @@ from typing import Literal
 from fwd import config as config_mod
 from fwd import selection
 from fwd import ui
-from fwd.config import SyncConfig
+from fwd.config import ALWAYS_PULL_EXCLUDES, ALWAYS_SYNC_EXCLUDES, SyncConfig
 from fwd.rsync_transport import PROGRESS_PREFIX
 from fwd.sshexec import SSHEndpoint, SSHError
 
@@ -59,6 +61,7 @@ _LARGE_UPLOAD_ENTRY_BYTES = 200_000_000
 _MAX_LARGE_UPLOAD_ENTRIES = 10
 _RSYNC_ENTRY_PREFIX = "__FWD_UPLOAD_ENTRY__"
 TransferProgress = Callable[[int], None]
+TransferPath = Callable[[str], None]
 
 
 class _UploadLimitExceeded(RuntimeError):
@@ -78,40 +81,44 @@ class _LargeUploadEntry:
     kind: Literal["file", "folder"]
 
 
-def _portable_filters(sync_cfg: SyncConfig, local_dir: str | Path) -> list[str]:
-    """Return exclusions shared by rsync and tar fallback; tar cannot reproduce per-directory ``.gitignore`` rules."""
+def _configured_filters(sync_cfg: SyncConfig, local_dir: str | Path, *, include_fwdignore: bool = True) -> list[str]:
+    """Return project-configured excludes and the optional ``.fwdignore`` argument."""
     root = Path(local_dir).expanduser()
     args = [f"--exclude={pattern}" for pattern in sync_cfg.exclude]
     fwdignore = root / FWDIGNORE_NAME
-    if fwdignore.is_file():
+    if include_fwdignore and fwdignore.is_file():
         args.append(f"--exclude-from={fwdignore}")
     return args
 
 
-def rsync_filters(sync_cfg: SyncConfig, local_dir: str | Path) -> list[str]:
+def _portable_filters(sync_cfg: SyncConfig, local_dir: str | Path, *, include_fwdignore: bool = True) -> list[str]:
+    """Return exclusions shared by rsync and tar fallback; tar cannot reproduce per-directory ``.gitignore`` rules."""
+    return [*[f"--exclude={pattern}" for pattern in ALWAYS_SYNC_EXCLUDES], *_configured_filters(sync_cfg, local_dir, include_fwdignore=include_fwdignore)]
+
+
+def rsync_filters(sync_cfg: SyncConfig, local_dir: str | Path, *, include_fwdignore: bool = True) -> list[str]:
     """Build the rsync filter/exclude argv fragment for a project directory.
 
-    The gitignore merge rule comes first so it reads like the repo's own semantics, then the configured excludes, then
-    ``.fwdignore``. Ordering is cosmetic here because every rule is an exclusion and rsync only cares about precedence
-    between conflicting include/exclude pairs, of which we emit none.
+    Permanent platform exclusions come first so neither a negated Git rule nor ``.fwdignore`` can re-include them.
+    Repository rules then precede configurable exclusions, preserving the established project-filter behavior.
 
     ``SyncConfig.exclude`` is used verbatim rather than unioned with ``DEFAULT_EXCLUDES``: ``config.load_config``
     already seeds it with the defaults, and unioning at use time would make it impossible for a project to *shrink*
-    the list (the documented behaviour in ``config.py``).
+    the configurable list. ``ALWAYS_SYNC_EXCLUDES`` is a separate invariant and therefore cannot be shrunk.
 
     Args:
         sync_cfg: Exclude patterns and whether to honour ``.gitignore``.
         local_dir: Project root, inspected for ``.gitignore``/``.fwdignore``.
 
     Returns:
-        rsync arguments, e.g. ``["--filter=:- .gitignore", "--exclude=.venv", ...]``.
+        rsync arguments, e.g. ``["--exclude=.DS_Store", "--filter=:- .gitignore", "--exclude=.venv", ...]``.
     """
     root = Path(local_dir).expanduser()
-    args: list[str] = []
+    args = [f"--exclude={pattern}" for pattern in ALWAYS_SYNC_EXCLUDES]
     if sync_cfg.use_gitignore:
         # ':-' is a per-directory merge: every .gitignore in the tree applies to its own subtree, matching git.
         args.append("--filter=:- .gitignore")
-    args += _portable_filters(sync_cfg, root)
+    args += _configured_filters(sync_cfg, root, include_fwdignore=include_fwdignore)
     return args
 
 
@@ -136,7 +143,7 @@ def _large_upload_entries(local_dir: str | Path, sync_cfg: SyncConfig, *, portab
     source = Path(local_dir).expanduser().resolve()
     folder_sizes: dict[str, int] = {}
     large_files: list[_LargeUploadEntry] = []
-    with selection.upload_manifest(source, sync_cfg) as manifest, tempfile.TemporaryDirectory(prefix="fwd-upload-diagnostic-") as destination:
+    with selection.upload_manifest(source, sync_cfg, extra_excludes=ALWAYS_SYNC_EXCLUDES) as manifest, tempfile.TemporaryDirectory(prefix="fwd-upload-diagnostic-") as destination:
         filters = selection.rsync_manifest_args(manifest) if manifest is not None else (_portable_filters(sync_cfg, source) if portable else rsync_filters(sync_cfg, source))
         argv = [
             *RSYNC_BASE,
@@ -234,11 +241,42 @@ def _stop_process(proc: subprocess.Popen[object]) -> None:
         proc.wait()
 
 
-def _run_bounded_rsync(argv: Sequence[str], sentinel: Path, on_progress: TransferProgress | None = None) -> None:
-    """Run rsync, forwarding relay byte updates and translating its sentinel into a limit exception."""
-    proc = subprocess.Popen(list(argv), stderr=subprocess.PIPE, text=True, bufsize=1)
+def _stream_transfer_paths(stream, on_path: TransferPath | None, tar_style: bool = False) -> None:
+    """Drain a subprocess line stream and report normalized non-empty project-relative paths.
+
+    BSD tar prefixes verbose archive/extract members with ``a `` or ``x `` while GNU tar prints the member directly.
+    SSH and tar diagnostics share stderr on fallback pulls, so recognizable diagnostics remain warnings rather than
+    being mislabeled as project files.
+    """
+    for raw_line in stream:
+        line = raw_line.decode(errors="replace") if isinstance(raw_line, bytes) else raw_line
+        path = line.rstrip("\r\n")
+        if not path or path in (".", "./"):
+            continue
+        if tar_style and path.startswith(("Warning:", "ssh:", "tar:")):
+            ui.warn(path)
+            continue
+        if tar_style and path.startswith(("a ", "x ")):
+            path = path[2:]
+        if path.startswith("./"):
+            path = path[2:]
+        if on_path is not None:
+            on_path(path)
+
+
+def _run_bounded_rsync(
+    argv: Sequence[str],
+    sentinel: Path,
+    on_progress: TransferProgress | None = None,
+    on_path: TransferPath | None = None,
+) -> None:
+    """Run rsync, concurrently forwarding paths and relay byte updates, then translate its limit sentinel."""
+    proc = subprocess.Popen(list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     diagnostics: list[str] = []
+    assert proc.stdout is not None
     assert proc.stderr is not None
+    path_thread = threading.Thread(target=_stream_transfer_paths, args=(proc.stdout, on_path), daemon=True)
+    path_thread.start()
     for line in proc.stderr:
         if line.startswith(PROGRESS_PREFIX):
             try:
@@ -250,6 +288,7 @@ def _run_bounded_rsync(argv: Sequence[str], sentinel: Path, on_progress: Transfe
         else:
             diagnostics.append(line.rstrip())
     returncode = proc.wait()
+    path_thread.join()
     if sentinel.is_file():
         try:
             observed_bytes = int(sentinel.read_text(encoding="utf-8"))
@@ -264,18 +303,24 @@ def _run_bounded_rsync(argv: Sequence[str], sentinel: Path, on_progress: Transfe
         raise SSHError(f"rsync push failed (exit {returncode})" + (f": {detail}" if detail else ""))
 
 
-def _run(argv: Sequence[str], *, what: str) -> None:
+def _run(argv: Sequence[str], *, what: str, on_path: TransferPath | None = None) -> None:
     """Run a transfer subprocess with output streamed, raising :class:`SSHError` on a genuine failure.
 
     Partial-transfer exits are downgraded to a warning: they mean the bytes arrived but some per-file operation was
     refused, and aborting there would kill a launch (and waste an already-provisioned pod) over something cosmetic.
     """
-    proc = subprocess.run(list(argv), check=False)
-    if proc.returncode in RSYNC_PARTIAL_EXITS:
-        ui.warn(f"{what} completed with warnings (rsync exit {proc.returncode}: some files were skipped)")
+    if on_path is None:
+        returncode = subprocess.run(list(argv), check=False).returncode
+    else:
+        proc = subprocess.Popen(list(argv), stdout=subprocess.PIPE, text=True, bufsize=1)
+        assert proc.stdout is not None
+        _stream_transfer_paths(proc.stdout, on_path)
+        returncode = proc.wait()
+    if returncode in RSYNC_PARTIAL_EXITS:
+        ui.warn(f"{what} completed with warnings (rsync exit {returncode}: some files were skipped)")
         return
-    if proc.returncode != 0:
-        raise SSHError(f"{what} failed (exit {proc.returncode})")
+    if returncode != 0:
+        raise SSHError(f"{what} failed (exit {returncode})")
 
 
 def _create_remote_stage(endpoint: SSHEndpoint, remote_dir: str) -> str:
@@ -308,6 +353,7 @@ def _rsync_commit_command(stage: str, remote_dir: str, sync_cfg: SyncConfig, sou
     stage_arg = shlex.quote(f"{stage.rstrip('/')}/")
     remote_arg = shlex.quote(f"{remote_dir.rstrip('/')}/")
     excludes = shlex.quote(_combined_excludes(sync_cfg, source))
+    permanent_args = "".join(f" {shlex.quote(f'--exclude={pattern}')}" for pattern in ALWAYS_SYNC_EXCLUDES)
     filter_arg = f" {shlex.quote('--filter=:- .gitignore')}" if sync_cfg.use_gitignore else ""
     delete_arg = " --delete" if delete and sync_cfg.delete else ""
     return (
@@ -315,7 +361,7 @@ def _rsync_commit_command(stage: str, remote_dir: str, sync_cfg: SyncConfig, sou
         "parent=$(dirname \"$remote\"); excludes=$(mktemp \"$parent/.fwd-excludes.XXXXXX\"); "
         "cleanup() { rm -rf -- \"$stage\"; rm -f -- \"$excludes\"; }; trap cleanup EXIT HUP INT TERM; "
         f"printf %s {excludes} > \"$excludes\"; mkdir -p \"$remote\"; "
-        f"rsync -a --no-owner --no-group{filter_arg} --exclude-from=\"$excludes\"{delete_arg} {stage_arg} {remote_arg}"
+        f"rsync -a --no-owner --no-group{permanent_args}{filter_arg} --exclude-from=\"$excludes\"{delete_arg} {stage_arg} {remote_arg}"
     )
 
 
@@ -327,6 +373,7 @@ def sync_up(
     *,
     delete: bool = True,
     on_progress: TransferProgress | None = None,
+    on_path: TransferPath | None = None,
 ) -> None:
     """Mirror the local project directory to the remote machine.
 
@@ -339,14 +386,15 @@ def sync_up(
         sync_cfg: Filter configuration.
         delete: Remove remote files absent locally, making the copy an exact mirror.
         on_progress: Optional callback receiving cumulative compressed outbound bytes.
+        on_path: Optional callback receiving each project-relative path as rsync selects it for transfer.
     """
     if not endpoint.supports_rsync:
-        tar_up(endpoint, local_dir, remote_dir, sync_cfg, delete=delete, on_progress=on_progress)
+        tar_up(endpoint, local_dir, remote_dir, sync_cfg, delete=delete, on_progress=on_progress, on_path=on_path)
         return
 
     source_path = Path(local_dir).expanduser()
     source = f"{str(source_path).rstrip('/')}/"
-    with selection.upload_manifest(source_path, sync_cfg) as manifest:
+    with selection.upload_manifest(source_path, sync_cfg, extra_excludes=ALWAYS_SYNC_EXCLUDES) as manifest:
         stage = _create_remote_stage(endpoint, remote_dir)
         limit_bytes = int(sync_cfg.max_size_gb * BYTES_PER_GB)
         try:
@@ -368,13 +416,17 @@ def sync_up(
                 upload_filters = selection.rsync_manifest_args(manifest) if manifest is not None else rsync_filters(sync_cfg, source_path)
                 argv = [
                     *RSYNC_BASE,
+                    *(["--out-format=%n%L"] if on_path is not None else []),
                     "-e",
                     bounded_shell,
                     *upload_filters,
                     source,
                     f"{endpoint.ssh_target()}:{stage}/",
                 ]
-                _run_bounded_rsync(argv, sentinel, on_progress)
+                if on_path is None:
+                    _run_bounded_rsync(argv, sentinel, on_progress)
+                else:
+                    _run_bounded_rsync(argv, sentinel, on_progress, on_path)
             endpoint.run(_rsync_commit_command(stage, remote_dir, sync_cfg, source_path, delete=delete))
         except _UploadLimitExceeded as exc:
             cleanup_complete = _cleanup_remote_stage(endpoint, stage)
@@ -393,6 +445,10 @@ def sync_down(
     sync_cfg: SyncConfig | None = None,
     *,
     filter_dir: str | Path | None = None,
+    manifest: Path | None = None,
+    extra_excludes: Sequence[str] = (),
+    include_fwdignore: bool = True,
+    on_path: TransferPath | None = None,
 ) -> None:
     """Pull work back from the remote machine.
 
@@ -401,19 +457,40 @@ def sync_down(
     Args:
         paths: Specific paths relative to ``remote_dir``; empty means the whole tree (minus excludes).
         filter_dir: Project directory whose ``.fwdignore`` supplies filters when ``local_dir`` is a temporary snapshot.
+        manifest: Optional local NUL-delimited selection applied to the remote source for an exact read-only snapshot.
+        extra_excludes: Patterns that remain excluded even when the caller broadens ordinary sync filters.
+        include_fwdignore: Whether the project `.fwdignore` participates; broad diagnostic comparisons disable it.
+        on_path: Optional callback receiving each project-relative path as it is downloaded.
     """
     if not endpoint.supports_rsync:
-        tar_down(endpoint, remote_dir, local_dir, paths)
+        tar_down(
+            endpoint,
+            remote_dir,
+            local_dir,
+            paths,
+            sync_cfg,
+            filter_dir=filter_dir,
+            manifest=manifest,
+            extra_excludes=extra_excludes,
+            include_fwdignore=include_fwdignore,
+            on_path=on_path,
+        )
         return
 
     destination = Path(local_dir).expanduser()
     destination.mkdir(parents=True, exist_ok=True)
     base = remote_dir.rstrip("/")
     argv = [*RSYNC_BASE, "-e", endpoint.rsync_shell()]
-    if sync_cfg is not None and not paths:
-        # Path-scoped pulls are an explicit user request ("give me exactly this file"), so filters only apply to a
-        # whole-tree pull where the excludes are what keep .venv/node_modules from coming back down.
-        argv += rsync_filters(sync_cfg, filter_dir or local_dir)
+    if on_path is not None:
+        argv.append("--out-format=%n%L")
+    pull_excludes = tuple(dict.fromkeys((*ALWAYS_PULL_EXCLUDES, *extra_excludes)))
+    argv += [f"--exclude={pattern}" for pattern in pull_excludes]
+    if manifest is not None and not paths:
+        argv += selection.rsync_manifest_args(manifest)
+    elif sync_cfg is not None and not paths:
+        # Configurable project filters apply only to whole-tree pulls. Permanent platform and repository-metadata
+        # exclusions above also protect explicit path pulls, because those files are never a valid sync result.
+        argv += rsync_filters(sync_cfg, filter_dir or local_dir, include_fwdignore=include_fwdignore)
     if paths:
         # rsync accepts several sources against one host by using the :"a" :"b" form; simplest correct spelling is one
         # source per relative path, all sharing the same remote root.
@@ -421,7 +498,7 @@ def sync_down(
         argv.append(f"{destination}/")
     else:
         argv += [f"{endpoint.ssh_target()}:{base}/", f"{destination}/"]
-    _run(argv, what="rsync pull")
+    _run(argv, what="rsync pull", on_path=on_path)
 
 
 def _tar_excludes(sync_cfg: SyncConfig) -> list[str]:
@@ -430,7 +507,7 @@ def _tar_excludes(sync_cfg: SyncConfig) -> list[str]:
     The tar fallback cannot honour ``.gitignore`` (tar has no per-directory merge concept), so callers already warn
     that this transport is degraded.
     """
-    return [f"--exclude={pattern}" for pattern in sync_cfg.exclude]
+    return [f"--exclude={pattern}" for pattern in (*ALWAYS_SYNC_EXCLUDES, *sync_cfg.exclude)]
 
 
 def _combined_excludes(sync_cfg: SyncConfig, source: Path) -> str:
@@ -439,7 +516,7 @@ def _combined_excludes(sync_cfg: SyncConfig, source: Path) -> str:
     Applying the upload transport's configured and ``.fwdignore`` patterns during the remote stage commit keeps
     deletion from removing excluded environments and caches that intentionally survive outside the sync domain.
     """
-    patterns = list(sync_cfg.exclude)
+    patterns = [*ALWAYS_SYNC_EXCLUDES, *sync_cfg.exclude]
     fwdignore = source / FWDIGNORE_NAME
     if fwdignore.is_file():
         patterns.extend(fwdignore.read_text(encoding="utf-8").splitlines())
@@ -491,32 +568,71 @@ def tar_up(
     *,
     delete: bool = True,
     on_progress: TransferProgress | None = None,
+    on_path: TransferPath | None = None,
 ) -> None:
     """Upload by streaming a local tar into a remote project, for transports without rsync.
 
     Filtering happens locally when building the archive. When deletion is enabled, remote manifests remove stale
     synchronized paths while preserving content selected by ``sync.exclude`` and ``.fwdignore``. ``on_progress``
-    receives cumulative compressed bytes after each chunk reaches the SSH process.
+    receives cumulative compressed bytes after each chunk reaches the SSH process; ``on_path`` receives tar's
+    project-relative member names while the archive is produced.
     """
     source = Path(local_dir).expanduser()
-    with selection.upload_manifest(source, sync_cfg) as manifest:
+    with selection.upload_manifest(source, sync_cfg, extra_excludes=ALWAYS_SYNC_EXCLUDES) as manifest:
         if manifest is not None:
-            tar_argv = ["tar", "czf", "-", "-C", str(source), "--null", f"--files-from={manifest}"]
+            tar_argv = ["tar", "czvf" if on_path is not None else "czf", "-", "-C", str(source), "--null", f"--files-from={manifest}"]
         else:
             tar_excludes = _tar_excludes(sync_cfg)
             fwdignore = source / FWDIGNORE_NAME
             if fwdignore.is_file():
                 tar_excludes.append(f"--exclude-from={fwdignore}")
-            tar_argv = ["tar", "czf", "-", *tar_excludes, "-C", str(source), "."]
+            tar_argv = ["tar", "czvf" if on_path is not None else "czf", "-", *tar_excludes, "-C", str(source), "."]
         remote_excludes = _combined_excludes(sync_cfg, source)
         if manifest is not None:
             remote_excludes += selection.git_ignored_patterns(source, sync_cfg)
         remote_command = _tar_mirror_command(remote_dir, remote_excludes, delete=delete and sync_cfg.delete)
         ssh_argv = [*endpoint.ssh_argv(), remote_command]
         try:
-            _pipe(tar_argv, ssh_argv, what="tar push", max_bytes=int(sync_cfg.max_size_gb * BYTES_PER_GB), on_progress=on_progress)
+            _pipe(
+                tar_argv,
+                ssh_argv,
+                what="tar push",
+                max_bytes=int(sync_cfg.max_size_gb * BYTES_PER_GB),
+                on_progress=on_progress,
+                on_path=on_path,
+                producer_paths_from_stderr=on_path is not None,
+            )
         except _UploadLimitExceeded as exc:
             _upload_limit_error(source, sync_cfg, exc.observed_bytes, portable=True)
+
+
+def _tar_down_manifest(endpoint: SSHEndpoint, remote_dir: str, destination: Path, manifest: Path) -> None:
+    """Download exactly a local NUL manifest over SSH, tolerating absent remote members as comparison differences.
+
+    The extractor drains SSH stdout while the manifest is written to SSH stdin, preserving the bidirectional protocol
+    without buffering the archive. GNU and BSD tar both return 1 when a listed source member is missing; that is an
+    expected one-sided diff, so exit 1 is accepted only when local extraction completed successfully.
+    """
+    remote = f"tar czf - -C {shlex.quote(remote_dir.rstrip('/'))} --null --files-from=-"
+    env = {**os.environ, **TAR_ENV}
+    ssh = subprocess.Popen([*endpoint.ssh_argv(), remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, start_new_session=True)
+    assert ssh.stdin is not None
+    assert ssh.stdout is not None
+    extractor = subprocess.Popen(["tar", "xzf", "-", "-C", str(destination)], stdin=ssh.stdout, env=env, start_new_session=True)
+    ssh.stdout.close()
+    try:
+        ssh.stdin.write(manifest.read_bytes())
+        ssh.stdin.close()
+        extractor_rc = extractor.wait()
+        ssh_rc = ssh.wait()
+    except BrokenPipeError:
+        _stop_process(ssh)
+        _stop_process(extractor)
+        raise SSHError("tar pull failed because the remote side closed the manifest stream")
+    if extractor_rc != 0 or ssh_rc not in (0, 1):
+        raise SSHError(f"tar pull failed (remote exit {ssh_rc}, local exit {extractor_rc})")
+    if ssh_rc == 1:
+        ui.warn("remote snapshot omitted one or more selected paths that are absent or unreadable; they will appear as differences")
 
 
 def tar_down(
@@ -525,14 +641,38 @@ def tar_down(
     local_dir: str | Path,
     paths: Sequence[str] = (),
     sync_cfg: SyncConfig | None = None,
+    *,
+    filter_dir: str | Path | None = None,
+    manifest: Path | None = None,
+    extra_excludes: Sequence[str] = (),
+    include_fwdignore: bool = True,
+    on_path: TransferPath | None = None,
 ) -> None:
     """Download by streaming a remote tar into a local extract, for transports without rsync."""
     destination = Path(local_dir).expanduser()
     destination.mkdir(parents=True, exist_ok=True)
+    if manifest is not None and not paths:
+        _tar_down_manifest(endpoint, remote_dir, destination, manifest)
+        return
     members = [shlex.quote(p.lstrip("/")) for p in paths] or ["."]
-    excludes = _tar_excludes(sync_cfg) if sync_cfg is not None and not paths else []
-    remote = f"tar czf - {' '.join(shlex.quote(flag) for flag in excludes)} -C {shlex.quote(remote_dir.rstrip('/'))} {' '.join(members)}"
-    _pipe([*endpoint.ssh_argv(), remote], ["tar", "xzf", "-", "-C", str(destination)], what="tar pull")
+    excludes = [f"--exclude={pattern}" for pattern in ALWAYS_PULL_EXCLUDES]
+    if sync_cfg is not None and not paths:
+        excludes.extend(f"--exclude={pattern}" for pattern in sync_cfg.exclude)
+    if sync_cfg is not None and not paths and include_fwdignore:
+        fwdignore = Path(filter_dir or local_dir).expanduser() / FWDIGNORE_NAME
+        if fwdignore.is_file():
+            excludes.extend(f"--exclude={pattern}" for pattern in fwdignore.read_text(encoding="utf-8").splitlines() if pattern)
+    excludes.extend(f"--exclude={pattern}" for pattern in extra_excludes)
+    excludes = list(dict.fromkeys(excludes))
+    tar_mode = "czvf" if on_path is not None else "czf"
+    remote = f"tar {tar_mode} - {' '.join(shlex.quote(flag) for flag in excludes)} -C {shlex.quote(remote_dir.rstrip('/'))} {' '.join(members)}"
+    _pipe(
+        [*endpoint.ssh_argv(), remote],
+        ["tar", "xzf", "-", "-C", str(destination)],
+        what="tar pull",
+        on_path=on_path,
+        producer_paths_from_stderr=on_path is not None,
+    )
 
 
 def _pipe(
@@ -542,18 +682,32 @@ def _pipe(
     what: str,
     max_bytes: int | None = None,
     on_progress: TransferProgress | None = None,
+    on_path: TransferPath | None = None,
+    producer_paths_from_stderr: bool = False,
 ) -> None:
     """Stream ``producer`` stdout into ``consumer`` stdin and raise if either side fails.
 
     Both exit codes are checked because a remote extract can fail (disk full, missing tar) long after the local tar
     finished happily, and silently losing that would corrupt the remote tree. A bounded upload is relayed through this
     process so compressed wire bytes can stop the transfer without a separate filesystem scan; ``on_progress`` receives
-    the cumulative count after each forwarded chunk.
+    the cumulative count after each forwarded chunk. When tar writes verbose member names to producer stderr, a
+    dedicated thread drains them into ``on_path`` so a large listing cannot deadlock the archive stream.
     """
     env = {**os.environ, **TAR_ENV}
     if max_bytes is not None:
-        left = subprocess.Popen(list(producer), stdout=subprocess.PIPE, env=env, start_new_session=True)
+        left = subprocess.Popen(
+            list(producer),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if producer_paths_from_stderr else None,
+            env=env,
+            start_new_session=True,
+        )
         right = subprocess.Popen(list(consumer), stdin=subprocess.PIPE, env=env, start_new_session=True)
+        path_thread = None
+        if producer_paths_from_stderr:
+            assert left.stderr is not None
+            path_thread = threading.Thread(target=_stream_transfer_paths, args=(left.stderr, on_path, True), daemon=True)
+            path_thread.start()
         observed_bytes = 0
         assert left.stdout is not None
         assert right.stdin is not None
@@ -568,6 +722,8 @@ def _pipe(
             right.stdin.close()
             left_rc = left.wait()
             right_rc = right.wait()
+            if path_thread is not None:
+                path_thread.join()
         except _UploadLimitExceeded:
             _stop_process(left)
             right.stdin.close()
@@ -575,19 +731,35 @@ def _pipe(
                 right.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 _stop_process(right)
+            if path_thread is not None:
+                path_thread.join()
             raise
         except BrokenPipeError:
             _stop_process(left)
             _stop_process(right)
+            if path_thread is not None:
+                path_thread.join()
             raise SSHError(f"{what} failed because the remote side closed the stream")
         if left_rc != 0 or right_rc != 0:
             raise SSHError(f"{what} failed (local exit {left_rc}, remote exit {right_rc})")
         return
-    with subprocess.Popen(list(producer), stdout=subprocess.PIPE, env=env) as left:
+    with subprocess.Popen(
+        list(producer),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE if producer_paths_from_stderr else None,
+        env=env,
+    ) as left:
         assert left.stdout is not None
+        path_thread = None
+        if producer_paths_from_stderr:
+            assert left.stderr is not None
+            path_thread = threading.Thread(target=_stream_transfer_paths, args=(left.stderr, on_path, True), daemon=True)
+            path_thread.start()
         right = subprocess.Popen(list(consumer), stdin=left.stdout, env=env)
         # Closing our copy lets the producer see EPIPE if the consumer dies, instead of blocking forever.
         left.stdout.close()
         right_rc = right.wait()
+        if path_thread is not None:
+            path_thread.join()
     if left.returncode != 0 or right_rc != 0:
         raise SSHError(f"{what} failed (local exit {left.returncode}, remote exit {right_rc})")

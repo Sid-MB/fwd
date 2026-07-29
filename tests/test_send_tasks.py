@@ -50,8 +50,8 @@ def test_agent_send_commands_resume_existing_conversations() -> None:
     claude = agents.AGENTS["claude"].send_command("fix it", {"resume_id": "session-123"})
     codex = agents.AGENTS["codex"].send_command("fix it", {})
 
-    assert claude == ("claude", "--print", "--verbose", "--output-format", "stream-json", "--resume", "session-123", "fix it")
-    assert codex == ("codex", "exec", "--json", "resume", "--last", "fix it")
+    assert claude == ("claude", "--permission-mode", "bypassPermissions", "--print", "--verbose", "--output-format", "stream-json", "--resume", "session-123", "fix it")
+    assert codex == ("codex", "--dangerously-bypass-approvals-and-sandbox", "exec", "--json", "resume", "--last", "fix it")
 
 
 def test_remote_task_start_uses_manager_window_logs_and_queue_marker() -> None:

@@ -40,7 +40,7 @@ from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState, endpoint_to_dict
 
 
-def _relaunch(session: SessionState) -> NoReturn:
+def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = None) -> NoReturn:
     """Re-run the full launch pipeline for an existing session, reusing its recorded launch flags.
 
     Never returns: ``launch`` execs into attach on success.
@@ -55,6 +55,7 @@ def _relaunch(session: SessionState) -> NoReturn:
         user_config=bool(flags.get("user_config")),
         creds=bool(flags.get("creds")),
         attach=True,
+        forward_ports=forward_ports,
     )
     raise typer.Exit(0)
 
@@ -150,7 +151,7 @@ def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
         raise typer.Exit(1)
 
 
-def attach(name: str | None = None, *, restart: bool = False, raw: bool = False) -> NoReturn:
+def attach(name: str | None = None, *, restart: bool = False, raw: bool = False, forward_ports: tuple[str, ...] | None = None) -> NoReturn:
     """Attach to an existing session's remote tmux, reconciling live status first.
 
     Args:
@@ -158,10 +159,15 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False)
         restart: Authorize restarting stopped compute without prompting. Required for any restart in a
             non-interactive run, since the alternative is silently spending money.
         raw: When the target is running but its primary tmux session is missing, create a plain recovery shell without rerunning sync, tool installation, dependency installation, project setup, or agent startup.
+        forward_ports: Optional mappings requested by the ``fwd up --reuse`` compatibility path; direct attach leaves forwarding unchanged.
 
     Never returns: either execs into ssh, relaunches, or exits with a message.
     """
     session = launch_ops.resolve_session(name)
+    if forward_ports is not None:
+        from fwd.ops import ports as ports_ops
+
+        ports_ops.preflight_launch_ports(session, forward_ports)
     backend = launch_ops.backend_for(session)
     status = launch_ops.status_of(backend, session)
 
@@ -184,7 +190,7 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False)
         # A stopped pod has a wiped container disk, so only the full launch pipeline can repair it.
         ui.warn(f"session {session.name!r}: target is stopped")
         _confirm_restart(f"restart session {session.name!r}?", restart=restart, action="restart billable compute")
-        _relaunch(session)
+        _relaunch(session, forward_ports=forward_ports)
 
     # Re-resolve rather than trusting the cached address: RunPod reassigns IP and port on every restart.
     try:
@@ -218,7 +224,10 @@ def attach(name: str | None = None, *, restart: bool = False, raw: bool = False)
         else:
             # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline, so it goes through the same gate rather than inventing a second policy.
             _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
-            _relaunch(session)
+            _relaunch(session, forward_ports=forward_ports)
+
+    if forward_ports is not None:
+        ports_ops.ensure_session_ports(session, forward_ports, endpoint=endpoint)
 
     session.touch_attached()
     launch_ops.store().upsert(session)

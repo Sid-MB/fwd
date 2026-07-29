@@ -21,7 +21,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from fwd import ui
+from fwd import port_forwarding, ui
 from fwd.skill_setup import skills_environment
 from fwd.state import STATE_PATH, StateStore
 
@@ -29,7 +29,7 @@ PACKAGE_NAME = "fwd"
 REPOSITORY_URL = "https://github.com/Sid-MB/fwd"
 PACKAGE_SPEC = f"git+{REPOSITORY_URL}"
 ISSUES_URL = f"{REPOSITORY_URL}/issues"
-TEMP_PREFIXES = ("fwd-skill-update-", "fwd-session-", "fwd-codex-", "fwd-cm-")
+TEMP_PREFIXES = ("fwd-skill-update-", "fwd-session-", "fwd-codex-", "fwd-cm-", "fwd-ports-")
 SKILLS_REMOVE_TIMEOUT_SECONDS = 60
 
 
@@ -232,6 +232,13 @@ def uninstall(*, force: bool = False) -> int:
             return 0
 
     home = Path.home()
+    if session_count:
+        try:
+            for session in StateStore(STATE_PATH).all():
+                port_forwarding.close(session.ports_ssh_endpoint(), session.name)
+        except (OSError, port_forwarding.PortForwardError) as exc:
+            ui.error(f"could not close every local port forward before uninstall; fwd was retained so the tunnel remains manageable ({exc})")
+            return 1
     _remove_skill_with_npx()
     paths = (*_skill_paths(home), *_completion_paths(home), *_temporary_paths(), home / ".fwd")
     removed = 0

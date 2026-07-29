@@ -10,11 +10,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+import re
+import shlex
 from typing import Any, Mapping
 
 from fwd.config import Config
 from fwd.sshexec import SSHEndpoint
 from fwd.tooling import ToolRequirement
+
+ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +58,40 @@ class Agent(ABC):
         Agents with no special launch flags accept only the default option set. This catches accidental use of
         Claude-only switches without teaching the orchestrator which implementation owns them.
         """
-        del config
         if options.any():
             raise ValueError(f"agent {self.name!r} does not support --session, --handoff, --user-config, or --creds")
-        return {}
+        runtime = config.agent(self.name)
+        invalid_names = sorted(name for name in runtime.environment if not ENVIRONMENT_NAME.fullmatch(name))
+        if invalid_names:
+            raise ValueError(f"agent {self.name!r} has invalid environment variable name(s): {', '.join(invalid_names)}")
+        return {
+            "agent_full_access": runtime.full_access,
+            "agent_args": list(runtime.args),
+            "agent_environment": dict(runtime.environment),
+        }
+
+    def runtime_args(self, flags: Mapping[str, object]) -> list[str]:
+        """Return the configured argv extension recorded with the session."""
+        value = flags.get("agent_args")
+        return [str(part) for part in value] if isinstance(value, list) else []
+
+    def with_environment_defaults(self, command: str, flags: Mapping[str, object]) -> str:
+        """Export configured variables only when the remote shell has not already defined them."""
+        value = flags.get("agent_environment")
+        if not isinstance(value, dict) or not value:
+            return command
+        exports = []
+        for name, default in value.items():
+            if not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name):
+                continue
+            exports.append(f'[ "${{{name}+x}}" = x ] || export {name}={shlex.quote(str(default))}')
+        return f"{'; '.join(exports)}; exec {command}" if exports else command
+
+    def environment_command(self, command: list[str], flags: Mapping[str, object]) -> tuple[str, ...]:
+        """Return argv for a non-interactive agent command with the same environment defaults as the TUI."""
+        plain = shlex.join(command)
+        wrapped = self.with_environment_defaults(plain, flags)
+        return tuple(command) if wrapped == plain else ("bash", "-lc", wrapped)
 
     def prepare_local(self, local_cwd: Path, flags: dict[str, Any]) -> object | None:
         """Prepare state that must exist before project synchronization and return opaque transfer state."""

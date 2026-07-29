@@ -159,6 +159,12 @@ def transfer_step(message: str) -> Iterator[Callable[[int], None]]:
         err_console.print(f"ok: {safe} ({decimal(completed)}, {decimal(int(average_speed))}/s, {elapsed:.1f}s)")
 
 
+def transfer_path(path: str) -> None:
+    """Print one project-relative path reported by an active push or pull without contaminating data stdout."""
+    safe = escape(path)
+    err_console.print(f"[dim]  ↳[/] {safe}" if _tty() else f"sync: {safe}")
+
+
 def info(message: str) -> None:
     """Print a neutral status line to stderr."""
     safe = escape(message)
@@ -217,7 +223,7 @@ def raw(text: str) -> None:
     sys.stdout.write(text)
 
 
-def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[str]], *, output_format: OutputFormat | str = OutputFormat.auto) -> None:
+def table(title: str, columns: Sequence[str], rows: Iterable[Sequence[object]], *, output_format: OutputFormat | str = OutputFormat.auto) -> None:
     """Render a table to stdout (it is data, not chrome).
 
     Args:

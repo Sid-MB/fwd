@@ -43,8 +43,8 @@ from fwd import ui
 GLOBAL_CONFIG_PATH = Path.home() / ".fwd" / "config.toml"
 PROJECT_CONFIG_RELPATH = ".fwd/config.toml"
 
-# Excluded from sync by default: reproducible from lockfiles, huge, or platform-specific (a macOS .venv is actively
-# harmful on a Linux box). ``.git`` is deliberately NOT here — the remote session needs history for diffs and commits.
+# Excluded from sync by default: reproducible from lockfiles or harmful across platforms (a macOS .venv is actively
+# harmful on a Linux box). ``.git`` is deliberately NOT here — uploads need history for remote diffs and commits.
 #
 # These are *seeded* into SyncConfig.exclude rather than appended at transfer time, so a project that sets
 # ``[sync] exclude`` can shrink the list as well as grow it — e.g. a repo that genuinely ships a checked-in ``dist/``.
@@ -62,8 +62,20 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
     ".next",
     "dist",
     "build",
-    ".DS_Store",
 )
+
+# Platform metadata is never project content and cannot be re-enabled by replacing ``sync.exclude``. Pull adds
+# ``.git`` separately because local repository state must never be overwritten, while push intentionally carries it
+# so remote coding agents have history, branches, and an index.
+ALWAYS_SYNC_EXCLUDES: tuple[str, ...] = (
+    ".DS_Store",
+    "._*",
+    "Thumbs.db",
+    "Desktop.ini",
+    ".Spotlight-V100",
+    ".Trashes",
+)
+ALWAYS_PULL_EXCLUDES: tuple[str, ...] = (".git", *ALWAYS_SYNC_EXCLUDES)
 DEFAULT_MAX_SYNC_SIZE_GB = 1.0
 
 DEFAULT_RUNPOD_CPU_IMAGE = "runpod/base:0.6.2-cpu"
@@ -74,6 +86,7 @@ DEFAULT_RUNPOD_GPU_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu2
 RUNPOD_COMPUTE_TYPES: frozenset[str] = frozenset({"gpu", "cpu"})
 RUNPOD_CLOUD_TYPES: frozenset[str] = frozenset({"secure", "community"})
 BUILTIN_DEFAULT_COMMAND: tuple[str, ...] = ("claude",)
+BUILTIN_AGENT_NAMES: tuple[str, ...] = ("claude", "codex")
 
 
 class ConfigError(RuntimeError):
@@ -279,11 +292,26 @@ class ClaudeConfig:
 
 
 @dataclass(slots=True)
+class AgentConfig:
+    """Runtime defaults shared by every registered coding-agent integration.
+
+    ``full_access`` is intentionally enabled because fwd runs agents inside user-selected remote compute that already
+    provides the isolation boundary. ``args`` and ``environment`` are per-agent escape hatches with identical syntax;
+    environment entries are defaults rather than forced overrides, so values already exported by the remote shell win.
+    """
+
+    full_access: bool = True
+    args: list[str] = field(default_factory=list)
+    environment: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class SyncConfig:
     """File-transfer policy.
 
     Attributes:
-        exclude: Patterns layered over the Git-selected upload manifest, or passed directly to non-Git transfers.
+        exclude: Replaceable project patterns layered over the Git-selected upload manifest, or passed directly to
+            non-Git transfers. Platform metadata in ``ALWAYS_SYNC_EXCLUDES`` remains excluded independently.
         use_gitignore: Ask Git to enumerate tracked and untracked/non-ignored files so nested rules are exact.
         delete: Pass ``--delete`` on push, making the remote a mirror. Off means remote-only files survive a push.
         max_size_gb: Approximate maximum filtered upload size. The transfer stops and discards its remote staging
@@ -305,12 +333,35 @@ class SyncConfig:
 
 
 @dataclass(slots=True)
+class ForwardingConfig:
+    """Project-default local-to-remote port mappings opened after a successful session launch.
+
+    The list uses the same ``PORT`` and ``LOCAL:REMOTE`` grammar as :command:`fwd ports`. Lists replace rather than
+    merge across user and project files, so a project can explicitly own the complete set it exposes.
+    """
+
+    ports: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Validate every mapping during config loading so malformed defaults fail before provisioning compute."""
+        if not isinstance(self.ports, list) or not all(isinstance(value, str) for value in self.ports):
+            raise ConfigError("forwarding.ports must be an array of PORT or LOCAL:REMOTE strings")
+        from fwd import port_forwarding
+
+        try:
+            port_forwarding.parse_mappings(tuple(self.ports))
+        except port_forwarding.PortForwardError as exc:
+            raise ConfigError(f"forwarding.ports: {exc}") from exc
+
+
+@dataclass(slots=True)
 class Config:
     """Fully merged configuration for one invocation.
 
     Attributes:
         default_command: User/project-merged argv launched by bare ``fwd`` when no session exists.
         target_default_commands: Per-target argv overrides, intentionally separate from backend target definitions.
+        forwarding: Launch-time local port mappings, replaceable by a project's `.fwd/config.toml`.
         sources: Config files that actually contributed, in precedence order. Surfaced by ``fwd doctor`` so users can
             tell which file set a surprising value.
     """
@@ -318,14 +369,20 @@ class Config:
     default_target: str | None = None
     default_command: list[str] = field(default_factory=lambda: list(BUILTIN_DEFAULT_COMMAND))
     target_default_commands: dict[str, list[str]] = field(default_factory=dict)
+    agents: dict[str, AgentConfig] = field(default_factory=lambda: {name: AgentConfig() for name in BUILTIN_AGENT_NAMES})
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    forwarding: ForwardingConfig = field(default_factory=ForwardingConfig)
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     sources: list[Path] = field(default_factory=list)
 
     def command_for(self, target_name: str) -> tuple[str, ...]:
         """Resolve the startup command with target-specific settings taking precedence over merged file settings."""
         return tuple(self.target_default_commands.get(target_name, self.default_command))
+
+    def agent(self, name: str) -> AgentConfig:
+        """Return one agent's merged runtime settings, falling back to the VM-oriented built-in defaults."""
+        return self.agents.get(name, AgentConfig())
 
     def target(self, name: str | None = None) -> TargetConfig:
         """Resolve which target to use.
@@ -466,7 +523,10 @@ def load_config(project_dir: str | Path | None = None) -> Config:
     merged = deep_merge(_read_toml(GLOBAL_CONFIG_PATH), _read_toml(project_path))
 
     claude_raw = merged.get("claude", {}) or {}
+    agents_raw = merged.get("agents", {}) or {}
     sync_raw = merged.get("sync", {}) or {}
+    forwarding_value = merged.get("forwarding", {})
+    forwarding_raw = {} if forwarding_value is None else forwarding_value
     targets_raw = merged.get("targets", {}) or {}
     target_defaults_raw = merged.get("target_defaults", {}) or {}
 
@@ -476,12 +536,34 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         session=bool(claude_raw.get("session", True)),
         handoff=bool(claude_raw.get("handoff", False)),
     )
+    agent_configs: dict[str, AgentConfig] = {name: AgentConfig() for name in BUILTIN_AGENT_NAMES}
+    for name, raw_value in agents_raw.items():
+        raw = raw_value or {}
+        if not isinstance(raw, dict):
+            raise ConfigError(f"agents.{name} must be a table")
+        args = raw.get("args", [])
+        environment = raw.get("environment", {})
+        full_access = raw.get("full_access", True)
+        if not isinstance(full_access, bool):
+            raise ConfigError(f"agents.{name}.full_access must be true or false")
+        if not isinstance(args, list) or not all(isinstance(part, str) for part in args):
+            raise ConfigError(f"agents.{name}.args must be an array of strings")
+        if not isinstance(environment, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in environment.items()):
+            raise ConfigError(f"agents.{name}.environment must be a table of string values")
+        agent_configs[str(name)] = AgentConfig(
+            full_access=full_access,
+            args=list(args),
+            environment=dict(environment),
+        )
     sync = SyncConfig(
         exclude=list(sync_raw.get("exclude", DEFAULT_EXCLUDES)),
         use_gitignore=bool(sync_raw.get("use_gitignore", True)),
         delete=bool(sync_raw.get("delete", True)),
         max_size_gb=sync_raw.get("max_size_gb", DEFAULT_MAX_SYNC_SIZE_GB),
     )
+    if not isinstance(forwarding_raw, dict):
+        raise ConfigError("forwarding must be a table")
+    forwarding = ForwardingConfig(ports=forwarding_raw.get("ports", []))
     targets = {name: parse_target(name, raw or {}) for name, raw in targets_raw.items()}
 
     default_target = merged.get("default_target")
@@ -498,8 +580,10 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         default_target=str(default_target) if default_target else None,
         default_command=list(default_command),
         target_default_commands=target_default_commands,
+        agents=agent_configs,
         claude=claude,
         sync=sync,
+        forwarding=forwarding,
         targets=targets,
         sources=sources,
     )

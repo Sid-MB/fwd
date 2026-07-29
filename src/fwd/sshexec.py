@@ -328,6 +328,84 @@ class SSHEndpoint:
         self.control_path().unlink(missing_ok=True)
 
 
+@dataclass(slots=True)
+class SSHControlMaster:
+    """A dedicated OpenSSH multiplex master with caller-owned lifetime and socket path.
+
+    The ordinary :class:`SSHEndpoint` master accelerates short-lived fwd operations and expires after a small idle
+    window. Long-lived systems such as local port forwarding need a separate master so their lifetime is explicit,
+    but SSH option construction must still remain inside this module. This class supplies that reusable boundary
+    without coupling the SSH layer to port-mapping state.
+    """
+
+    endpoint: SSHEndpoint
+    path: Path
+    persist: str = "yes"
+
+    def _argv(self, *flags: str, forwards: Sequence[str] = ()) -> list[str]:
+        """Build a control operation with owned options before endpoint options so OpenSSH first-value precedence is deterministic."""
+        endpoint_argv = self.endpoint.ssh_argv(control=False)
+        argv = [endpoint_argv[0], "-S", str(self.path), *flags, *endpoint_argv[1:-1]]
+        for forward in forwards:
+            argv += ["-L", forward]
+        return [*argv, endpoint_argv[-1]]
+
+    @staticmethod
+    def _detail(result: subprocess.CompletedProcess[str]) -> str:
+        """Return the most useful diagnostic emitted by an OpenSSH control operation."""
+        return (result.stderr or result.stdout or "unknown SSH error").strip()
+
+    def active(self) -> bool:
+        """Return whether the owned control socket currently reaches a live master."""
+        if not self.path.exists():
+            return False
+        result = subprocess.run(self._argv("-O", "check"), check=False, capture_output=True, text=True)
+        return result.returncode == 0
+
+    def open(self, forwards: Sequence[str]) -> None:
+        """Create a persistent background master with the supplied local forwards."""
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path.unlink(missing_ok=True)
+        argv = self._argv(
+            "-M",
+            "-N",
+            "-f",
+            "-o",
+            f"ControlPersist={self.persist}",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            forwards=forwards,
+        )
+        result = subprocess.run(argv, check=False, capture_output=True, text=True)
+        if result.returncode == 0:
+            return
+        if not self.active():
+            self.path.unlink(missing_ok=True)
+        raise SSHError(f"failed to open dedicated ssh control master to {self.endpoint.ssh_target()}: {self._detail(result)}")
+
+    def forward(self, forwards: Sequence[str]) -> None:
+        """Add local forwards to the live master, raising when OpenSSH rejects any request."""
+        result = subprocess.run(self._argv("-O", "forward", forwards=forwards), check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise SSHError(f"failed to add ssh forwarding through {self.endpoint.ssh_target()}: {self._detail(result)}")
+
+    def cancel(self, forwards: Sequence[str]) -> None:
+        """Remove local forwards from the live master, raising when OpenSSH cannot confirm cancellation."""
+        result = subprocess.run(self._argv("-O", "cancel", forwards=forwards), check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise SSHError(f"failed to cancel ssh forwarding through {self.endpoint.ssh_target()}: {self._detail(result)}")
+
+    def close(self) -> None:
+        """Close the master or raise while retaining its socket whenever OpenSSH still reports it active."""
+        if not self.path.exists():
+            return
+        result = subprocess.run(self._argv("-O", "exit"), check=False, capture_output=True, text=True)
+        if result.returncode == 0 or not self.active():
+            self.path.unlink(missing_ok=True)
+            return
+        raise SSHError(f"failed to close dedicated ssh control master to {self.endpoint.ssh_target()}: {self._detail(result)}")
+
+
 def wait_for_ssh(
     endpoint: SSHEndpoint,
     *,

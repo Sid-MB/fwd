@@ -29,6 +29,12 @@ class MyAgent(Agent):
 `name` is the magic `fwd up <name>` selector. `command` is persisted in session state and must uniquely resolve the
 agent. `tools` uses the shared requirement resolver, which reuses working remote binaries before attempting installs.
 
+Every agent automatically receives the shared `[agents.<name>]` runtime policy from `Agent.launch_flags()`:
+`full_access`, `args`, and environment defaults. Use `runtime_args()`, `with_environment_defaults()`, and
+`environment_command()` in the implementation so interactive, restarted, and non-interactive send commands behave
+consistently. An implementation owns the exact full-access CLI option and must suppress its default when configured
+arguments already select a permission or sandbox policy.
+
 Override `prepare_local()` when an agent must create files before the project sync. The returned object is opaque to
 the launcher and is passed to `prepare_remote()` after bootstrap and tool installation. Override `prepare_remote()`
 to upload settings or import conversation state, and return serializable flags needed by `startup_command()` or a

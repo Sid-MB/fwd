@@ -465,7 +465,7 @@ def test_launch_falls_back_to_plain_claude_when_export_returns_none(project, sta
     monkeypatch.setattr(claude_state, "export_session_bundle", lambda *a, **k: None)
     launch_ops.launch(attach=False)
     assert "make_handoff" not in calls
-    assert stub_world["tmux_new"][0][3].endswith("exec claude'")
+    assert stub_world["tmux_new"][0][3].endswith("exec claude --permission-mode bypassPermissions'")
 
 
 def test_launch_falls_back_to_plain_claude_when_import_returns_none(project, state_store, config, fake_backend, stub_world, calls, monkeypatch) -> None:
@@ -501,7 +501,7 @@ def test_codex_launch_syncs_settings_selects_codex_tool_and_starts_codex(project
     assert "import_bundle" not in calls
     assert "read_keychain_creds" not in calls
     assert stub_world["ensure_tools"][0][1] == (UV, CODEX)
-    assert stub_world["tmux_new"][0][3].endswith("exec codex'")
+    assert stub_world["tmux_new"][0][3].endswith("exec codex --dangerously-bypass-approvals-and-sandbox'")
     assert state.flags["initial_command"] == ["codex"]
 
 
@@ -989,15 +989,17 @@ def test_push_uses_sync_up(project, state_store, config, fake_backend, stub_worl
     assert args[2] == "/workspace/proj"
     assert kwargs["delete"] is True
     assert callable(kwargs["on_progress"])
+    assert callable(kwargs["on_path"])
 
 
 def test_pull_passes_paths_through(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
     monkeypatch.setattr(transfer, "load_config", lambda project_dir=None: config)
     _seed(state_store, project)
     transfer.pull(paths=("outputs/", "run.log"))
-    args, _ = stub_world["sync_down"]
+    args, kwargs = stub_world["sync_down"]
     assert args[1] == "/workspace/proj"
     assert args[3] == ("outputs/", "run.log")
+    assert callable(kwargs["on_path"])
 
 
 def test_pull_defaults_to_whole_tree(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:
