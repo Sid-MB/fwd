@@ -117,6 +117,7 @@ def test_no_config_still_emits_valid_effective_toml(tmp_path: Path, monkeypatch:
             "claude": {"full_access": True, "args": [], "environment": {}},
             "codex": {"full_access": True, "args": [], "environment": {}},
         },
+        "github": {"auth": False},
         "sync": {"exclude": list(config_mod.DEFAULT_EXCLUDES), "use_gitignore": True, "delete": True, "max_size_gb": 1.0},
     }
 

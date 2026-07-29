@@ -372,7 +372,7 @@ neither the checkout nor the remote project is modified.
 | `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
 | `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
 | `--attach/-a` | Attach directly after startup instead of streaming an explicit command | `fwd up -a -- bash` |
-| `--no-attach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --no-attach codex` |
+| `--no-attach`, `--detach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --detach codex` |
 | `--stop-after` | Stop the remote session server-side after an explicit streamed command completes | `fwd up --stop-after -- pytest -q` |
 
 `fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
@@ -468,6 +468,24 @@ Two extras, both opt-in because they touch files you may not want leaving your l
   remote session. `fwd` warns every time this flag is used.
 
 Set defaults for any of these under `[claude]` in your config.
+
+### GitHub authentication
+
+Remote repositories include `.git`, so agents can create commits, but fwd does not copy a GitHub credential by
+default. Opt in explicitly when the remote should fetch private dependencies or push commits:
+
+```toml
+[github]
+auth = true
+```
+
+This requires a working local `gh auth status --active --hostname github.com`. Before provisioning, fwd validates that
+login; during launch it installs the official GitHub CLI release if needed and streams `gh auth token` directly into
+remote `gh auth login --with-token`. The token is never placed in argv, logs, fwd config, or session state.
+`gh auth setup-git` configures HTTPS pushes, while the effective local `user.name` and `user.email` fill only missing
+repository-local values. On RunPod GPU targets, the remote gh credential store lives under the persistent tool prefix
+and its standard `~/.config/gh` path is recreated after `/root` resets. Enabling this places a live GitHub credential
+on the remote volume; omit the section for untrusted targets.
 
 ## Project toolchains
 
@@ -691,6 +709,9 @@ handoff = false       # generate HANDOFF.md instead
 user_config = false   # upload ~/.claude bundle
 creds = false         # copy credentials to the remote machine
 
+[github]
+auth = false          # opt in to local gh authentication transfer and remote Git pushes
+
 [agents.claude]
 full_access = true    # VM is the isolation boundary; launch with bypassPermissions
 args = []             # extra Claude CLI arguments
@@ -742,8 +763,10 @@ the stream completes under budget. Crossing the limit stops the stream, removes 
 project `.fwdignore` path for excluding unintended entries, and provides a project-scoped command such as
 `fwd config set --project sync.max_size_gb 4` plus the project/user config paths.
 
-Push, pull, and the launch-time upload print each selected project-relative path to stderr as it is transferred.
-Transfer listings therefore remain visible beside the progress UI without contaminating structured command stdout.
+Push, pull, and launch-time upload show the five most recently selected project-relative paths beneath the progress
+bar in an interactive terminal. This rolling window is transient and disappears when the transfer finishes, leaving
+only the compact completion line in scrollback. Redirected, CI, and agent stderr retains the complete path listing
+because no live terminal is available and durable logs are preferable there. Paths never contaminate structured stdout.
 Only after a limit failure, fwd reuses the transport filters to list up to ten included files or aggregate folders
 larger than 200 MB, making accidental dataset, checkpoint, or build-tree uploads visible without slowing successful
 uploads.

@@ -38,7 +38,7 @@ Positionals are `[TARGET] [AGENT|COMMAND...]`; `--target`, `--agent`, and `--nam
 
 `fwd up -r/--reuse` attaches to an unambiguous matching session when no managed command is supplied. With an explicit arbitrary command, it selects the matching session and runs the command through the same task manager as `fwd send -- COMMAND`. A sole saved match wins; with several matches, the sole running or pending target wins only when every other candidate's status is known. Otherwise pass an exact session name. A human terminal creates a missing match; non-interactive mode does not provision and prints the exact creation command without `--reuse`. Bare `fwd` is `fwd up --reuse`, while root selectors such as `fwd runpod` rewrite to `fwd up --reuse runpod`. `fwd attach` uses the same parser and matching rules.
 
-`fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. `--new` opts out of reuse, generates a unique session/provider name, and retains the existing session's target unless `--target` overrides it; it cannot be combined with `--name`. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach` keeps them local.
+`fwd up` is idempotent and doubles as repair: rerun the same launch after a partial failure. `--new` opts out of reuse, generates a unique session/provider name, and retains the existing session's target unless `--target` overrides it; it cannot be combined with `--name`. Agent commands auto-attach only in a human terminal; `CLAUDECODE`, `CODEX_AGENT`, redirected I/O, or `--no-attach`/`--detach` keeps them local.
 
 ## Durable send tasks
 

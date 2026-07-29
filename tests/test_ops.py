@@ -530,6 +530,7 @@ def test_streamed_up_command_keeps_primary_session_as_shell(project, state_store
     tmux_command = stub_world["tmux_new"][0][3]
     assert "echo ready" not in tmux_command
     assert 'exec "${SHELL:-bash}" -l' in tmux_command
+    assert "exec exec" not in tmux_command
     assert state.flags["initial_command"] == ["echo", "ready"]
     assert state.flags["command_via_send"] is True
     assert launch_ops.startup_command_for(state) == launch_ops.REMOTE_SHELL_COMMAND

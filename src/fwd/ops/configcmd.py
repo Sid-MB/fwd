@@ -45,6 +45,7 @@ from fwd.config import (
     Config,
     ConfigError,
     ForwardingConfig,
+    GitHubConfig,
     SyncConfig,
     TARGET_TYPES,
     implicit_target,
@@ -98,6 +99,7 @@ SECTION_DOCS: dict[str, str] = {
     "creds": "copy your Claude OAuth token to the remote disk — off for a reason",
     "session": "move the real transcript so the remote claude resumes this conversation",
     "handoff": "summarize into HANDOFF.md instead of moving the transcript",
+    "auth": "copy the active local gh authentication to the remote and configure Git pushes",
     "full_access": "run without approval prompts or an agent sandbox; disable when the remote VM is not the isolation boundary",
     "args": "additional agent CLI arguments; explicit permission/sandbox arguments take precedence over full_access",
     "environment": "environment defaults applied only when the remote shell has not already set each variable",
@@ -218,7 +220,7 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
         lines.append(_annotated("default_target", default_target, ("default_target",), origins))
     lines.append(_annotated("default_command", cfg.default_command, ("default_command",), origins))
 
-    for section, obj in (("claude", cfg.claude), ("sync", cfg.sync)):
+    for section, obj in (("claude", cfg.claude), ("github", cfg.github), ("sync", cfg.sync)):
         lines += ["", f"[{section}]"]
         for key, value in _dataclass_items(obj):
             lines.append(_annotated(key, value, (section, key), origins))
@@ -329,6 +331,7 @@ def render_example(which: str = "all") -> str:
         'default_command = ["codex"]  # overrides project/user default_command whenever this target is selected',
     ]
     lines += ["", *_render_example_section("claude", ClaudeConfig())]
+    lines += ["", *_render_example_section("github", GitHubConfig())]
     for agent_name in BUILTIN_AGENT_NAMES:
         lines += ["", *_render_example_section(f"agents.{agent_name}", AgentConfig())]
     lines += ["", *_render_example_section("sync", SyncConfig())]
@@ -405,6 +408,7 @@ def render_schema() -> str:
                 "default": {name: {"full_access": True, "args": [], "environment": {}} for name in BUILTIN_AGENT_NAMES},
             },
             "claude": _section_schema(ClaudeConfig, SECTION_DOCS),
+            "github": _section_schema(GitHubConfig, SECTION_DOCS),
             "sync": _section_schema(SyncConfig, SECTION_DOCS),
             "forwarding": _section_schema(ForwardingConfig, SECTION_DOCS),
             "targets": {"type": "object", "description": "Named remote targets.", "additionalProperties": {"oneOf": target_refs}},

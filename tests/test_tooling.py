@@ -13,7 +13,7 @@ from fwd import toolchains
 from fwd.sshexec import SSHError
 from fwd.tooling import ToolInstaller, ToolRequirement, Toolchain, ensure_tools, merge_requirements
 from fwd.tooling import resolver
-from fwd.tooling.requirements import BUN, CLAUDE, CODEX, NPM, PNPM, SWIFT, SWIFTLY, UV, YARN
+from fwd.tooling.requirements import BUN, CLAUDE, CODEX, GH, NPM, PNPM, SWIFT, SWIFTLY, UV, YARN
 
 
 def _touch(root: Path, *names: str) -> Path:
@@ -261,7 +261,7 @@ def test_swift_installer_captures_and_handles_swiftlys_platform_package_script()
     assert "Run this generated script as an administrator" in script
 
 
-@pytest.mark.parametrize("requirement", [UV, BUN, NPM, PNPM, YARN, SWIFTLY, SWIFT, CLAUDE, CODEX])
+@pytest.mark.parametrize("requirement", [UV, BUN, NPM, PNPM, YARN, GH, SWIFTLY, SWIFT, CLAUDE, CODEX])
 def test_builtin_installer_scripts_are_valid_bash(requirement: ToolRequirement) -> None:
     for installer in requirement.installers:
         script = resolver._installer_script(installer.script)

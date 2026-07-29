@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import NoReturn
@@ -103,60 +105,116 @@ class _TransferredColumn(ProgressColumn):
         return Text(decimal(int(task.completed)), style="cyan")
 
 
+class _TransferProgress(Progress):
+    """Place recent transfer paths on dedicated left-aligned lines below the normal progress table."""
+
+    def get_renderables(self) -> Iterable[object]:
+        """Yield the progress table followed by markup-free path lines from the task's immutable snapshot."""
+        tasks = self.tasks
+        yield self.make_tasks_table(tasks)
+        if not tasks:
+            return
+        paths = tasks[0].fields.get("paths", ())
+        if not paths:
+            return
+        rendered = Text()
+        for index, path in enumerate(paths):
+            if index:
+                rendered.append("\n")
+            rendered.append("  ↳ ", style="dim")
+            rendered.append(str(path), style="dim")
+        yield rendered
+
+
+class TransferDisplay:
+    """Thread-safe transfer callbacks for cumulative bytes and a rolling path window."""
+
+    def __init__(self, update_bytes: Callable[[int], None], update_path: Callable[[str], None]) -> None:
+        self._update_bytes = update_bytes
+        self._update_path = update_path
+
+    def __call__(self, transferred_bytes: int) -> None:
+        """Update cumulative compressed wire bytes."""
+        self._update_bytes(transferred_bytes)
+
+    def path(self, path: str) -> None:
+        """Update the recent-path display or emit a durable non-interactive log entry."""
+        self._update_path(path)
+
+
 @contextmanager
-def transfer_step(message: str) -> Iterator[Callable[[int], None]]:
-    """Render an indeterminate transfer bar with live bytes and speed, then persist a compact result line.
+def transfer_step(message: str, *, show_bytes: bool = True) -> Iterator[TransferDisplay]:
+    """Render transfer progress plus five transient recent paths, then persist one compact result line.
 
     Fwd deliberately enforces its upload limit while streaming instead of scanning the tree first, so no trustworthy
     total exists while the transfer is active. The bar therefore pulses while its adjacent columns report cumulative
-    wire bytes and current throughput. Callers receive a function accepting the latest cumulative byte count.
+    wire bytes and current throughput. Path callbacks may arrive from a drain thread, so a lock protects the rolling
+    window. Redirected output retains every path as a normal stderr line because transient terminal rendering is
+    unavailable and complete automation logs are more useful than an arbitrary sample.
     """
     started = time.monotonic()
     safe = escape(message)
     completed = 0
 
     if _tty():
-        progress = Progress(
+        columns: list[ProgressColumn | str] = [
             TextColumn("[bold cyan]{task.description}[/]"),
             BarColumn(bar_width=None, pulse_style="cyan"),
-            _TransferredColumn(),
-            TransferSpeedColumn(),
+        ]
+        if show_bytes:
+            columns.extend((_TransferredColumn(), TransferSpeedColumn()))
+        progress = _TransferProgress(
+            *columns,
             console=err_console,
             transient=True,
         )
+        recent_paths: deque[str] = deque(maxlen=5)
+        path_lock = threading.Lock()
         with progress:
-            task_id = progress.add_task(safe, total=None)
+            task_id = progress.add_task(safe, total=None, paths=())
 
-            def update(transferred_bytes: int) -> None:
+            def update_bytes(transferred_bytes: int) -> None:
                 nonlocal completed
                 completed = max(completed, transferred_bytes)
                 progress.update(task_id, completed=completed)
 
+            def update_path(path: str) -> None:
+                with path_lock:
+                    recent_paths.append(path)
+                    snapshot = tuple(recent_paths)
+                progress.update(task_id, paths=snapshot)
+
             try:
-                yield update
+                yield TransferDisplay(update_bytes, update_path)
             except BaseException:
                 elapsed = time.monotonic() - started
-                err_console.print(f"[bold red]x[/] {safe} [dim]failed after {elapsed:.1f}s · {decimal(completed)}[/]")
+                detail = f" · {decimal(completed)}" if show_bytes else ""
+                err_console.print(f"[bold red]x[/] {safe} [dim]failed after {elapsed:.1f}s{detail}[/]")
                 raise
     else:
 
-        def update(transferred_bytes: int) -> None:
+        def update_bytes(transferred_bytes: int) -> None:
             nonlocal completed
             completed = max(completed, transferred_bytes)
 
         try:
-            yield update
+            yield TransferDisplay(update_bytes, transfer_path)
         except BaseException:
             elapsed = time.monotonic() - started
-            err_console.print(f"error: {safe} failed after {elapsed:.1f}s ({decimal(completed)} transferred)")
+            detail = f" ({decimal(completed)} transferred)" if show_bytes else ""
+            err_console.print(f"error: {safe} failed after {elapsed:.1f}s{detail}")
             raise
 
     elapsed = time.monotonic() - started
     average_speed = completed / elapsed if elapsed > 0 else 0
-    if _tty():
+    if _tty() and show_bytes:
         err_console.print(f"[bold green]✓[/] {safe} [dim]{decimal(completed)} · {decimal(int(average_speed))}/s · {elapsed:.1f}s[/]")
-    else:
+    elif _tty():
+        err_console.print(f"[bold green]✓[/] {safe} [dim]{elapsed:.1f}s[/]")
+    elif show_bytes:
         err_console.print(f"ok: {safe} ({decimal(completed)}, {decimal(int(average_speed))}/s, {elapsed:.1f}s)")
+    else:
+        err_console.print(f"ok: {safe} ({elapsed:.1f}s)")
 
 
 def transfer_path(path: str) -> None:

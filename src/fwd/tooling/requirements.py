@@ -126,6 +126,36 @@ YARN = ToolRequirement(
     hint="Install Yarn on the remote host, enable it with Corepack, or expose npm so fwd can install it in persistent storage.",
 )
 
+GH = ToolRequirement(
+    name="GitHub CLI",
+    command="gh",
+    version_command=("gh", "--version"),
+    installers=(
+        ToolInstaller(
+            "official GitHub CLI release",
+            """
+case "$(uname -m)" in
+    x86_64|amd64) gh_arch=amd64 ;;
+    aarch64|arm64) gh_arch=arm64 ;;
+    *) printf '%s\n' "unsupported GitHub CLI architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest)"
+gh_version="${release_url##*/v}"
+test -n "$gh_version"
+archive="$FWD_SCRATCH/gh_${gh_version}_linux_${gh_arch}.tar.gz"
+work_dir="$(mktemp -d "$FWD_SCRATCH/gh.XXXXXX")"
+trap 'rm -rf "$work_dir" "$archive"' EXIT
+curl -fsSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_${gh_arch}.tar.gz" -o "$archive"
+tar -xzf "$archive" -C "$work_dir"
+cp "$work_dir/gh_${gh_version}_linux_${gh_arch}/bin/gh" "$FWD_TOOL_PREFIX/bin/gh"
+chmod +x "$FWD_TOOL_PREFIX/bin/gh"
+""".strip(),
+            requirements=(CURL, TAR),
+        ),
+    ),
+    hint="Install GitHub CLI on the remote host, or provide curl and tar for fwd's official release installer.",
+)
+
 SWIFTLY = ToolRequirement(
     name="Swiftly",
     command="swiftly",

@@ -40,11 +40,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Sequence
 
-from fwd import agents, backends, remote, sshexec, stop_after as stop_after_ops, sync, ui
+from fwd import agents, backends, github_auth, remote, sshexec, stop_after as stop_after_ops, sync, ui
 from fwd.backends.base import Provisioner, TargetInfo, TargetStatus
 from fwd.config import Config, ConfigError, TargetConfig, load_config
 from fwd.state import SessionState, StateStore, endpoint_to_dict
 from fwd.tooling import merge_requirements
+from fwd.tooling.requirements import GH
 
 # Length of the cwd digest appended to a derived session name. Six hex chars is ~16M values: plenty to separate the
 # handful of checkouts one person has, short enough to stay readable in a tmux session name.
@@ -87,6 +88,18 @@ MAGIC_CLAUDE_COMMAND: tuple[str, ...] = ("claude",)
 
 # A commandless `fwd up` still creates a useful persistent tmux session, so a later `fwd attach` opens a normal shell.
 REMOTE_SHELL_COMMAND = 'exec "${SHELL:-bash}" -l'
+
+
+def _exec_once(command: str) -> str:
+    """Return a startup command that replaces its launcher process exactly once.
+
+    Most agent commands need an ``exec`` prefix so the tmux pane tracks the real process. A shell startup command already includes that prefix, so preserving it prevents invalid commands such as ``exec exec "${SHELL:-bash}" -l``.
+    """
+    stripped = command.lstrip()
+    if stripped == "exec" or stripped.startswith("exec "):
+        return command
+    return f"exec {command}"
+
 
 def store() -> StateStore:
     """Return the session store.
@@ -283,8 +296,8 @@ def build_tmux_command(
     string builder.
 
     The default (ssh, runpod) sources bootstrap's generated ``fwd-env.sh`` — putting the toolchain installed under
-    ``tool_prefix`` on PATH and pointing caches at scratch — changes into the project directory, then ``exec``s
-    claude so no useless parent shell lingers.
+    ``tool_prefix`` on PATH and pointing caches at scratch — changes into the project directory, then runs the
+    startup command with exactly one ``exec`` so no useless parent shell lingers.
     """
     wrapper = getattr(backend, "claude_launch_wrapper", None)
     if callable(wrapper):
@@ -296,7 +309,7 @@ def build_tmux_command(
         # Best-effort: a target bootstrapped by an older fwd may not have the file yet.
         parts.append(f". {shlex.quote(env_file)} 2>/dev/null || true")
     parts.append(f"cd {shlex.quote(remote_dir)} || exit 1")
-    parts.append(f"exec {claude_cmd}")
+    parts.append(_exec_once(claude_cmd))
     return f"bash -lc {shlex.quote('; '.join(parts))}"
 
 
@@ -509,6 +522,11 @@ def _launch(
         cfg = load_config(local_cwd)
     except ConfigError as exc:
         ui.die(str(exc))
+    if cfg.github.auth and not push_only:
+        try:
+            github_auth.validate_local()
+        except github_auth.GitHubAuthError as exc:
+            ui.die(str(exc))
 
     st = interrupt_cleanup.store
     if new and name is not None:
@@ -596,8 +614,8 @@ def _launch(
     agent_local_state = agent.prepare_local(local_cwd, flags) if agent is not None else None
 
     # 4. Files up.
-    with ui.transfer_step(f"Syncing {local_cwd.name} to {remote_dir}") as update_transfer:
-        _sync_project(endpoint, local_cwd, remote_dir, cfg, on_progress=update_transfer, on_path=ui.transfer_path)
+    with ui.transfer_step(f"Syncing {local_cwd.name} to {remote_dir}") as transfer:
+        _sync_project(endpoint, local_cwd, remote_dir, cfg, on_progress=transfer, on_path=transfer.path)
 
     if push_only:
         return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
@@ -609,6 +627,9 @@ def _launch(
     if agent is not None and info.ephemeral_home:
         with ui.step(f"Preparing persistent {agent.name} state"):
             agent.prepare_remote_home(endpoint, tool_prefix, ephemeral=True)
+    if cfg.github.auth:
+        with ui.step("Preparing persistent GitHub authentication"):
+            github_auth.prepare_remote_storage(endpoint, tool_prefix, ephemeral_home=info.ephemeral_home)
     try:
         with ui.step("Installing tmux configuration"):
             tmux_config_source = remote.install_tmux_config(endpoint)
@@ -617,10 +638,17 @@ def _launch(
         ui.warn(f"could not install the remote tmux configuration; continuing with tmux defaults ({exc})")
 
     project_plan = remote.detect_toolchain_plan(local_cwd)
-    requirements = merge_requirements(project_plan.requirements, agent.tools if agent is not None else ())
+    github_requirements = (GH,) if cfg.github.auth else ()
+    requirements = merge_requirements(project_plan.requirements, agent.tools if agent is not None else (), github_requirements)
     if requirements:
         with ui.step(f"Preparing remote tools ({len(requirements)} requirement(s))"):
             remote.ensure_tools(endpoint, requirements)
+    if cfg.github.auth:
+        try:
+            with ui.step("Installing GitHub authentication"):
+                github_auth.install_remote(endpoint, local_cwd, remote_dir, tool_prefix)
+        except github_auth.GitHubAuthError as exc:
+            ui.die(str(exc))
 
     # 6. Project dependencies, inferred by class-based toolchains; the project escape hatch remains last.
     dep_commands = project_plan.commands

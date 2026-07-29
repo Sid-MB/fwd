@@ -292,6 +292,17 @@ class ClaudeConfig:
 
 
 @dataclass(slots=True)
+class GitHubConfig:
+    """Opt-in transfer of the active local GitHub CLI identity to the remote environment.
+
+    Authentication stays disabled by default because enabling it places a GitHub token on the selected remote
+    machine. The token itself is never stored in fwd configuration or session state.
+    """
+
+    auth: bool = False
+
+
+@dataclass(slots=True)
 class AgentConfig:
     """Runtime defaults shared by every registered coding-agent integration.
 
@@ -375,6 +386,7 @@ class Config:
     forwarding: ForwardingConfig = field(default_factory=ForwardingConfig)
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     sources: list[Path] = field(default_factory=list)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
 
     def command_for(self, target_name: str) -> tuple[str, ...]:
         """Resolve the startup command with target-specific settings taking precedence over merged file settings."""
@@ -523,6 +535,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
     merged = deep_merge(_read_toml(GLOBAL_CONFIG_PATH), _read_toml(project_path))
 
     claude_raw = merged.get("claude", {}) or {}
+    github_raw = merged.get("github", {}) or {}
     agents_raw = merged.get("agents", {}) or {}
     sync_raw = merged.get("sync", {}) or {}
     forwarding_value = merged.get("forwarding", {})
@@ -536,6 +549,12 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         session=bool(claude_raw.get("session", True)),
         handoff=bool(claude_raw.get("handoff", False)),
     )
+    if not isinstance(github_raw, dict):
+        raise ConfigError("github must be a table")
+    github_auth = github_raw.get("auth", False)
+    if not isinstance(github_auth, bool):
+        raise ConfigError("github.auth must be true or false")
+    github = GitHubConfig(auth=github_auth)
     agent_configs: dict[str, AgentConfig] = {name: AgentConfig() for name in BUILTIN_AGENT_NAMES}
     for name, raw_value in agents_raw.items():
         raw = raw_value or {}
@@ -582,6 +601,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         target_default_commands=target_default_commands,
         agents=agent_configs,
         claude=claude,
+        github=github,
         sync=sync,
         forwarding=forwarding,
         targets=targets,

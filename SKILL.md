@@ -38,7 +38,7 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Prefer `--json` for `fwd ls`, `fwd doctor`, and `fwd info`; progress and diagnostics stay on stderr.
 - Never run bare `fwd`, root-selector forms without an explicit arbitrary command such as `fwd runpod`, `fwd attach`, `fwd a`, `fwd up --reuse`, or `fwd up --attach` as a tool call because reuse/attach forms take over a human terminal. A root form with an explicit command uses managed-task behavior on an existing match, but in non-interactive mode it still refuses to provision; prefer an explicit non-attaching `fwd up` invocation in agent workflows.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
-- Do not pass `--creds` unless the user explicitly authorizes copying live Claude credentials in this conversation.
+- Do not pass `--creds` or enable `[github] auth = true` unless the user explicitly authorizes copying the corresponding live Claude or GitHub credential to the remote.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
 - Run `fwd uninstall --force` only when the user explicitly requests local fwd removal and understands that tracked remote resources are not destroyed; prefer `fwd rm --all` first.
 - Prefer `fwd diff -q` before deciding whether to push or pull. Exit 0 means synchronized, 1 means different, and 2 means an error.

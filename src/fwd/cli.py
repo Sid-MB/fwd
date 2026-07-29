@@ -363,7 +363,7 @@ def _up(
     reuse: Annotated[bool, typer.Option("--reuse", "-r", help="Reuse a matching session; attach when no task command is supplied, or create only interactively when none exists.", rich_help_panel=PANEL_TARGET)] = False,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="With --reuse, authorize restarting stopped billable compute without prompting.", rich_help_panel=PANEL_TARGET)] = False,
     attach: Annotated[bool, typer.Option("--attach", "-a", help="Attach directly after startup instead of streaming an explicit command as a durable task.", rich_help_panel=PANEL_TARGET)] = False,
-    no_attach: Annotated[bool, typer.Option("--no-attach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
+    no_attach: Annotated[bool, typer.Option("--no-attach", "--detach", help="Stay local even for magic agent commands that normally auto-attach in a terminal.", rich_help_panel=PANEL_TARGET)] = False,
     session: Annotated[bool, typer.Option("--session", help="Move the real transcript so claude resumes it; already the default, pass this only to re-enable it when config disables it.", rich_help_panel=PANEL_CLAUDE)] = False,
     handoff: Annotated[bool, typer.Option("--handoff", help="Summarize into HANDOFF.md instead of moving the transcript; replaces --session entirely.", rich_help_panel=PANEL_CLAUDE)] = False,
     user_config: Annotated[bool, typer.Option("--user-config", help="Upload your ~/.claude bundle (CLAUDE.md, skills, agents, commands, settings.json); never credentials or history.", rich_help_panel=PANEL_CLAUDE)] = False,
