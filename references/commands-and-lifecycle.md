@@ -110,6 +110,11 @@ Permanent platform junk such as `.DS_Store`, AppleDouble `._*`, `Thumbs.db`, and
 pull, and diff in every mode. Human terminals receive Git-style colored output, while pipes receive plain unified text.
 Prefer it before choosing push or pull.
 
+Because pull excludes `.git/`, `fwd pull && git push` does not transfer commits created on the remote. It is suitable
+only for retrieving working-tree files that will be committed locally. Configure opt-in `[github] auth = true` before
+launch when the remote should push HTTPS GitHub repositories, or explicitly export a patch or Git bundle when an
+existing remote commit must be brought back without remote credentials.
+
 Push, pull, and launch-time upload print every selected project-relative path to stderr as it transfers. Rsync reports
 its item stream directly; tar fallback reports archive members while producing the same filtered stream. Keeping this
 listing on stderr preserves stdout for structured command output and piping.

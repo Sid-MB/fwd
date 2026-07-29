@@ -67,7 +67,10 @@ GitHub authentication is separately opt-in with `[github] auth = true`. Fwd vali
 account before provisioning, streams `gh auth token` to remote standard input, configures `gh` as Git's HTTPS
 credential helper, and persists the remote gh store on RunPod volumes. The token never enters project files, argv,
 logs, config, or session state. Enabling the option requires explicit authorization because the remote receives a
-live GitHub credential.
+live GitHub credential. Once the next launch applies the setting, `fwd send git push` uses that helper for HTTPS
+GitHub remotes. Do not describe `fwd pull && git push` as a way to transfer a remote commit: pull intentionally omits
+`.git/`. It can retrieve uncommitted files for a new local commit; preserving an existing remote commit requires a
+remote push or an explicitly exported patch or Git bundle.
 
 ## Human handoff
 

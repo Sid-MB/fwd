@@ -483,13 +483,26 @@ default. Opt in explicitly when the remote should fetch private dependencies or 
 auth = true
 ```
 
+The command form writes the same project-local setting:
+
+```sh
+fwd config set --project github.auth true
+```
+
 This requires a working local `gh auth status --active --hostname github.com`. Before provisioning, fwd validates that
 login; during launch it installs the official GitHub CLI release if needed and streams `gh auth token` directly into
 remote `gh auth login --with-token`. The token is never placed in argv, logs, fwd config, or session state.
 `gh auth setup-git` configures HTTPS pushes, while the effective local `user.name` and `user.email` fill only missing
 repository-local values. On RunPod GPU targets, the remote gh credential store lives under the persistent tool prefix
 and its standard `~/.config/gh` path is recreated after `/root` resets. Enabling this places a live GitHub credential
-on the remote volume; omit the section for untrusted targets.
+on the remote volume; omit the section for untrusted targets. The setting is applied by the next `fwd up`; after that,
+commands such as `fwd send git push` use the remote GitHub CLI credential helper. Existing SSH Git remotes continue to
+use remote SSH credentials, so use an HTTPS GitHub remote when opting into token transfer.
+
+`fwd pull && git push` is not an equivalent fallback for a commit created remotely. Pull deliberately excludes
+`.git/`, so it retrieves working-tree content but not remote commits, refs, or objects. For uncommitted remote changes,
+pull the files, commit locally, and push locally. For an already-created remote commit, enable GitHub authentication
+and push it from the remote session, or explicitly export and apply a patch or Git bundle before pushing locally.
 
 ## Project toolchains
 
