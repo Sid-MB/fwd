@@ -125,7 +125,9 @@ def follow_process(endpoint: SSHEndpoint, task: SendTask) -> subprocess.Popen[by
     follow = (
         f'task_dir="{directory}"; '
         f'while [ ! -f "$task_dir/output" ]; do if [ -f "$task_dir/exit" ]; then break; fi; if ! {window_alive}; then mkdir -p "$task_dir"; : > "$task_dir/output"; printf "1\\n" > "$task_dir/exit"; break; fi; sleep 0.1; done; '
-        'touch "$task_dir/output"; tail -n +1 -F "$task_dir/output" & follower=$!; '
+        # GNU tail's one-second default poll can miss the final write when the task exits and fwd drains for 0.2s.
+        # Remote targets are Linux, so a short explicit interval keeps live latency low and lets terminal bytes flush.
+        'touch "$task_dir/output"; tail -n +1 -F -s 0.05 "$task_dir/output" & follower=$!; '
         "trap 'kill \"$follower\" 2>/dev/null || true' EXIT HUP TERM; "
         f'while [ ! -f "$task_dir/exit" ]; do if ! {window_alive}; then printf "1\\n" > "$task_dir/exit"; break; fi; sleep 0.2; done; sleep 0.2; '
         'kill "$follower" 2>/dev/null || true; wait "$follower" 2>/dev/null || true; '

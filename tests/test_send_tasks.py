@@ -106,6 +106,7 @@ def test_remote_task_follower_fails_instead_of_hanging_when_window_disappears() 
 
     assert "list-windows" in process.command
     assert "cmd-a1" in process.command
+    assert "-F -s 0.05" in process.command
     assert 'printf "1\\n" > "$task_dir/exit"' in process.command
 
 
