@@ -12,14 +12,9 @@ BUN_INSTALL_SCRIPT = """
 curl -fsSL https://bun.sh/install | BUN_INSTALL="$FWD_TOOL_PREFIX/bun" bash >/dev/null 2>&1
 """.strip()
 
-NVM_NODE_INSTALL_SCRIPT = """
-NVM_DIR="$FWD_TOOL_PREFIX/nvm"
-export NVM_DIR
-mkdir -p "$NVM_DIR"
-curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | env NVM_DIR="$NVM_DIR" PROFILE=/dev/null METHOD=script bash
+NVM_SELECT_NODE_SCRIPT = """
 unset npm_config_prefix NPM_CONFIG_PREFIX
 set +u
-. "$NVM_DIR/nvm.sh"
 export NVM_NO_PROGRESS=1
 project_dir="${FWD_REMOTE_DIR:-$PWD}"
 if [ -f "$project_dir/.nvmrc" ]; then
@@ -31,12 +26,22 @@ else
     nvm use --lts
 fi
 nvm alias default "$(nvm current)" >/dev/null 2>&1
-set -u
 node_bin="$(dirname "$(command -v node)")"
 for command in node npm npx corepack; do
     [ -x "$node_bin/$command" ] || continue
     ln -sf "$node_bin/$command" "$FWD_TOOL_PREFIX/bin/$command"
 done
+set -u
+""".strip()
+
+NVM_INSTALL_SCRIPT = f"""
+NVM_DIR="$FWD_TOOL_PREFIX/nvm"
+export NVM_DIR
+mkdir -p "$NVM_DIR"
+curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | env NVM_DIR="$NVM_DIR" PROFILE=/dev/null METHOD=script bash
+set +u
+. "$NVM_DIR/nvm.sh"
+{NVM_SELECT_NODE_SCRIPT}
 """.strip()
 
 CURL = ToolRequirement(name="curl", command="curl", version_command=("curl", "--version"), hint="Install curl on the remote host.")
@@ -72,6 +77,16 @@ BUN = ToolRequirement(
     hint="Install Bun and expose it to non-interactive SSH commands, or provide curl and unzip for fwd's user-space installer.",
 )
 
+NVM = ToolRequirement(
+    name="nvm",
+    command="nvm",
+    version_command=("nvm", "--version"),
+    installers=(
+        ToolInstaller("official nvm installer", NVM_INSTALL_SCRIPT, requirements=(CURL, TAR)),
+    ),
+    hint="Install nvm on the remote host, or provide curl and tar so fwd can install the project's .nvmrc version persistently.",
+)
+
 NPM = ToolRequirement(
     name="npm",
     command="npm",
@@ -84,7 +99,7 @@ mise use -g node@lts >/dev/null 2>&1
 """.strip(),
             requirements=(MISE,),
         ),
-        ToolInstaller("nvm Node", NVM_NODE_INSTALL_SCRIPT, requirements=(CURL, TAR)),
+        ToolInstaller("nvm Node", NVM_SELECT_NODE_SCRIPT, requirements=(NVM,)),
     ),
     hint="Install Node.js/npm on the remote host, or provide curl and tar so fwd can install the project's .nvmrc version (or Node LTS) and npm persistently through nvm.",
 )

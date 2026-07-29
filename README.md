@@ -417,13 +417,14 @@ Set defaults for any of these under `[claude]` in your config.
 
 fwd detects Python, JavaScript, and Swift Package Manager projects from their manifests and lockfiles, then prepares only the tools required by
 that project and the selected coding agent. Every requirement first probes the remote command and version, so an
-existing `uv`, Bun, npm, pnpm, Yarn, Swift, Claude Code, or Codex installation is reused when it is visible to non-interactive
+existing `uv`, Bun, nvm, npm, pnpm, Yarn, Swift, Claude Code, or Codex installation is reused when it is visible to non-interactive
 SSH commands. Missing tools use ordered user-space fallbacks under the target's persistent fwd tool directory; fwd
 recursively prepares only the selected fallback's prerequisites, deduplicates them across agents and project
-toolchains, and verifies every resulting command before running dependency setup. When a JavaScript project needs npm
-but the target has no Node installation, fwd installs Node and npm persistently through nvm without modifying the
-remote user's shell profiles. The nvm fallback installs and selects the project's `.nvmrc` version when present, or
-the latest Node LTS otherwise; pnpm and Yarn can then install through that npm fallback.
+toolchains, and verifies every resulting command before running dependency setup. A JavaScript project with `.nvmrc`
+gets a persistent nvm installation and its selected Node version even when Bun owns `node_modules`; fwd exposes nvm in
+attached shells without depending on a machine-specific `~/.nvm` path. When npm is otherwise required but Node is
+missing, the same nvm fallback selects the project's `.nvmrc` version or the latest Node LTS; pnpm and Yarn can then
+install through that npm fallback.
 
 Repositories can commit `.fwd/setup.sh` for an unsupported language, private build system, or extra setup. It runs
 after detected toolchain dependency commands. Swift packages use their top-level `Package.swift`, reuse an existing Linux Swift installation, or install the latest stable toolchain through the official Swiftly installer before running `swift package resolve`; when Swiftly reports missing distro packages, fwd installs its generated prerequisites on root-owned disposable machines such as RunPod and gives non-root targets the exact administrator script. Contributors adding first-class Haskell, Rust, or another
@@ -689,4 +690,13 @@ speed; the final line records the transferred amount, average speed, and elapsed
   and reuse them by name.
 
 ## Development
+
+Measure local command timing without provisioning or SSH using the in-process benchmark suite:
+
+```console
+UV_CACHE_DIR=.uv-cache uv run python benchmarks/benchmark_commands.py
+```
+
+It covers every public command's parsing and dispatch plus representative local workloads, and it can save and compare JSON baselines for regression checks. See [docs/benchmarking.md](docs/benchmarking.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from fwd.tooling import ToolRequirement, Toolchain
-from fwd.tooling.requirements import BUN, NPM, PNPM, YARN
+from fwd.tooling.requirements import BUN, NPM, NVM, PNPM, YARN
 
 
 class JavaScriptToolchain(Toolchain):
-    """Select exactly one JavaScript manager by lockfile priority so node_modules has one owner."""
+    """Select one package manager and honor an independent .nvmrc runtime contract."""
 
     name = "javascript"
-    markers = ("bun.lockb", "bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock")
+    markers = ("bun.lockb", "bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", ".nvmrc")
     managers = (
         ("bun.lockb", BUN, "bun install"),
         ("bun.lock", BUN, "bun install"),
@@ -28,9 +28,11 @@ class JavaScriptToolchain(Toolchain):
     @classmethod
     def requirements(cls, project: Path) -> tuple[ToolRequirement, ...]:
         selected = cls._selection(project)
-        return (selected[0],) if selected else ()
+        manager = (selected[0],) if selected else ()
+        return (NVM, *manager) if (project / ".nvmrc").is_file() else manager
 
     @classmethod
     def dependency_commands(cls, project: Path) -> tuple[str, ...]:
         selected = cls._selection(project)
-        return (selected[1],) if selected else ()
+        manager = (selected[1],) if selected else ()
+        return ("nvm install && nvm use", *manager) if (project / ".nvmrc").is_file() else manager

@@ -52,6 +52,10 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
   environment, exit the recovery shell, and rerun the normal launch; `--raw` does not authorize restarting stopped
   billable compute.
 
+## Performance checks
+
+When investigating a local timing regression, run `UV_CACHE_DIR=.uv-cache uv run python benchmarks/benchmark_commands.py`. The suite invokes every command in-process with external and destructive boundaries faked, then separately measures substantive local workloads. Use `--filter NAME` for one command and `--save PATH` followed by `--compare PATH` for same-machine regression comparisons; see `docs/benchmarking.md`.
+
 ## Primitives
 
 ### Backends
@@ -91,7 +95,7 @@ The sync domain is the filtered project tree governed by `.gitignore`, `.fwdigno
 ### Toolchains and requirements
 
 A toolchain detects a project ecosystem such as Python, JavaScript, or Swift Package Manager and declares its remote setup steps and tool requirements. Requirements reuse compatible tools already present on the remote and install only missing dependencies, including prerequisite tools. Use an idempotent `.fwd/setup.sh` for project-specific setup that no built-in toolchain covers.
-JavaScript requirements can bootstrap npm through a persistent nvm installation when neither npm nor mise is available. The installer runs `nvm install` and `nvm use` against the synced project's `.nvmrc` when present, otherwise it selects the latest Node LTS; pnpm, Yarn, Claude Code, and Codex can reuse that npm prerequisite.
+JavaScript projects with `.nvmrc` receive a persistent nvm installation and selected Node version even when Bun owns `node_modules`; attached shells source that nvm environment from fwd's tool prefix. JavaScript requirements can also bootstrap npm through nvm when neither npm nor mise is available. The installer runs `nvm install` and `nvm use` against `.nvmrc` when present, otherwise it selects the latest Node LTS; pnpm, Yarn, Claude Code, and Codex can reuse that npm prerequisite.
 
 
 ## Common operations

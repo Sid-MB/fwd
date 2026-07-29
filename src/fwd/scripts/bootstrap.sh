@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-FWD_BOOTSTRAP_VERSION=5
+FWD_BOOTSTRAP_VERSION=6
 
 : "${FWD_TOOL_PREFIX:?bootstrap requires FWD_TOOL_PREFIX}"
 : "${FWD_REMOTE_DIR:?bootstrap requires FWD_REMOTE_DIR}"
@@ -61,8 +61,18 @@ export UV_PYTHON_INSTALL_DIR="$FWD_TOOL_PREFIX/uv-python"
 export BUN_INSTALL="$BUN_ROOT"
 export BUN_INSTALL_CACHE_DIR="$FWD_SCRATCH/bun-cache"
 export npm_config_cache="$FWD_SCRATCH/npm-cache"
-export npm_config_prefix="$NPM_ROOT"
+export NVM_DIR="$FWD_TOOL_PREFIX/nvm"
 export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-$FWD_SCRATCH/cache}"
+
+if [ -s "\$NVM_DIR/nvm.sh" ]; then
+    unset npm_config_prefix NPM_CONFIG_PREFIX
+    case "\$-" in
+        *u*) set +u; . "\$NVM_DIR/nvm.sh"; set -u ;;
+        *) . "\$NVM_DIR/nvm.sh" ;;
+    esac
+else
+    export npm_config_prefix="$NPM_ROOT"
+fi
 EOF
     log "wrote $ENV_FILE"
 
