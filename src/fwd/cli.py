@@ -675,36 +675,41 @@ def diff_cmd(
 
 @app.command("stop", help=f"{command_docs.STOP.summary}\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. Persistent RunPod sessions retain their independent volume while terminating disposable compute.")
 def stop_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
+    names: Annotated[list[str] | None, typer.Argument(help="One or more session names, targets, or backends; omit to use this directory's session.", autocompletion=complete_existing_session)] = None,
     force: Annotated[bool, typer.Option("--force", "-f", help="Stop even if the remote Git worktree is dirty or cannot be inspected.")] = False,
 ) -> None:
-    """Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.
+    """Kill remote tmux and suspend billable compute for one or more sessions; storage preservation depends on each target.
 
     Restart with 'fwd attach --restart' or another 'fwd up'. Persistent RunPod sessions retain their independent volume while terminating disposable compute.
     """
     from fwd.ops import lifecycle
 
-    lifecycle.stop(name, force=force)
+    if names and len(names) > 1:
+        lifecycle.stop_many(tuple(names), force=force)
+    else:
+        lifecycle.stop(names[0] if names else None, force=force)
 
 
-@app.command("rm", help=f"{command_docs.REMOVE.summary} Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
+@app.command("rm", help=f"{command_docs.REMOVE.summary} Irreversible — remote data is gone.\n\nRemoval confirms with the running work and remote data at risk; already-gone targets need no confirmation.")
 def rm_cmd(
-    name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
-    all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with a session name.")] = False,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation and remote Git safety checks; required non-interactively.")] = False,
+    names: Annotated[list[str] | None, typer.Argument(help="One or more session names, targets, or backends; omit to use this directory's session.", autocompletion=complete_existing_session)] = None,
+    all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with session selectors.")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip consequence confirmation and remote Git safety checks; required non-interactively when a target or its data may remain.")] = False,
 ) -> None:
-    """Destroy one or all session targets and forget their state. Irreversible — remote data is gone.
+    """Destroy one, several, or all session targets and forget their state. Irreversible — remote data is gone.
 
-    The confirmation defaults to no, so a scripted 'fwd rm' without --force safely does nothing.
+    Consequence-bearing removal defaults to no; stale state for targets confirmed gone is cleared without prompting.
     """
     from fwd.ops import lifecycle
 
-    if all_sessions and name is not None:
-        ui.die(f"{ui.command('rm')} accepts either a session name or --all, not both")
+    if all_sessions and names:
+        ui.die(f"{ui.command('rm')} accepts either session selectors or --all, not both")
     if all_sessions:
         lifecycle.remove_all(force=force)
+    elif names and len(names) > 1:
+        lifecycle.remove_many(tuple(names), force=force)
     else:
-        lifecycle.remove(name, force=force)
+        lifecycle.remove(names[0] if names else None, force=force)
 
 
 @app.command("uninstall")

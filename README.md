@@ -207,8 +207,8 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd push` | Re-sync local changes up | `fwd push --name work` |
 | `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull --name work outputs/` |
 | `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
-| `fwd stop [session/target/backend]` | Kill remote tmux and suspend the target; CPU RunPod container-disk data does not survive | `fwd stop work` |
-| `fwd rm [session/target/backend]` / `fwd rm --all` | Destroy one or every target and forget the session state (confirms first) | `fwd rm work` |
+| `fwd stop [session/target/backend...]` | Kill remote tmux and suspend one or more targets; CPU RunPod container-disk data does not survive | `fwd stop work experiment` |
+| `fwd rm [session/target/backend...]` / `fwd rm --all` | Destroy one, several, or every target and forget the session state; confirms only when running work or remote data may be lost | `fwd rm work experiment` |
 | `fwd uninstall` | Remove local data, skills, completions, and temporary logs, then print the package-manager removal command | `fwd uninstall` |
 | `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
@@ -439,6 +439,7 @@ the corresponding creation command without `--reuse`.
 
 Commands that operate on an existing session accept the same target-label and backend aliases wherever they accept a
 session selector: `attach`, `stop`, `rm`, and `diff` positionally, and `send`, `push`, and `pull` through `--name`.
+`stop` and `rm` accept multiple positional selectors in one invocation, resolve the full batch before changing remote state, and attempt every resolved session even if an individual operation fails.
 Exact session names always win. Aliases search all saved projects outside the project-scoped reuse/attach grammar and
 use the same sole-active-session disambiguation rule described above.
 
@@ -818,8 +819,10 @@ speed; the final line records the transferred amount, average speed, and elapsed
 - **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
   additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet. Uploads that
   cross `sync.max_size_gb` are stopped and their remote stage is discarded; downloads are not capped.
-- **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, needs `--force`
-  when non-interactive: its prompt defaults to `no`, so a scripted removal safely does nothing. Likewise `fwd attach` will **refuse to restart
+- **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, describes each
+  running target and remote data location at risk, then defaults its prompt to `no`; non-interactive removal needs
+  `--force` whenever those consequences may remain. A provider-confirmed-gone target has no remote consequence, so
+  fwd clears only its stale local state without prompting. Likewise `fwd attach` will **refuse to restart
   stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning
   hardware again. Pass `--restart` (`-y`) to authorize it explicitly:
 

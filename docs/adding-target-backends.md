@@ -191,7 +191,7 @@ table latency: attach and destructive lifecycle decisions need its more patient 
 
 `stop()` must be repeatable and safe when the resource is already stopped or absent. Clearly define which costs and data survive it.
 
-`destroy()` runs only after shared confirmation, but the backend must still scope deletion narrowly. Delete only resources created for that session and validate provider IDs before destructive calls. If disks, volumes, static IPs, or snapshots have independent lifecycles, document exactly which ones are removed.
+`destroy()` runs only after shared consequence-aware confirmation or an explicit `--force`, unless `status()` definitively returned `GONE`, in which case fwd only clears its stale local state and never calls `destroy()`. The backend must still scope deletion narrowly. Delete only resources created for that session and validate provider IDs before destructive calls. If disks, volumes, static IPs, or snapshots have independent lifecycles, document exactly which ones are removed.
 
 ### Persistent work is the default contract
 

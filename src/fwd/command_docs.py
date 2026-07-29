@@ -40,7 +40,7 @@ SEND = CommandDoc("send", "Start, follow, background, list, or cancel durable re
 LIST = CommandDoc("ls", "List managed sessions with live backend status.")
 PORTS = CommandDoc("ports", "Open, list, or close loopback-only local ports forwarded to a running session.")
 STOP = CommandDoc("stop", "Check the remote Git worktree, kill tmux, and suspend billable compute while retaining configured persistent storage.")
-REMOVE = CommandDoc("rm", "Destroy one session target, or every tracked target with --all, and forget their state.")
+REMOVE = CommandDoc("rm", "Destroy one or more session targets, or every tracked target with --all, and forget their state; confirmation identifies running work and remote data at risk.")
 
 
 def _session_example(command: CommandDoc, session_name: str) -> str:

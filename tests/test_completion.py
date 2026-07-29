@@ -79,8 +79,8 @@ def test_static_rich_completions_filter_values() -> None:
         ("s", "name"),
         ("push", "name"),
         ("pull", "name"),
-        ("stop", "name"),
-        ("rm", "name"),
+        ("stop", "names"),
+        ("rm", "names"),
     ),
 )
 def test_every_session_selecting_command_uses_completion(command_name: str, parameter_name: str) -> None:

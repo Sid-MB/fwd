@@ -19,13 +19,14 @@ storage; ``remove`` is not reversible, so it confirms and names exactly what wil
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
 from fwd import command_docs, port_forwarding, remote, remote_tasks, stop_after as stop_after_ops, ui, worktree_safety
-from fwd.backends.base import TargetStatus
+from fwd.backends.base import Backend, TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.output import OutputFormat, OutputValue
 from fwd.send_tasks import SendTaskStore
@@ -304,25 +305,122 @@ def stop(name: str | None = None, *, force: bool = False) -> None:
         ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with {ui.command(f'attach {session.name}')!r}")
 
 
-def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = False) -> None:
+def _resolve_unique_sessions(names: tuple[str, ...]) -> list[SessionState]:
+    """Resolve a batch of selectors before changing remote state, preserving order and collapsing aliases that identify the same session."""
+    sessions: list[SessionState] = []
+    seen: set[str] = set()
+    for name in names:
+        session = launch_ops.resolve_session(name)
+        if session.name not in seen:
+            sessions.append(session)
+            seen.add(session.name)
+    return sessions
+
+
+def stop_many(names: tuple[str, ...], *, force: bool = False) -> None:
+    """Stop every selected session independently and return a nonzero exit after attempting the full batch if any operation fails."""
+    sessions = _resolve_unique_sessions(names)
+    failures = 0
+    try:
+        for session in sessions:
+            try:
+                stop(session.name, force=force)
+            except typer.Exit:
+                failures += 1
+            except Exception as exc:
+                failures += 1
+                ui.error(f"could not stop session {session.name!r}: {exc}")
+    except KeyboardInterrupt:
+        ui.warn(f"batch stop canceled; {len(sessions) - failures} or fewer requested sessions may have been processed")
+        raise
+    if failures:
+        ui.error(f"stopped {len(sessions) - failures} of {len(sessions)} requested sessions; {failures} failed")
+        raise typer.Exit(1)
+
+
+@dataclass(frozen=True, slots=True)
+class _RemovalPlan:
+    """Snapshot the backend and authoritative state used to explain and execute one removal consistently."""
+
+    session: SessionState
+    backend: Backend
+    status: TargetStatus
+
+
+def _prepare_removal(session: SessionState) -> _RemovalPlan:
+    """Resolve one backend and its authoritative status before asking the user to authorize any consequences."""
+    backend = launch_ops.backend_for(session)
+    return _RemovalPlan(session=session, backend=backend, status=launch_ops.status_of(backend, session))
+
+
+def _removal_data(plan: _RemovalPlan) -> str:
+    """Describe the provider-owned data that destroy removes in terms meaningful at the confirmation prompt."""
+    session = plan.session
+    remote_dir = session.remote_dir or "<unknown remote path>"
+    network_volume_id = session.backend_ids.get("network_volume_id")
+    if network_volume_id:
+        return f"persistent RunPod network volume {network_volume_id!r} and project data at {remote_dir!r}"
+    if session.backend == "runpod":
+        return f"RunPod pod storage and project data at {remote_dir!r}"
+    if session.backend == "slurm":
+        return f"Slurm scratch project directory {remote_dir!r}"
+    if session.backend == "ssh":
+        return f"remote project directory {remote_dir!r}"
+    return f"{session.backend} remote project data at {remote_dir!r}"
+
+
+def _removal_consequence(plan: _RemovalPlan) -> str | None:
+    """Return the destructive consequence to authorize, or ``None`` when only stale local state remains."""
+    session = plan.session
+    status = plan.status
+    if status is TargetStatus.GONE:
+        return None
+    data = _removal_data(plan)
+    runtime = "SSH session" if session.backend == "ssh" else f"{session.backend} target"
+    if status is TargetStatus.RUNNING:
+        return f"stop the running {runtime} and permanently delete the {data}"
+    if status is TargetStatus.PENDING:
+        return f"cancel the pending {runtime} and permanently delete the {data}"
+    if status is TargetStatus.UNKNOWN:
+        return f"the {runtime} state could not be verified; it may still be running, and the {data} may be permanently deleted"
+    return f"permanently delete the {data}"
+
+
+def _confirm_removals(plans: list[_RemovalPlan]) -> bool:
+    """Confirm only removals that can stop work or discard data, with one consequence line per affected session."""
+    consequences = [(plan.session.name, consequence) for plan in plans if (consequence := _removal_consequence(plan)) is not None]
+    if not consequences:
+        return True
+    noun = "session" if len(plans) == 1 else f"{len(plans)} sessions"
+    lines = [f"remove {noun}? This will:"]
+    lines.extend(f"  - {name}: {consequence}" for name, consequence in consequences)
+    stale_count = len(plans) - len(consequences)
+    if stale_count:
+        stale_noun = "entry" if stale_count == 1 else "entries"
+        lines.append(f"  - clear {stale_count} already-gone local state {stale_noun}; no remote resources will be touched for these")
+    return ui.confirm("\n".join(lines), default=False)
+
+
+def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = False, _plan: _RemovalPlan | None = None) -> None:
     """Destroy a session's target and delete its state entry.
 
-    Irreversible — RunPod volumes and Slurm scratch directories go with it — so the prompt names the backend and
-    target explicitly rather than asking a generic "are you sure?".
+    Confirmed-gone targets have no remote consequence, so their stale local entries are cleared without ceremony.
+    Every other state prompts with the running work and provider-owned data that removal can destroy.
 
     Args:
         name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
         force: Skip the confirmation prompt.
+        _confirmed: Internal batch-removal flag indicating that the shared consequence prompt already succeeded.
+        _plan: Internal batch-removal snapshot that prevents a second provider query after confirmation.
     """
-    session = launch_ops.resolve_session(name)
-    if not force and not _confirmed and not ui.confirm(
-        f"destroy the {session.backend} target for session {session.name!r} and delete its data?", default=False
-    ):
+    plan = _plan or _prepare_removal(launch_ops.resolve_session(name))
+    session = plan.session
+    if not force and not _confirmed and not _confirm_removals([plan]):
         ui.info("aborted")
         return
 
-    backend = launch_ops.backend_for(session)
-    status = launch_ops.status_of(backend, session)
+    backend = plan.backend
+    status = plan.status
     try:
         endpoint = backend.endpoint(session)
     except Exception as exc:
@@ -359,13 +457,44 @@ def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = F
     ui.ok(f"removed session {session.name!r}")
 
 
+def remove_many(names: tuple[str, ...], *, force: bool = False) -> None:
+    """Destroy selected sessions after one consequence-aware confirmation, isolating per-session failures."""
+    sessions = _resolve_unique_sessions(names)
+    plans = [_prepare_removal(session) for session in sessions]
+    count = len(sessions)
+    if not force and not _confirm_removals(plans):
+        ui.info("aborted")
+        return
+
+    failures = 0
+    completed = 0
+    try:
+        for plan in plans:
+            session = plan.session
+            try:
+                remove(session.name, force=force, _confirmed=True, _plan=plan)
+                completed += 1
+            except typer.Exit:
+                failures += 1
+            except Exception as exc:
+                failures += 1
+                ui.error(f"could not remove session {session.name!r}: {exc}")
+    except KeyboardInterrupt:
+        remaining = count - completed
+        remaining_noun = "session" if remaining == 1 else "sessions"
+        ui.warn(f"batch removal canceled; {remaining} selected {remaining_noun} were not completed")
+        raise
+    if failures:
+        ui.error(f"removed {completed} of {count} selected sessions; {failures} failed")
+        raise typer.Exit(1)
+
+
 def remove_all(*, force: bool = False) -> None:
     """Destroy every tracked target and delete every session state entry.
 
-    The session snapshot is taken before confirmation so the prompt names the exact count the user authorized. Once
-    confirmed, each session delegates to :func:`remove` with its individual prompt suppressed, preserving the same
-    backend cleanup and stale-target behavior as a normal removal. Failures are isolated so one broken target does not
-    prevent later targets from being destroyed; a nonzero exit reports anything that remains locally tracked.
+    The session and provider-state snapshots are taken before confirmation so the prompt names the exact consequences
+    the user authorizes. If every target is already gone, no prompt is needed because only harmless local tracking
+    remains. Failures are isolated so one broken target does not prevent later targets from being destroyed.
 
     Args:
         force: Skip the single bulk confirmation prompt.
@@ -376,17 +505,19 @@ def remove_all(*, force: bool = False) -> None:
         ui.info("no sessions to remove")
         return
 
-    count = len(sessions)
+    plans = [_prepare_removal(session) for session in sessions]
+    count = len(plans)
     noun = "session" if count == 1 else "sessions"
-    if not force and not ui.confirm(f"destroy all {count} {noun}, their targets, and their remote data?", default=False):
+    if not force and not _confirm_removals(plans):
         ui.info("aborted")
         return
 
     failures = 0
     try:
-        for session in sessions:
+        for plan in plans:
+            session = plan.session
             try:
-                remove(session.name, force=force, _confirmed=True)
+                remove(session.name, force=force, _confirmed=True, _plan=plan)
             except typer.Exit:
                 failures += 1
             except Exception as exc:
