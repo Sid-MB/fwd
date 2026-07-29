@@ -495,9 +495,10 @@ remote `gh auth login --with-token`. The token is never placed in argv, logs, fw
 `gh auth setup-git` configures HTTPS pushes, while the effective local `user.name` and `user.email` fill only missing
 repository-local values. On RunPod GPU targets, the remote gh credential store lives under the persistent tool prefix
 and its standard `~/.config/gh` path is recreated after `/root` resets. Enabling this places a live GitHub credential
-on the remote volume; omit the section for untrusted targets. The setting is applied by the next `fwd up`; after that,
-commands such as `fwd send git push` use the remote GitHub CLI credential helper. Existing SSH Git remotes continue to
-use remote SSH credentials, so use an HTTPS GitHub remote when opting into token transfer.
+on the remote volume; omit the section for untrusted targets. The setting is applied by the next `fwd up`. A direct
+`fwd send git push` also applies it in place when the setting was enabled after the session started, preserving
+remote-only work without a launch-time resynchronization. Existing SSH Git remotes continue to use remote SSH
+credentials, so use an HTTPS GitHub remote when opting into token transfer.
 
 `fwd pull && git push` is not an equivalent fallback for a commit created remotely. Pull deliberately excludes
 `.git/`, so it retrieves working-tree content but not remote commits, refs, or objects. For uncommitted remote changes,

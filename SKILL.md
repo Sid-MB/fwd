@@ -82,6 +82,8 @@ login-shell tmux in the synced project and attaches to it without repeating laun
 
 A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Stream until completion by default; after two seconds Ctrl-C cancels the remote task and Ctrl-B backgrounds only the local viewer. Use `--detach` to background immediately, `fwd send TASK_ID` to reattach, `fwd send --ls --all --json` for task history, `fwd send cancel` for queued work, and `fwd send cancel all` for every active task.
 
+GitHub credential transfer remains opt-in through `[github] auth = true`. Launch applies it normally, while a direct `fwd send git push` also prepares an already-running session in place if the setting was enabled after launch. This direct repair avoids synchronizing local repository metadata over commits created remotely.
+
 `--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Registered remote agents receive instructions for the literal `stopafter` helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
 
 ### Synchronization

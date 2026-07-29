@@ -112,7 +112,8 @@ Prefer it before choosing push or pull.
 
 Because pull excludes `.git/`, `fwd pull && git push` does not transfer commits created on the remote. It is suitable
 only for retrieving working-tree files that will be committed locally. Configure opt-in `[github] auth = true` before
-launch when the remote should push HTTPS GitHub repositories, or explicitly export a patch or Git bundle when an
+launch when the remote should push HTTPS GitHub repositories. If it is enabled after launch, direct
+`fwd send git push` prepares the existing session in place. Otherwise explicitly export a patch or Git bundle when an
 existing remote commit must be brought back without remote credentials.
 
 Push, pull, and launch-time upload print every selected project-relative path to stderr as it transfers. Rsync reports
