@@ -283,11 +283,11 @@ class SyncConfig:
     """File-transfer policy.
 
     Attributes:
-        exclude: Patterns passed to rsync as ``--exclude`` (or filtered client-side in the tar fallback).
-        use_gitignore: Add ``--filter=':- .gitignore'`` so the repo's own ignore rules apply per directory.
+        exclude: Patterns layered over the Git-selected upload manifest, or passed directly to non-Git transfers.
+        use_gitignore: Ask Git to enumerate tracked and untracked/non-ignored files so nested rules are exact.
         delete: Pass ``--delete`` on push, making the remote a mirror. Off means remote-only files survive a push.
-        max_size_gb: Maximum filtered local tree size that fwd may upload. This preflight prevents accidentally
-            copying a broad directory such as a home directory; users can raise it explicitly for larger projects.
+        max_size_gb: Approximate maximum filtered upload size. The transfer stops and discards its remote staging
+            directory when it crosses this circuit breaker; users can raise it explicitly for larger projects.
     """
 
     exclude: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))

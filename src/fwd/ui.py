@@ -6,7 +6,8 @@ Two consoles, deliberately. ``console`` writes stdout and is reserved for *data*
 (``fwd ls`` tables, resolved paths). ``err_console`` writes stderr and carries all progress chrome: spinners, step
 marks, warnings, errors. That split means ``fwd ls | grep foo`` keeps working while spinners still animate.
 
-:func:`step` is the workhorse. A launch is a sequence of slow, failure-prone stages (provision, wait for ssh, sync,
+:func:`step` is the general workhorse, while :func:`transfer_step` adds byte and throughput reporting for sync. A
+launch is a sequence of slow, failure-prone stages (provision, wait for ssh, sync,
 bootstrap, deps, Claude state, tmux) and users need to know both which stage is running and which one broke. The
 context manager shows a live spinner, then replaces it with a persistent one-line result including elapsed time, so a
 completed launch reads as a checklist. On exception it marks the step failed and re-raises — it never swallows errors.
@@ -26,13 +27,15 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import NoReturn
 
 import typer
 from rich.console import Console
+from rich.filesize import decimal
 from rich.markup import escape
+from rich.progress import BarColumn, Progress, ProgressColumn, Task, TextColumn, TransferSpeedColumn
 from rich.text import Text
 
 from fwd.output import OutputFormat, RecordElement, TableElement, is_machine_environment, render
@@ -90,6 +93,70 @@ def step(message: str, *, quiet: bool = False) -> Iterator[None]:
         err_console.print(f"[bold green]✓[/] {safe} [dim]{elapsed:.1f}s[/]")
     else:
         err_console.print(f"ok: {safe} ({elapsed:.1f}s)")
+
+
+class _TransferredColumn(ProgressColumn):
+    """Render cumulative streamed bytes without implying that fwd knows the upload's final size."""
+
+    def render(self, task: Task) -> Text:
+        """Format the task's cumulative byte count using Rich's decimal MB/GB units."""
+        return Text(decimal(int(task.completed)), style="cyan")
+
+
+@contextmanager
+def transfer_step(message: str) -> Iterator[Callable[[int], None]]:
+    """Render an indeterminate transfer bar with live bytes and speed, then persist a compact result line.
+
+    Fwd deliberately enforces its upload limit while streaming instead of scanning the tree first, so no trustworthy
+    total exists while the transfer is active. The bar therefore pulses while its adjacent columns report cumulative
+    wire bytes and current throughput. Callers receive a function accepting the latest cumulative byte count.
+    """
+    started = time.monotonic()
+    safe = escape(message)
+    completed = 0
+
+    if _tty():
+        progress = Progress(
+            TextColumn("[bold cyan]{task.description}[/]"),
+            BarColumn(bar_width=None, pulse_style="cyan"),
+            _TransferredColumn(),
+            TransferSpeedColumn(),
+            console=err_console,
+            transient=True,
+        )
+        with progress:
+            task_id = progress.add_task(safe, total=None)
+
+            def update(transferred_bytes: int) -> None:
+                nonlocal completed
+                completed = max(completed, transferred_bytes)
+                progress.update(task_id, completed=completed)
+
+            try:
+                yield update
+            except BaseException:
+                elapsed = time.monotonic() - started
+                err_console.print(f"[bold red]x[/] {safe} [dim]failed after {elapsed:.1f}s · {decimal(completed)}[/]")
+                raise
+    else:
+
+        def update(transferred_bytes: int) -> None:
+            nonlocal completed
+            completed = max(completed, transferred_bytes)
+
+        try:
+            yield update
+        except BaseException:
+            elapsed = time.monotonic() - started
+            err_console.print(f"error: {safe} failed after {elapsed:.1f}s ({decimal(completed)} transferred)")
+            raise
+
+    elapsed = time.monotonic() - started
+    average_speed = completed / elapsed if elapsed > 0 else 0
+    if _tty():
+        err_console.print(f"[bold green]✓[/] {safe} [dim]{decimal(completed)} · {decimal(int(average_speed))}/s · {elapsed:.1f}s[/]")
+    else:
+        err_console.print(f"ok: {safe} ({decimal(completed)}, {decimal(int(average_speed))}/s, {elapsed:.1f}s)")
 
 
 def info(message: str) -> None:

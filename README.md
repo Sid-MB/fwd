@@ -633,7 +633,7 @@ creds = false         # copy credentials to the remote machine
 exclude = [".venv", "node_modules", "dist"]   # replaces the defaults; see below
 use_gitignore = true                          # honour the repo's own .gitignore
 delete = true                                 # push mirrors local (removes remote-only files)
-max_size_gb = 1.0                             # reject unexpectedly broad uploads before provisioning
+max_size_gb = 1.0                             # stop unexpectedly broad uploads while streaming
 ```
 
 `exclude` is **seeded** with sensible defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`, `.next`,
@@ -642,11 +642,22 @@ it — so a project that genuinely ships a checked-in `dist/` can shrink the lis
 excluded: the remote session needs history to diff, blame and commit. Run `fwd` from a standalone checkout; linked
 Git worktrees whose `.git` file points outside the project directory are not currently supported.
 
-Before `fwd up` provisions anything, and before every `fwd push`, fwd measures the filtered local tree and refuses to
-upload more than `sync.max_size_gb` (1 GB by default). The error prints an exact project-scoped command such as
-`fwd config set --project sync.max_size_gb 4` and the project/user config paths. The normal safety measurement uses
-the same `sync.exclude`, `.fwdignore`, and `.gitignore` rules as rsync. If fwd must fall back to tar-over-SSH, it runs
-a second conservative check that counts files hidden only by `.gitignore`, which tar cannot reproduce.
+For standalone Git repositories, Git itself enumerates tracked files plus untracked, non-ignored WIP with
+`git ls-files --cached --others --exclude-standard`; this avoids implementation-specific nested `.gitignore` bugs in
+macOS openrsync. Fwd then applies `sync.exclude` and `.fwdignore`, and explicitly retains `.git/`. Non-Git directories
+fall back to transport-native filtering.
+
+During `fwd up` and `fwd push`, `sync.max_size_gb` (1 GB by default) acts as a streaming circuit breaker instead of a
+serial full-tree preflight. Both rsync and tar-over-SSH count their compressed outbound wire bytes. Uploads land in a
+sibling staging directory, and fwd only applies that stage to the live remote project after
+the stream completes under budget. Crossing the limit stops the stream, removes the incomplete stage, prints the exact
+project `.fwdignore` path for excluding unintended entries, and provides a project-scoped command such as
+`fwd config set --project sync.max_size_gb 4` plus the project/user config paths.
+Only after a limit failure, fwd reuses the transport filters to list up to ten included files or aggregate folders
+larger than 200 MB, making accidental dataset, checkpoint, or build-tree uploads visible without slowing successful
+uploads.
+In an interactive terminal, the sync step shows an indeterminate progress bar with cumulative MB/GB and live upload
+speed; the final line records the transferred amount, average speed, and elapsed time.
 
 ## Notes
 
@@ -655,8 +666,8 @@ a second conservative check that counts files hidden only by `.gitignore`, which
   Reused targets are never destroyed by cancellation. If `fwd stop` is interrupted while closing tmux, fwd still
   completes the provider stop before exiting so compute is not left billing.
 - **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
-  additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet. Uploads above
-  `sync.max_size_gb` are rejected before transfer; downloads are not capped by this local upload guard.
+  additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet. Uploads that
+  cross `sync.max_size_gb` are stopped and their remote stage is discarded; downloads are not capped.
 - **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, needs `--force`
   when non-interactive: its prompt defaults to `no`, so a scripted removal safely does nothing. Likewise `fwd attach` will **refuse to restart
   stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning

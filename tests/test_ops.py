@@ -168,7 +168,6 @@ def stub_world(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     monkeypatch.setattr(SSHEndpoint, "open_control_master", record("control_master"))
     # The transcript import asks the remote for $HOME; nothing else in ops runs a bare remote command.
     monkeypatch.setattr(SSHEndpoint, "run", lambda self, cmd, **kw: SimpleNamespace(stdout="/home/root", returncode=0))
-    monkeypatch.setattr(sync, "enforce_upload_limit", record("upload_size_check", capture="upload_size_check"))
     monkeypatch.setattr(sync, "sync_up", record("sync_up", capture="sync_up"))
     monkeypatch.setattr(sync, "tar_up", record("tar_up", capture="tar_up"))
     monkeypatch.setattr(sync, "sync_down", record("sync_down", capture="sync_down"))
@@ -273,7 +272,6 @@ def test_launch_runs_stages_in_order(project, state_store, config, fake_backend,
 
     ordered = [c for c in calls if c not in {"detect_tools", "tmux_exists", "status", "endpoint"}]
     assert ordered == [
-        "upload_size_check",
         "provision",
         "wait_for_ssh",
         "control_master",
@@ -383,7 +381,6 @@ def test_launch_failure_after_provision_remains_listable_and_stoppable(project, 
 def test_ctrl_c_during_new_provision_removes_owned_resource(project, state_store, config, fake_backend, monkeypatch, wide_console) -> None:
     """Interruption cleanup is armed before provision returns, covering Ctrl-C during a provider readiness wait."""
     fake_backend.cleanup_created = True
-    monkeypatch.setattr(sync, "enforce_upload_limit", lambda *args, **kwargs: 0)
     monkeypatch.setattr(fake_backend, "provision", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     with pytest.raises(KeyboardInterrupt):
@@ -988,10 +985,10 @@ def test_push_uses_sync_up(project, state_store, config, fake_backend, stub_worl
     monkeypatch.setattr(transfer, "load_config", lambda project_dir=None: config)
     _seed(state_store, project)
     transfer.push()
-    assert calls.index("upload_size_check") < calls.index("sync_up")
     args, kwargs = stub_world["sync_up"]
     assert args[2] == "/workspace/proj"
     assert kwargs["delete"] is True
+    assert callable(kwargs["on_progress"])
 
 
 def test_pull_passes_paths_through(project, state_store, config, fake_backend, stub_world, monkeypatch) -> None:

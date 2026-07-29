@@ -56,16 +56,13 @@ def push(name: str | None = None) -> None:
         ui.die(f"the local directory for session {session.name!r} no longer exists: {local_cwd}")
 
     cfg = load_config(local_cwd)
-    with ui.step("Checking upload size"):
-        sync.enforce_upload_limit(local_cwd, cfg.sync)
     endpoint = _endpoint_for(session)
-    with ui.step(f"Pushing {local_cwd.name} to {session.remote_dir}"):
+    with ui.transfer_step(f"Pushing {local_cwd.name} to {session.remote_dir}") as update_transfer:
         if endpoint.supports_rsync:
-            sync.sync_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete)
+            sync.sync_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=update_transfer)
         else:
             ui.warn("transport does not support rsync; using tar-over-ssh (whole-tree transfer)")
-            sync.enforce_upload_limit(local_cwd, cfg.sync, portable=True)
-            sync.tar_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete)
+            sync.tar_up(endpoint, local_cwd, session.remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=update_transfer)
     ui.ok(f"pushed to {session.name!r}")
 
 

@@ -44,7 +44,7 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
 - Run `fwd uninstall --force` only when the user explicitly requests local fwd removal and understands that tracked remote resources are not destroyed; prefer `fwd rm --all` first.
 - Prefer `fwd diff -q` before deciding whether to push or pull. Exit 0 means synchronized, 1 means different, and 2 means an error.
-- Launch and push reject filtered uploads above `sync.max_size_gb` (1 GB by default) before provisioning or transfer. If fwd refuses a deliberately large project, use the exact project-scoped `fwd config set` command in its error only after confirming the selected directory is intentional.
+- Launch and push stop uploads when their streaming size crosses `sync.max_size_gb` (1 GB by default), discard the incomplete remote stage, leave the live project unchanged, and list the largest included files or aggregate folders over 200 MB. If fwd refuses a deliberately large project, use the exact project-scoped `fwd config set` command in its error only after confirming the selected directory is intentional.
 - In non-interactive environments, use explicit flags. Never invoke a setup wizard or invent a missing target.
 - Missing `npx`, the optional `skills` CLI, or an unsuccessful skill refresh must not block normal fwd commands.
 - If launch preparation fails after the target is running and synced, hand the human `fwd attach SESSION --raw` to
@@ -86,7 +86,7 @@ A send task is durable work started inside an already-running session with `fwd 
 
 ### Synchronization
 
-The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Launch and `fwd push` mirror local content to the remote project through rsync or tar fallback; stale synchronized files are deleted while excluded remote environments remain. Linked Git worktrees whose `.git` file points outside the project are not supported. `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side. Before any upload, `sync.max_size_gb` limits this tree to 1 GB by default. Normal measurement matches rsync's filters; tar fallback runs a second conservative check that also counts files hidden only by `.gitignore`.
+The sync domain is the filtered project tree governed by `.gitignore`, `.fwdignore`, and configured exclusions. Standalone Git repositories use Git's own tracked plus untracked/non-ignored manifest, so nested `.gitignore` rules do not depend on the local rsync implementation; `.git/` remains included. Launch and `fwd push` mirror local content to the remote project through rsync or tar fallback; stale synchronized files are deleted while excluded remote environments remain. Linked Git worktrees whose `.git` file points outside the project are not supported. `fwd pull` copies remote results back additively; `fwd diff` compares filtered snapshots without changing either side. During upload, `sync.max_size_gb` limits compressed outbound wire bytes to 1 GB by default; both transports discard their remote staging directory instead of changing the live project when the limit is crossed. Interactive uploads show cumulative MB/GB and live throughput without requiring a serial size preflight.
 
 ### Toolchains and requirements
 

@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from fwd import sync, ui
+from fwd import selection, sync, ui
 from fwd.config import Config, load_config
 from fwd.ops import launch as launch_ops
 from fwd.ops.transfer import _endpoint_for
@@ -39,15 +39,17 @@ def _relative_path(value: str | None) -> Path | None:
 
 
 def _snapshot_local(source: Path, destination: Path, config: Config) -> None:
-    """Copy the local sync domain into ``destination`` using rsync's real filter implementation."""
+    """Copy the local sync domain into ``destination`` using Git's authoritative selection when available."""
     destination.mkdir(parents=True, exist_ok=True)
-    argv = [
-        *sync.RSYNC_BASE,
-        *sync.rsync_filters(config.sync, source),
-        f"{str(source).rstrip('/')}/",
-        f"{destination}/",
-    ]
-    process = subprocess.run(argv, capture_output=True, text=True, check=False)
+    with selection.upload_manifest(source, config.sync) as manifest:
+        filters = selection.rsync_manifest_args(manifest) if manifest is not None else sync.rsync_filters(config.sync, source)
+        argv = [
+            *sync.RSYNC_BASE,
+            *filters,
+            f"{str(source).rstrip('/')}/",
+            f"{destination}/",
+        ]
+        process = subprocess.run(argv, capture_output=True, text=True, check=False)
     if process.returncode not in ({0} | set(sync.RSYNC_PARTIAL_EXITS)):
         detail = process.stderr.strip() or process.stdout.strip()
         raise RuntimeError(f"local snapshot failed (rsync exit {process.returncode}): {detail}")

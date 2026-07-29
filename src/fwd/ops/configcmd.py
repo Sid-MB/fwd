@@ -95,9 +95,9 @@ SECTION_DOCS: dict[str, str] = {
     "session": "move the real transcript so the remote claude resumes this conversation",
     "handoff": "summarize into HANDOFF.md instead of moving the transcript",
     "exclude": "rsync excludes; REPLACES the built-in list rather than adding to it, so it can shrink",
-    "use_gitignore": "also honour the repo's own .gitignore, per directory",
+    "use_gitignore": "use Git's own file enumeration so every nested .gitignore is honoured exactly",
     "delete": "push mirrors local, removing remote-only files",
-    "max_size_gb": "maximum filtered upload size in GB; defaults to 1 GB to catch accidentally broad directories",
+    "max_size_gb": "streaming upload circuit breaker in GB; defaults to 1 GB to catch accidentally broad directories",
 }
 
 DEFAULT_COMMAND_DOC = f"argv launched by bare {ui.command()!r}; target_defaults.<name>.default_command takes precedence"

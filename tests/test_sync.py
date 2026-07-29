@@ -11,12 +11,14 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import typer
 
 from fwd import config as config_mod
+from fwd import selection
 from fwd import ui
 from fwd.config import DEFAULT_EXCLUDES, SyncConfig
 from fwd.sshexec import SSHEndpoint
@@ -221,42 +223,137 @@ def test_genuine_rsync_failures_still_raise(monkeypatch) -> None:
         sync_mod._run(["rsync"], what="rsync push")
 
 
-@needs_rsync
-def test_upload_size_uses_transfer_filters_and_portable_mode_is_conservative(tmp_path: Path) -> None:
-    """Normal measurement matches rsync; tar-compatible measurement additionally counts gitignored content."""
+def test_rsync_transport_stops_outbound_wire_bytes_at_the_limit(tmp_path: Path) -> None:
+    """The duplex relay carries a real rsync protocol and records overflow before forwarding a huge stream."""
+    from fwd import rsync_transport, sync as sync_mod
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    _write(source, "hello.txt", "hello")
+    fake_ssh = tmp_path / "fake_ssh.py"
+    fake_ssh.write_text(
+        "import os, sys\ncommand = sys.argv[2:]\n"
+        "os.execl('/bin/sh', 'sh', '-c', command[0]) if len(command) == 1 else os.execvp(command[0], command)\n",
+        encoding="utf-8",
+    )
+    successful_sentinel = tmp_path / "not-exceeded"
+    bounded_shell = shlex.join(
+        [
+            sys.executable,
+            str(Path(rsync_transport.__file__)),
+            "--limit",
+            "1000000",
+            "--sentinel",
+            str(successful_sentinel),
+            "--",
+            sys.executable,
+            str(fake_ssh),
+        ]
+    )
+    progress: list[int] = []
+    sync_mod._run_bounded_rsync([*RSYNC_BASE, "-e", bounded_shell, f"{source}/", f"fake:{destination}/"], successful_sentinel, progress.append)
+    assert (destination / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert not successful_sentinel.exists()
+    assert progress == sorted(progress)
+    assert progress[-1] > 0
+
+    sentinel = tmp_path / "exceeded"
+    consumer = [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"]
+    proc = subprocess.run(
+        [sys.executable, str(Path(rsync_transport.__file__)), "--limit", "3", "--sentinel", str(sentinel), "--", *consumer],
+        input=b"abcdef",
+        capture_output=True,
+    )
+
+    assert proc.returncode == rsync_transport.LIMIT_EXIT_CODE
+    assert int(sentinel.read_text(encoding="utf-8")) >= 6
+
+
+def test_rsync_overflow_cleans_remote_stage_before_reporting_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An over-limit rsync must discard its partial stage and never run the live-project commit."""
     from fwd import sync as sync_mod
 
-    _write(tmp_path, "keep.txt", "keep")
-    _write(tmp_path, ".gitignore", "git-ignored.bin\n")
-    _write(tmp_path, "git-ignored.bin", "g" * 17)
-    _write(tmp_path, ".fwdignore", "remote-ignored.bin\n")
-    _write(tmp_path, "remote-ignored.bin", "r" * 23)
-    _write(tmp_path, "node_modules/package/index.js", "n" * 31)
+    stage = "/workspace/.fwd-upload.test"
+    cleaned: list[str] = []
+    monkeypatch.setattr(sync_mod, "_create_remote_stage", lambda endpoint, remote_dir: stage)
+    monkeypatch.setattr(sync_mod, "_run_bounded_rsync", lambda argv, sentinel, on_progress=None: (_ for _ in ()).throw(sync_mod._UploadLimitExceeded(1_000_000_001)))
+    monkeypatch.setattr(sync_mod, "_cleanup_remote_stage", lambda endpoint, path: cleaned.append(path) or True)
+    monkeypatch.setattr(sync_mod, "_upload_limit_error", lambda source, cfg, observed, **kwargs: (_ for _ in ()).throw(typer.Exit(1)))
 
-    normal = sum((tmp_path / name).stat().st_size for name in ("keep.txt", ".gitignore", ".fwdignore"))
-    portable = normal + (tmp_path / "git-ignored.bin").stat().st_size
-    assert sync_mod.filtered_upload_size_bytes(tmp_path, SyncConfig()) == normal
-    assert sync_mod.filtered_upload_size_bytes(tmp_path, SyncConfig(), portable=True) == portable
+    with pytest.raises(typer.Exit):
+        sync_mod.sync_up(_endpoint(), tmp_path, "/workspace/project", SyncConfig(max_size_gb=1))
+
+    assert cleaned == [stage]
+
+
+def test_tar_upload_always_stages_and_traps_cleanup() -> None:
+    """A non-mirroring tar push stages safely and reports cumulative compressed bytes from its streaming relay."""
+    from fwd import sync as sync_mod
+
+    command = sync_mod._tar_mirror_command("/workspace/project", ".next\nnode_modules\n", delete=False)
+    assert 'stage=$(mktemp -d "$parent/.fwd-upload.XXXXXX")' in command
+    assert "trap cleanup EXIT HUP INT TERM" in command
+    assert "tar xzf - -v -C \"$stage\"" in command
+    assert "comm -23" not in command
+    assert command.index("tar xzf") < command.index("cp -a")
+
+    progress: list[int] = []
+    sync_mod._pipe(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'abcdef')"],
+        [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+        what="test tar push",
+        max_bytes=100,
+        on_progress=progress.append,
+    )
+    assert progress == [6]
 
 
 def test_upload_limit_error_offers_project_and_user_config_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """A rejected upload explains both ways to make a deliberate larger-project exception."""
+    """A stopped stream explains cleanup and both ways to make a deliberate larger-project exception."""
     from fwd import sync as sync_mod
 
     global_path = tmp_path / "home" / "config.toml"
     monkeypatch.setattr(config_mod, "GLOBAL_CONFIG_PATH", global_path)
-    monkeypatch.setattr(sync_mod, "filtered_upload_size_bytes", lambda source, cfg, **kwargs: 1_200_000_000)
+    monkeypatch.setattr(
+        sync_mod,
+        "_large_upload_entries",
+        lambda source, cfg, **kwargs: [sync_mod._LargeUploadEntry("datasets/checkpoints", 850_000_000, "folder")],
+    )
     monkeypatch.setattr(ui.err_console, "width", 500)
 
     with pytest.raises(typer.Exit) as exc_info:
-        sync_mod.enforce_upload_limit(tmp_path, SyncConfig(max_size_gb=1))
+        sync_mod._upload_limit_error(tmp_path, SyncConfig(max_size_gb=1), 1_000_000_001)
 
     assert exc_info.value.exit_code == 1
     error = " ".join(capsys.readouterr().err.split())
     assert "sync.max_size_gb=1" in error
+    assert "removed the incomplete remote staging copy" in error
     assert "config set --project sync.max_size_gb 2" in error
     assert str(tmp_path / ".fwd" / "config.toml") in error
+    assert str(tmp_path / ".fwdignore") in error
+    assert "add their project-relative paths" in error
     assert str(global_path) in error
+    assert "850.0 MB folder datasets/checkpoints" in error
+
+
+@needs_rsync
+def test_large_upload_entries_aggregate_only_filtered_paths_over_threshold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failure diagnostics reuse upload filters and aggregate qualifying files into every non-root parent folder."""
+    from fwd import sync as sync_mod
+
+    monkeypatch.setattr(sync_mod, "_LARGE_UPLOAD_ENTRY_BYTES", 10)
+    _write(tmp_path, "assets/model.bin", "m" * 12)
+    _write(tmp_path, "assets/shards/one.bin", "1" * 7)
+    _write(tmp_path, "assets/shards/two.bin", "2" * 7)
+    _write(tmp_path, ".next/cache/huge.bin", "x" * 100)
+    _write(tmp_path, "small.txt", "tiny")
+
+    entries = {(entry.kind, entry.path): entry.size_bytes for entry in sync_mod._large_upload_entries(tmp_path, SyncConfig())}
+
+    assert entries[("file", "assets/model.bin")] == 12
+    assert entries[("folder", "assets/shards")] == 14
+    assert entries[("folder", "assets")] == 26
+    assert not any(".next" in path for _, path in entries)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -277,8 +374,10 @@ def _write(root: Path, relpath: str, content: str = "x\n") -> None:
 def _shipped(source: Path, destination: Path, sync_cfg: SyncConfig) -> set[str]:
     """Mirror ``source`` into ``destination`` with fwd's filters and return the relative paths that arrived."""
     destination.mkdir(parents=True, exist_ok=True)
-    argv = [*RSYNC_BASE, *rsync_filters(sync_cfg, source), "--delete", f"{source}/", f"{destination}/"]
-    result = subprocess.run(argv, capture_output=True, text=True)
+    with selection.upload_manifest(source, sync_cfg) as manifest:
+        filters = selection.rsync_manifest_args(manifest) if manifest is not None else rsync_filters(sync_cfg, source)
+        argv = [*RSYNC_BASE, *filters, "--delete", f"{source}/", f"{destination}/"]
+        result = subprocess.run(argv, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return {str(p.relative_to(destination)) for p in destination.rglob("*") if p.is_file()}
 
@@ -336,6 +435,45 @@ def test_in_progress_uv_project_ships_sources_not_the_venv(tmp_path: Path) -> No
 
 
 @needs_rsync
+def test_git_manifest_honours_deep_nested_ignores_and_fwdignore_for_tracked_files(tmp_path: Path) -> None:
+    """Git is the ignore authority at every depth while tracked code and untracked WIP remain in the upload domain."""
+    source = tmp_path / "source"
+    _write(source, "src/main.py", "print('tracked')\n")
+    _write(source, "src/wip.py", "print('untracked')\n")
+    _write(source, "packages/backend/.convex/.gitignore", "/*\n")
+    _write(source, "packages/backend/.convex/local/cache.blob", "ignored local state\n")
+    _write(source, "generated/tracked.txt", "excluded by fwdignore\n")
+    _write(source, ".fwdignore", "generated/\n")
+    subprocess.run(["git", "-C", str(source), "init", "-q"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "add",
+            "src/main.py",
+            "generated/tracked.txt",
+        ],
+        check=True,
+    )
+
+    shipped = _shipped(source, tmp_path / "destination", SyncConfig())
+
+    assert {"src/main.py", "src/wip.py", "packages/backend/.convex/.gitignore", ".fwdignore", ".git/HEAD"} <= shipped
+    assert "packages/backend/.convex/local/cache.blob" not in shipped
+    assert "generated/tracked.txt" not in shipped
+
+    with selection.upload_manifest(source, SyncConfig()) as manifest:
+        assert manifest is not None
+        archive = tmp_path / "selection.tar.gz"
+        subprocess.run(["tar", "czf", str(archive), "-C", str(source), "--null", f"--files-from={manifest}"], check=True)
+        archived = set(subprocess.run(["tar", "tzf", str(archive)], check=True, capture_output=True, text=True).stdout.splitlines())
+    assert "packages/backend/.convex/.gitignore" in archived
+    assert "packages/backend/.convex/local/cache.blob" not in archived
+    assert "packages/backend/.convex/" in selection.git_ignored_patterns(source, SyncConfig())
+
+
+@needs_rsync
 def test_in_progress_bun_project_ships_lockfile_not_node_modules(tmp_path: Path) -> None:
     shipped = _shipped(_in_progress_bun_project(tmp_path / "src_"), tmp_path / "dst", SyncConfig())
 
@@ -359,6 +497,7 @@ def test_installed_trees_are_excluded_even_without_a_gitignore(tmp_path: Path) -
     _write(source, "main.py", "print(1)\n")
     _write(source, ".venv/pyvenv.cfg", "home = /usr\n")
     _write(source, "node_modules/left-pad/index.js", "module.exports = 1\n")
+    _write(source, ".next/cache/webpack.bin", "compiled\n")
     _write(source, "__pycache__/main.cpython-312.pyc", "bytecode\n")
 
     shipped = _shipped(source, tmp_path / "dst", SyncConfig(use_gitignore=False))

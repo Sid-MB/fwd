@@ -403,17 +403,22 @@ def _resolve_target_or_setup(cfg: Config, requested: str | None, existing: Sessi
             ui.die(str(retry_exc))
 
 
-def _sync_project(endpoint: sshexec.SSHEndpoint, local_cwd: Path, remote_dir: str, cfg: Config) -> None:
+def _sync_project(
+    endpoint: sshexec.SSHEndpoint,
+    local_cwd: Path,
+    remote_dir: str,
+    cfg: Config,
+    *,
+    on_progress: sync.TransferProgress | None = None,
+) -> None:
     """Mirror the project up, choosing rsync or the tar fallback based on what the transport supports."""
     if endpoint.supports_rsync:
-        sync.sync_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete)
+        sync.sync_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress)
         return
     # RunPod's proxy transport cannot run a remote rsync binary, so delta transfer is lost entirely. Loud, because
     # the user is about to wonder why every push is slow.
     ui.warn("transport does not support rsync; falling back to tar-over-ssh (no delta transfer, slower pushes)")
-    # Tar cannot reproduce per-directory .gitignore rules, so repeat the limit check against its broader selection.
-    sync.enforce_upload_limit(local_cwd, cfg.sync, portable=True)
-    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete)
+    sync.tar_up(endpoint, local_cwd, remote_dir, cfg.sync, delete=cfg.sync.delete, on_progress=on_progress)
 
 
 def launch(
@@ -499,10 +504,6 @@ def _launch(
         cfg = load_config(local_cwd)
     except ConfigError as exc:
         ui.die(str(exc))
-    # This must precede target resolution and provisioning: rejecting an accidental home-directory upload after a
-    # billable pod exists would prevent the copy but still leave the user paying for a resource they did not intend.
-    with ui.step("Checking upload size"):
-        sync.enforce_upload_limit(local_cwd, cfg.sync)
 
     st = interrupt_cleanup.store
     if new and name is not None:
@@ -586,8 +587,8 @@ def _launch(
     agent_local_state = agent.prepare_local(local_cwd, flags) if agent is not None else None
 
     # 4. Files up.
-    with ui.step(f"Syncing {local_cwd.name} to {remote_dir}"):
-        _sync_project(endpoint, local_cwd, remote_dir, cfg)
+    with ui.transfer_step(f"Syncing {local_cwd.name} to {remote_dir}") as update_transfer:
+        _sync_project(endpoint, local_cwd, remote_dir, cfg, on_progress=update_transfer)
 
     if push_only:
         return _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=True)
