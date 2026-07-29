@@ -188,6 +188,20 @@ Map provider-specific states onto `TargetStatus`:
 
 `destroy()` runs only after shared confirmation, but the backend must still scope deletion narrowly. Delete only resources created for that session and validate provider IDs before destructive calls. If disks, volumes, static IPs, or snapshots have independent lifecycles, document exactly which ones are removed.
 
+### Persistent work is the default contract
+
+Every provisioning backend must place `TargetInfo.remote_dir`, `tool_prefix`, agent state, and task state on storage
+that survives its normal `stop()` operation. If the provider separates compute from durable disks, create or attach
+session-owned persistent storage by default, retain it on `stop()`, reattach it on reprovision, and delete it only in
+the explicitly destructive `destroy()` path. If durable storage is unavailable for a provider tier, require an
+explicit disposable-mode configuration instead of silently falling back.
+
+The shared lifecycle layer checks the remote Git worktree immediately before `fwd stop`, `fwd rm`, bulk removal, and
+server-owned stop-after. That protection applies automatically to every backend and includes untracked files; a
+backend must not bypass it or hide destructive lifecycle work elsewhere. The check is intentionally only a final
+guard—non-Git files, ignored outputs, unpushed commits, credentials, and agent history still depend on the backend's
+storage contract.
+
 ## 3. Register the backend
 
 Add a lazy registry entry in `src/fwd/backends/__init__.py`:

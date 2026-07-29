@@ -14,10 +14,9 @@ observations shape the whole module:
    and we never need the REST API. (The REST endpoint ``/v1/pods/<id>`` exposes the same data under ``publicIp`` +
    ``portMappings``; it was evaluated during the spike and rejected as redundant. Keeping to runpodctl also means
    fwd never has to read, hold or risk logging the API key.)
-3. **The container disk is wiped on every stop, and the published port churns on restart.** Both were confirmed
-   empirically: files written outside the volume vanish across ``pod stop``/``pod start``, files under
-   ``/workspace`` survive, and the host port for 22/tcp is reassigned. Hence ``remote_dir`` and ``tool_prefix`` both
-   live under ``volume_mount_path``, and ``endpoint()`` always re-resolves instead of trusting stored state.
+3. **The container disk is disposable, while network volumes outlive pods.** New sessions therefore get a dedicated
+   Secure Cloud network volume by default. Stopping such a session terminates its pod (RunPod cannot stop a pod with
+   a network volume) and relaunch reattaches the same volume. Only explicit ``fwd rm`` deletes it.
 
 Syntax drift is handled by detecting the noun-first grammar once per process (``pod create --help``). The legacy
 verb-first grammar (``runpodctl create pod``) is deprecated upstream, emits tables rather than JSON, and exposes no
@@ -29,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -142,6 +142,26 @@ def parse_pod_list(stdout: str) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
+def parse_network_volume_list(stdout: str) -> list[dict[str, Any]]:
+    """Parse ``network-volume list`` using the same JSON contract as pod listing."""
+    payload = _first_json(stdout)
+    message = error_message(payload)
+    if message:
+        raise RunpodError(f"runpodctl: {message}")
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict) and item.get("id")]
+
+
+def pod_network_volume_id(payload: dict[str, Any]) -> str | None:
+    """Return the independently managed network-volume id attached to a pod, if present."""
+    nested = payload.get("networkVolume")
+    if isinstance(nested, dict) and nested.get("id"):
+        return str(nested["id"])
+    direct = payload.get("networkVolumeId")
+    return str(direct) if direct else None
+
+
 def find_pod_by_name(pods: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     """Return the pod with exactly this name, preferring a RUNNING one when duplicates exist.
 
@@ -213,7 +233,7 @@ def is_missing_pod_error(message: str) -> bool:
     return "not found" in lowered or "404" in lowered
 
 
-def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = None) -> list[str]:
+def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = None, *, network_volume_id: str | None = None) -> list[str]:
     """Build the full ``runpodctl pod create`` argv for a target. Pure, so the flag matrix is unit-testable.
 
     Two rules encode what the CLI actually accepts (per the captured ``pod create --help`` fixture):
@@ -238,9 +258,13 @@ def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = No
         cfg.cloud_type.upper(),
         "--volume-mount-path",
         cfg.volume_mount_path,
-        "--volume-in-gb",
-        str(cfg.volume_gb),
     ]
+    if network_volume_id:
+        args += ["--network-volume-id", network_volume_id]
+        if cfg.data_center_id:
+            args += ["--data-center-ids", cfg.data_center_id]
+    else:
+        args += ["--volume-in-gb", str(cfg.volume_gb)]
     if cfg.compute_type != "cpu":
         gpu_id = gpu or cfg.gpu
         if gpu_id:
@@ -248,7 +272,7 @@ def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = No
     return args
 
 
-def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None) -> str:
+def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, network_volume_id: str | None = None) -> str:
     """Describe the pod about to be created, mentioning only values actually sent to ``runpodctl``.
 
     Derived from :func:`create_pod_args` rather than from the config so the progress line cannot drift from the real
@@ -256,15 +280,17 @@ def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None) -> str:
     ``(NVIDIA GeForce RTX 4090, 20 GB volume)`` — a GPU that was never requested and a volume RunPod ignores — which
     is exactly the sort of label that sends someone debugging in the wrong direction.
     """
-    args = create_pod_args(cfg, "-", gpu)
+    args = create_pod_args(cfg, "-", gpu, network_volume_id=network_volume_id)
     parts: list[str] = []
     if "--gpu-id" in args:
         parts.append(args[args.index("--gpu-id") + 1])
     else:
         parts.append("CPU")
     parts.append(f"{args[args.index('--cloud-type') + 1].lower()} cloud")
-    # volume_gb is silently dropped for CPU pods, so promising a volume there would be the same lie in a new place.
-    parts.append(f"{cfg.volume_gb} GB volume" if cfg.compute_type != "cpu" else "container disk only")
+    if network_volume_id:
+        parts.append(f"persistent volume {network_volume_id}")
+    else:
+        parts.append(f"{cfg.volume_gb} GB Pod volume" if cfg.compute_type != "cpu" else "container disk only")
     return ", ".join(parts)
 
 
@@ -323,6 +349,11 @@ def pod_name_for(session_name: str) -> str:
     return f"fwd-{session_name}"
 
 
+def _safe_provider_name(value: str) -> str:
+    """Return a conservative RunPod resource-name component for fwd-owned volumes."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-") or "session"
+
+
 class RunpodBackend(Backend):
     """Provisioner over RunPod pods (see :class:`fwd.backends.base.Provisioner`)."""
 
@@ -340,7 +371,9 @@ class RunpodBackend(Backend):
             ConfigParameter("gpu", "--gpu", "GPU identifier; used only for GPU compute", prompt_when=(("compute_type", "gpu"),)),
             ConfigParameter("image", "--image", "container image", choices=(ConfigChoice(DEFAULT_RUNPOD_CPU_IMAGE, "CPU base"), ConfigChoice(DEFAULT_RUNPOD_GPU_IMAGE, "GPU/PyTorch")), allow_free_text=True),
             ConfigParameter("cloud_type", "--cloud-type", "RunPod cloud pool", advanced=True, choices=(ConfigChoice("secure"), ConfigChoice("community")), allow_free_text=False),
-            ConfigParameter("volume_gb", "--volume-gb", "persistent volume size in GB; GPU pods only", advanced=True, prompt_when=(("compute_type", "gpu"),)),
+            ConfigParameter("persistent", "--persistent", "create independent storage that survives pod termination", choices=(ConfigChoice("true"), ConfigChoice("false")), allow_free_text=False),
+            ConfigParameter("data_center_id", "--data-center-id", "RunPod datacenter for persistent storage", required=True, prompt_when=(("persistent", "true"),)),
+            ConfigParameter("volume_gb", "--volume-gb", "persistent network-volume size in GB", advanced=True, prompt_when=(("persistent", "true"),)),
             ConfigParameter("volume_mount_path", "--volume-mount-path", "persistent volume mount path", prompt=False),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts", advanced=True),
             ConfigParameter("tool_prefix", "--tool-prefix", "path for installed tooling and caches", advanced=True),
@@ -353,6 +386,18 @@ class RunpodBackend(Backend):
     @classmethod
     def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
         """Discover GPU identifiers from runpodctl; failures retain the configured/default value and free text."""
+        if parameter.name == "data_center_id":
+            choices: list[ConfigChoice] = []
+            try:
+                process = subprocess.run([RUNPODCTL, "datacenter", "list"], capture_output=True, text=True, timeout=20)
+                payload = _first_json(process.stdout) if process.returncode == 0 else None
+                if isinstance(payload, list):
+                    for item in payload:
+                        if isinstance(item, dict) and item.get("id"):
+                            choices.append(ConfigChoice(str(item["id"]), str(item.get("location") or item.get("name") or "") or None))
+            except (OSError, subprocess.SubprocessError, ValueError):
+                pass
+            return ConfigChoices(tuple(choices), allow_free_text=True)
         if parameter.name != "gpu" or str(values.get("compute_type", "cpu")).lower() != "gpu":
             return super().config_choices(parameter, values)
         choices: list[ConfigChoice] = [ConfigChoice("NVIDIA GeForce RTX 4090")]
@@ -436,15 +481,41 @@ class RunpodBackend(Backend):
             RunpodError: On failures other than a 404, so genuine outages are not misreported as a deleted pod.
         """
         try:
-            return parse_pod(self._run_ctl(["pod", "get", pod_id], check=False))
+            return parse_pod(self._run_ctl(["pod", "get", pod_id, "--include-network-volume"], check=False))
         except RunpodError as exc:
             if is_missing_pod_error(str(exc)):
                 return None
             raise
 
-    def _create_pod(self, pod_name: str, gpu: str | None) -> dict[str, Any]:
+    def _create_pod(self, pod_name: str, gpu: str | None, network_volume_id: str | None) -> dict[str, Any]:
         """Create a pod from the target config, always publishing 22/tcp and mounting the persistent volume."""
-        return parse_pod(self._run_ctl(create_pod_args(self.target, pod_name, gpu), timeout=300.0))
+        return parse_pod(self._run_ctl(create_pod_args(self.target, pod_name, gpu, network_volume_id=network_volume_id), timeout=300.0))
+
+    def _ensure_network_volume(self, session_name: str) -> str | None:
+        """Find or create the session-owned network volume selected by the target's persistence policy."""
+        cfg = self.target
+        if not cfg.persistent:
+            return None
+        if cfg.cloud_type != "secure":
+            raise RunpodError("persistent RunPod sessions require Secure Cloud because network volumes are unavailable on Community Cloud; set cloud_type = \"secure\" or explicitly set persistent = false")
+        if not cfg.data_center_id:
+            raise RunpodError(f"target {cfg.name!r} needs data_center_id for persistent storage; rerun `fwd setup --backend runpod --target-name {cfg.name} --data-center-id DATACENTER --force`")
+        volume_name = f"fwd-{_safe_provider_name(session_name)}-data"
+        volumes = parse_network_volume_list(self._run_ctl(["network-volume", "list"]))
+        matches = [volume for volume in volumes if volume.get("name") == volume_name and str(volume.get("dataCenterId") or "") == cfg.data_center_id]
+        if len(matches) > 1:
+            raise RunpodError(f"multiple network volumes named {volume_name!r} exist in {cfg.data_center_id}; remove the duplicate in RunPod before retrying")
+        if matches:
+            return str(matches[0]["id"])
+        created = _first_json(
+            self._run_ctl(
+                ["network-volume", "create", "--name", volume_name, "--size", str(cfg.volume_gb), "--data-center-id", cfg.data_center_id],
+                timeout=300.0,
+            )
+        )
+        if not isinstance(created, dict) or not created.get("id"):
+            raise RunpodError("runpodctl network-volume create returned no volume id")
+        return str(created["id"])
 
     def _wait_for_pod(self, pod_id: str, *, timeout: float = PROVISION_TIMEOUT, probe: bool = True) -> dict[str, Any]:
         """Poll ``pod get`` until the pod reports an ssh address that actually accepts TCP connections.
@@ -518,13 +589,18 @@ class RunpodBackend(Backend):
             existing = find_pod_by_name(self._list_pods(), pod_name)
 
         if existing is None:
-            with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu)})"):
-                pod = self._create_pod(pod_name, gpu)
+            with ui.step(f"Preparing persistent storage for {pod_name}"):
+                network_volume_id = self._ensure_network_volume(session_name)
+            with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu, network_volume_id=network_volume_id)})"):
+                pod = self._create_pod(pod_name, gpu, network_volume_id)
             # Record ownership before the readiness wait: Ctrl-C during that wait must delete this invocation's pod,
             # while a pod discovered by name remains categorically off-limits to interruption cleanup.
             self._created_pod_id = str(pod["id"])
         else:
             pod = existing
+            network_volume_id = pod_network_volume_id(pod)
+            if cfg.persistent and not network_volume_id:
+                notes.append("existing legacy pod has no independent network volume; stop can discard its container disk, so pull or commit current work and recreate the session")
             pod_id = str(pod["id"])
             if pod_status(pod) is TargetStatus.STOPPED:
                 with ui.step(f"Starting stopped pod {pod_name}"):
@@ -542,7 +618,8 @@ class RunpodBackend(Backend):
 
         # Driven by what the pod actually reports rather than by compute_type alone: that catches a CPU pod (always
         # volume-less) and equally a GPU pod whose volume request was rejected for capacity.
-        has_volume = bool(int(pod.get("volumeInGb") or 0))
+        network_volume_id = network_volume_id or pod_network_volume_id(pod)
+        has_volume = bool(network_volume_id or int(pod.get("volumeInGb") or 0))
         remote_dir, tool_prefix, scratch, path_notes = resolve_paths(cfg, project_name, has_volume=has_volume)
         notes += path_notes
 
@@ -550,7 +627,7 @@ class RunpodBackend(Backend):
             endpoint=endpoint,
             remote_dir=remote_dir,
             status=TargetStatus.RUNNING,
-            backend_ids={"pod_id": pod_id, "pod_name": pod_name},
+            backend_ids={"pod_id": pod_id, "pod_name": pod_name, **({"network_volume_id": network_volume_id} if network_volume_id else {})},
             tool_prefix=tool_prefix,
             scratch=scratch,
             ephemeral_home=True,
@@ -607,29 +684,37 @@ class RunpodBackend(Backend):
         except KeyError:
             # State written by a different backend, or a truncated entry — not evidence that the pod is gone.
             return TargetStatus.UNKNOWN
+        if pod is None and session.backend_ids.get("network_volume_id"):
+            return TargetStatus.STOPPED
         return TargetStatus.GONE if pod is None else pod_status(pod)
 
     def stop(self, session: SessionState) -> None:
-        """``runpodctl pod stop`` — halts billing for compute while keeping the volume.
+        """Suspend compute while retaining persistent data.
 
-        Safe to call on an already-stopped or already-deleted pod; both are the caller's desired end state.
+        RunPod cannot stop a pod attached to a network volume, so those pods are terminated and later recreated
+        against the independently surviving volume. Legacy Pod-volume sessions still use ``pod stop``.
         """
         pod_id = session.backend_ids.get("pod_id")
         if pod_id:
-            self._run_ctl(["pod", "stop", pod_id], check=False)
+            action = "delete" if session.backend_ids.get("network_volume_id") else "stop"
+            self._run_ctl(["pod", action, pod_id], check=False)
 
     def remote_stop_command(self, session: SessionState) -> str | None:
         """Stop this pod from inside itself using RunPod's preinstalled CLI and pod-scoped credentials."""
         pod_id = session.backend_ids.get("pod_id")
         if not pod_id:
             return None
-        return f"pod_id=${{RUNPOD_POD_ID:-{shlex.quote(pod_id)}}}; runpodctl pod stop \"$pod_id\" || true"
+        action = "delete" if session.backend_ids.get("network_volume_id") else "stop"
+        return f"pod_id=${{RUNPOD_POD_ID:-{shlex.quote(pod_id)}}}; runpodctl pod {action} \"$pod_id\""
 
     def destroy(self, session: SessionState) -> None:
-        """``runpodctl pod delete`` — deletes the pod and its volume irreversibly."""
+        """Delete the pod and any fwd-owned independent network volume irreversibly."""
         pod_id = session.backend_ids.get("pod_id")
         if pod_id:
             self._run_ctl(["pod", "delete", pod_id], check=False)
+        network_volume_id = session.backend_ids.get("network_volume_id")
+        if network_volume_id:
+            self._run_ctl(["network-volume", "delete", network_volume_id], check=False)
 
     def doctor(self) -> list[CheckResult]:
         """Check ``runpodctl`` presence, supported syntax, API key configuration, and a live ``pod list``."""

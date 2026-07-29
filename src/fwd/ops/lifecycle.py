@@ -11,8 +11,9 @@ session. A single unreachable cluster must not take the whole table down, so eve
 wrapped and degrades to a ``?`` cell. The rule here is that ``fwd ls`` always renders something, whatever else is
 broken — it is the command users reach for precisely when things are broken.
 
-``stop`` keeps the state entry and persistent storage, but RunPod CPU pods have no persistent volume and lose their
-container disk on stop. ``remove`` is not reversible, so it confirms and names exactly what will be destroyed.
+Before either operation changes remote state, the shared worktree guard refuses tracked or untracked Git changes
+unless the caller explicitly forces possible data loss. ``stop`` keeps the state entry and configured persistent
+storage; ``remove`` is not reversible, so it confirms and names exactly what will be destroyed.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import typer
 
-from fwd import command_docs, port_forwarding, remote, remote_tasks, stop_after as stop_after_ops, ui
+from fwd import command_docs, port_forwarding, remote, remote_tasks, stop_after as stop_after_ops, ui, worktree_safety
 from fwd.backends.base import TargetStatus
 from fwd.ops import launch as launch_ops
 from fwd.output import OutputFormat, OutputValue
@@ -130,7 +131,7 @@ def _stop_after_summary(session: SessionState, status: TargetStatus | str, tasks
         marker = stop_after_ops.status(backend.endpoint(session), session)
     except Exception:
         return "-"
-    return f"agent ({marker})" if marker in {"scheduled", "stopping"} else "-"
+    return f"agent ({marker})" if marker in {"scheduled", "stopping", "blocked", "failed"} else "-"
 
 
 def _shown_columns(columns: tuple[str, ...] | None) -> tuple[str, ...]:
@@ -211,7 +212,7 @@ def ls(
         ui.info_with_code(prefix, ui.command("ls --all-projects"), " to show.")
 
 
-def stop(name: str | None = None) -> None:
+def stop(name: str | None = None, *, force: bool = False) -> None:
     """Stop a session: kill the remote tmux session, then suspend the target.
 
     tmux is killed first and best-effort. If the target is already unreachable the kill is pointless but harmless,
@@ -219,21 +220,26 @@ def stop(name: str | None = None) -> None:
 
     Args:
         name: Session name, target label, or backend name; ``None`` uses the session for the current directory.
+        force: Skip the remote Git worktree safety check.
     """
     session = launch_ops.resolve_session(name)
     backend = launch_ops.backend_for(session)
+    status = launch_ops.status_of(backend, session)
     interrupted = False
+    try:
+        endpoint = backend.endpoint(session)
+    except Exception as exc:
+        if status not in {TargetStatus.GONE, TargetStatus.STOPPED} and not force:
+            ui.die(f"could not reach session {session.name!r} to check for uncommitted Git changes ({exc}); refusing to stop it. Retry when SSH works or pass --force.")
+        endpoint = session.ssh_endpoint()
+    if status not in {TargetStatus.GONE, TargetStatus.STOPPED}:
+        worktree_safety.require_clean(endpoint, session, force=force, action=f"stop session {session.name!r}")
     try:
         from fwd.ops import ports as ports_ops
 
         ports_ops.close_session_ports(session)
     except Exception as exc:
         ui.warn(f"could not close local port forwarding ({exc}); continuing to stop the target")
-
-    try:
-        endpoint = backend.endpoint(session)
-    except Exception:
-        endpoint = session.ssh_endpoint()
     try:
         with ui.step(f"Stopping remote session {session.tmux_session!r}"):
             try:
@@ -263,13 +269,13 @@ def stop(name: str | None = None) -> None:
         ui.warn(f"stop canceled by user after the provider was stopped; {remaining} {noun} still running")
         raise KeyboardInterrupt
     target = getattr(backend, "target", None)
-    if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu":
+    if session.backend == "runpod" and getattr(target, "compute_type", None) == "cpu" and not session.backend_ids.get("network_volume_id"):
         ui.ok(f"stopped {session.name!r}; RunPod wiped its CPU container disk, recreate and re-sync with {ui.command(f'attach {session.name}')!r}, delete forever with {ui.command(f'rm {session.name}')!r}")
     else:
         ui.ok(f"stopped {session.name!r}; persistent data is preserved, restart with {ui.command(f'attach {session.name}')!r}")
 
 
-def remove(name: str | None = None, *, force: bool = False) -> None:
+def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = False) -> None:
     """Destroy a session's target and delete its state entry.
 
     Irreversible — RunPod volumes and Slurm scratch directories go with it — so the prompt names the backend and
@@ -280,7 +286,7 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
         force: Skip the confirmation prompt.
     """
     session = launch_ops.resolve_session(name)
-    if not force and not ui.confirm(
+    if not force and not _confirmed and not ui.confirm(
         f"destroy the {session.backend} target for session {session.name!r} and delete its data?", default=False
     ):
         ui.info("aborted")
@@ -289,15 +295,19 @@ def remove(name: str | None = None, *, force: bool = False) -> None:
     backend = launch_ops.backend_for(session)
     status = launch_ops.status_of(backend, session)
     try:
+        endpoint = backend.endpoint(session)
+    except Exception as exc:
+        if status not in {TargetStatus.GONE, TargetStatus.STOPPED} and not force:
+            ui.die(f"could not reach session {session.name!r} to check for uncommitted Git changes ({exc}); refusing to remove it. Retry when SSH works or pass --force.")
+        endpoint = session.ssh_endpoint()
+    if status not in {TargetStatus.GONE, TargetStatus.STOPPED}:
+        worktree_safety.require_clean(endpoint, session, force=force, action=f"remove session {session.name!r}")
+    try:
         from fwd.ops import ports as ports_ops
 
         ports_ops.close_session_ports(session)
     except Exception as exc:
         ui.die(f"could not close local port forwarding ({exc}); target destruction was canceled so the tunnel remains tracked")
-    try:
-        endpoint = backend.endpoint(session)
-    except Exception:
-        endpoint = session.ssh_endpoint()
     try:
         with ui.step(f"Closing remote sessions for {session.name!r}"):
             remote.tmux_kill(endpoint, session.tmux_session)
@@ -347,7 +357,7 @@ def remove_all(*, force: bool = False) -> None:
     try:
         for session in sessions:
             try:
-                remove(session.name, force=True)
+                remove(session.name, force=force, _confirmed=True)
             except typer.Exit:
                 failures += 1
             except Exception as exc:

@@ -30,7 +30,7 @@ Treat the text following the skill name as work to perform remotely, not as lite
 
 For an explicitly requested shell command instead of coding-agent work, use `fwd send --name SESSION -- COMMAND...`. List or resume background tasks with `fwd send --ls --json` and `fwd send TASK_ID`; cancel only that task with `fwd send TASK_ID --stop`.
 
-When the user wants disposable compute to stop after work finishes, arm remote-owned shutdown with `fwd up --stop-after -- COMMAND...` for initial command work or `fwd send --name SESSION --stop-after agent "TASK"` for an agent turn. To stop after work that is already active, run `fwd send --name SESSION stopafter`. Confirm the lifecycle task in `fwd send --ls --json`; disarm it before shutdown begins with `fwd send --name SESSION cancel stopafter`. Never substitute a local delayed `fwd stop`: the local process may disconnect or shut down before it runs.
+When the user wants disposable compute to stop after work finishes, arm remote-owned shutdown with `fwd up --stop-after -- COMMAND...` for initial command work or `fwd send --name SESSION --stop-after agent "TASK"` for an agent turn. To stop after work that is already active, run `fwd send --name SESSION stopafter`. Confirm the lifecycle task in `fwd send --ls --json`; disarm it before shutdown begins with `fwd send --name SESSION cancel stopafter`. Stop-after checks the remote Git worktree at execution time and remains blocked if it is dirty; never add `--force` unless the user explicitly accepts losing those changes. Never substitute a local delayed `fwd stop`: the local process may disconnect or shut down before it runs.
 
 ## Agent safety rules
 
@@ -40,6 +40,7 @@ Run `fwd doctor --json` when diagnosing prerequisites or a failed target.
 - Do not pass `--restart` unless the user authorizes restarting stopped billable compute.
 - Do not pass `--creds` unless the user explicitly authorizes copying the live Claude credential. GitHub setup defaults on for development VMs; use `--no-setup-github` or `[github] auth = false` when the user says credentials must stay local.
 - Do not run `fwd rm --force` unless the user explicitly asks to destroy the remote resource. Never run `fwd rm --all --force` unless the user explicitly asks to destroy every tracked remote resource.
+- Do not bypass a dirty or unreachable worktree refusal with `fwd stop --force`, `fwd send --force stopafter`, or `stopafter --force` unless the user explicitly accepts possible loss of VM-local changes.
 - Run `fwd uninstall --force` only when the user explicitly requests local fwd removal and understands that tracked remote resources are not destroyed; prefer `fwd rm --all` first.
 - Prefer `fwd diff -q` before deciding whether to push or pull. Exit 0 means synchronized, 1 means different, and 2 means an error.
 - Launch and push stop uploads when their streaming size crosses `sync.max_size_gb` (1 GB by default), discard the incomplete remote stage, leave the live project unchanged, and list the largest included files or aggregate folders over 200 MB. If fwd refuses a deliberately large project, use the exact project-scoped `fwd config set` command in its error only after confirming the selected directory is intentional.
@@ -82,7 +83,7 @@ login-shell tmux in the synced project and attaches to it without repeating laun
 
 A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Stream until completion by default; after two seconds Ctrl-C cancels the remote task and Ctrl-B backgrounds only the local viewer. Use `--detach` to background immediately, `fwd send TASK_ID` to reattach, `fwd send --ls --all --json` for task history, `fwd send cancel` for queued work, and `fwd send cancel all` for every active task. GitHub setup defaults on; launch prepares it, while direct pushes and sent agent turns repair older sessions in place without synchronizing over remote-only commits.
 
-`--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Registered remote agents receive instructions for the literal `stopafter` helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
+`--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. Immediately before shutdown it refuses a dirty Git worktree and records `blocked`; `--force-stop-after` on `fwd up`, `--force` on `fwd send`, or `stopafter --force` are explicit data-loss overrides. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Persistent RunPod sessions terminate the disposable Pod and retain their per-session network volume; `fwd rm` deletes both. Registered remote agents receive instructions for the literal helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
 
 ### Synchronization
 
@@ -115,7 +116,6 @@ fwd send --detach -- pytest -q         # start in remote tmux and return immedia
 fwd send --ls --json                   # inspect active command and agent tasks
 fwd send --ls --all --json             # include completed, failed, and canceled task history
 fwd send cancel                        # cancel queued tasks
-fwd send cancel all                    # cancel every active task without stopping the session
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
 fwd send agent --stop "try another approach"  # interrupt the active turn and send a replacement
 fwd diff                               # show local/remote project differences

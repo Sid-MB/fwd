@@ -1,5 +1,10 @@
 # RunPod backend — ground truth notes
 
+> Historical note: the Pod-volume experiments below motivated the original GPU-only persistence path. Fwd now uses a
+> dedicated Secure Cloud network volume per session by default for CPU and GPU compute. The volume survives Pod
+> termination; `fwd stop` terminates only the Pod, relaunch reattaches the volume, and `fwd rm` deletes both resources.
+> `persistent = false` retains the disposable behavior measured below.
+
 Everything below was measured against a live RunPod account on **2026-07-26/27** with `runpodctl 2.6.0-5516265`
 (macOS, `/opt/homebrew/bin/runpodctl`). Raw command outputs are in `tests/fixtures/runpod/`; the JSON files double as
 unit-test fixtures for `tests/test_runpod_parse.py`. All SSH public keys have been redacted; the API key was never

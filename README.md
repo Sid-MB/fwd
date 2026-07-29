@@ -107,7 +107,7 @@ by itself when you want to add or edit a target without launching it yet.
 ```sh
 fwd ls                    # what is running, and what it is costing you
 fwd pull outputs/         # bring results back down
-fwd stop                  # suspend compute; CPU RunPod container-disk data is wiped
+fwd stop                  # suspend compute; refuses if the remote Git worktree is dirty
 fwd rm                    # destroy it
 ```
 
@@ -120,11 +120,12 @@ of opening a prompt. Run `fwd setup --help` for every field, or pass `--interact
 ```sh
 fwd setup --backend ssh --host my-box --target-name work
 fwd setup --backend slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
+fwd setup --backend runpod --data-center-id US-GA-1 --target-name pod
 ```
 
 Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
-`Set advanced options? (Defaults: …)` gate. RunPod's gate includes cloud type, remote paths, and user; GPU targets also
-include volume size, while CPU targets omit it because RunPod CPU pods do not have persistent volumes.
+`Set advanced options? (Defaults: …)` gate. Persistent RunPod setup asks for a datacenter and creates one independent
+network volume per fwd session; `--no-persistent` is the explicit disposable-storage opt-out.
 
 ## Commands
 
@@ -647,43 +648,43 @@ remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 [targets.pod]
 backend = "runpod"
 compute_type = "cpu"                 # cpu (default) | gpu
-cloud_type = "secure"                # secure | community (community is cheaper)
+cloud_type = "secure"                # network volumes require secure
 image = "runpod/base:0.6.2-cpu"
-remote_base = "/workspace"           # GPU: persistent volume; CPU: fwd relocates to ephemeral container disk
-tool_prefix = "/workspace/.fwd-tools" # same relocation rule as remote_base
+persistent = true                     # default; survives Pod termination
+data_center_id = "US-GA-1"           # required when persistent = true
+volume_gb = 50
+remote_base = "/workspace"           # project lives on the network volume
+tool_prefix = "/workspace/.fwd-tools" # agent state and tools persist too
 allow_proxy = true                   # fall back to ssh.runpod.io if no direct IP
 
 # GPU targets may additionally set:
 # compute_type = "gpu"
 # gpu = "NVIDIA GeForce RTX 4090"
 # image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-# volume_gb = 50
 # volume_mount_path = "/workspace"
 ```
 
-Needs `runpodctl` installed and configured (>= 2.6.0). Three things worth knowing, all learned the hard way
+Needs `runpodctl` installed and configured (>= 2.6.0). Four things worth knowing
 (`docs/runpod-notes.md`):
 
-- **The container disk is wiped on stop; only a GPU pod's persistent volume survives.** On a GPU target,
-  `remote_base` and `tool_prefix` therefore belong under `volume_mount_path`. Fwd relocates the selected agent's
-  mutable home (`~/.claude` or `~/.codex`) beneath that tool prefix before installation, preserving logins,
-  conversations, settings, and Codex's managed app-server payload while recreating the conventional home path as a
-  symlink on every full launch.
-- **CPU-only pods silently get no persistent volume.** `--volume-in-gb` is folded into the container disk and
-  `/workspace` never exists. `fwd` detects this, relocates the project to `/root/fwd/...` on the container disk, and
-  warns loudly that everything there is wiped on stop. A restart still reruns the full sync/bootstrap/install/settings
-  pipeline, but no implementation can preserve remote-only credentials or conversations without durable storage.
-  `volume_gb` is irrelevant and omitted from CPU setup. Use a GPU pod if work must survive `fwd stop`.
-- **`cloud_type = "community"` is the cheap option and still works fully.** Community-cloud pods were verified to
-  expose a direct `ip:port` for 22/tcp with no extra flags, so rsync stays available.
+- **Persistent storage is the default for CPU and GPU sessions.** Fwd creates or reuses `fwd-<session>-data`, mounts
+  it at `/workspace`, and keeps the checkout, agent homes, native installs, credentials, conversations, app-server
+  payload, and caches there.
+- **Stopping retains the volume; removing deletes it.** RunPod cannot stop a network-volume Pod, so `fwd stop` and
+  stop-after terminate only the disposable Pod and restart creates another against the same volume. Confirmed
+  `fwd rm` deletes both resources.
+- **Community Cloud is an explicit disposable mode.** Network volumes are Secure Cloud only. Set
+  `cloud_type = "community"` with `persistent = false` when lower cost matters more than restart survival.
+- **Container storage is never trusted for durable state.** Older or opted-out Pods without a volume relocate to
+  `/root/fwd/...` and warn that their files will be wiped.
 
-CPU-only is the default, including for zero-config `fwd up --target runpod` and `fwd setup`. To request a GPU target,
-set `compute_type = "gpu"`, choose a `gpu`, set `volume_gb`, and use an appropriate CUDA image such as
+CPU-only compute is the default. Persistent setup also requires choosing a datacenter because a network volume is a
+location-bound, separately billed resource. To request a GPU target, set `compute_type = "gpu"`, choose a `gpu`, and use an appropriate CUDA image such as
 `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`. The interactive wizard keeps cloud, volume, remote paths,
 and user behind its advanced-options gate.
 
-Pods are reused by name across launches, restarted if stopped, and their IP/port are re-resolved on every attach
-(RunPod churns both across restarts). If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
+Pods are reused by name while running. Persistent sessions recreate the Pod against the retained volume after stop,
+and their IP/port are re-resolved on every attach. If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
 because that transport cannot run rsync — it warns, and pushes get slower. Tar pushes still mirror synchronized
 files: stale files are deleted while excluded remote environments and caches are preserved.
 
@@ -821,6 +822,10 @@ speed; the final line records the transferred amount, average speed, and elapsed
   ```sh
   fwd attach my-session --restart    # required in CI/scripts; prompts interactively without it
   ```
+- **VM-local Git changes block shutdown.** Before stopping or removing a reachable target, fwd checks
+  `git status --porcelain` in the remote project, including untracked files. Server-owned stop-after repeats the
+  check after its dependencies finish. Commit, stash, or `fwd pull` first; `fwd stop --force`, `fwd rm --force`,
+  `fwd send --force stopafter`, and `stopafter --force` are explicit data-loss overrides.
 - **Attach never proxies your terminal.** `fwd` `exec`s into `ssh -t`, replacing itself, so resize, mouse reporting
   and ctrl-C behave exactly as a hand-typed ssh would.
 - **Failed launch preparation is recoverable from inside the target.** If tool or dependency preparation fails after

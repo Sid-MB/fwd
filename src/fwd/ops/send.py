@@ -183,7 +183,7 @@ def _active_tasks(session: SessionState, endpoint: SSHEndpoint, *, include_stop_
     return active if include_stop_after else [task for task in active if task.kind != "stopafter"]
 
 
-def _schedule_stop_after(session: SessionState, endpoint: SSHEndpoint, dependencies: tuple[str, ...], *, prepared_action: str | None = None) -> SendTask:
+def _schedule_stop_after(session: SessionState, endpoint: SSHEndpoint, dependencies: tuple[str, ...], *, prepared_action: str | None = None, force: bool = False) -> SendTask:
     """Queue one stop action after every dependency, rejecting ambiguous duplicate shutdown schedules."""
     existing = [task for task in _active_tasks(session, endpoint) if task.kind == "stopafter"]
     if existing:
@@ -194,7 +194,7 @@ def _schedule_stop_after(session: SessionState, endpoint: SSHEndpoint, dependenc
         id=new_task_id("stopafter"),
         session=session.name,
         kind="stopafter",
-        command=[action, "--foreground"],
+        command=[action, "--foreground", *(["--force"] if force else [])],
         label=f"stop session {session.name}",
         status="queued" if dependencies else "running",
         dependencies=list(dependencies),
@@ -210,7 +210,7 @@ def _schedule_stop_after(session: SessionState, endpoint: SSHEndpoint, dependenc
     return task
 
 
-def _start_task(session: SessionState, endpoint: SSHEndpoint, task: SendTask, *, detach: bool, timeout: float | None, stop_after: bool = False) -> int:
+def _start_task(session: SessionState, endpoint: SSHEndpoint, task: SendTask, *, detach: bool, timeout: float | None, stop_after: bool = False, force_stop_after: bool = False) -> int:
     """Persist and start a task, atomically arm an optional remote stop, then either return or follow it."""
     prepared_action = _prepare_stop_after(session, endpoint) if stop_after else None
     stop_task: SendTask | None = None
@@ -219,7 +219,7 @@ def _start_task(session: SessionState, endpoint: SSHEndpoint, task: SendTask, *,
         if stop_after:
             # Arm the waiter first. It blocks on this task's future exit marker, so a local disconnect immediately
             # after the command starts cannot strand compute without its promised remote shutdown.
-            stop_task = _schedule_stop_after(session, endpoint, (task.id,), prepared_action=prepared_action)
+            stop_task = _schedule_stop_after(session, endpoint, (task.id,), prepared_action=prepared_action, force=force_stop_after)
         remote_tasks.start(endpoint, session.name, session.remote_dir, task)
     except Exception:
         if stop_task is not None:
@@ -316,6 +316,7 @@ def _run_command_task(
     detach: bool,
     timeout: float | None,
     stop_after: bool = False,
+    force_stop_after: bool = False,
     setup_github: bool | None = None,
 ) -> int:
     """Create and run one literal command task against an already-resolved live session."""
@@ -329,7 +330,7 @@ def _run_command_task(
         label=shlex.join(arguments),
     )
     try:
-        return _start_task(session, endpoint, task, detach=detach, timeout=timeout, stop_after=stop_after)
+        return _start_task(session, endpoint, task, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after)
     except SSHError as exc:
         ui.die(str(exc))
     except Exception as exc:
@@ -377,13 +378,14 @@ def run_command(
     detach: bool = False,
     timeout: float | None = None,
     stop_after: bool = False,
+    force_stop_after: bool = False,
     setup_github: bool | None = None,
 ) -> int:
     """Run literal argv through the durable task streamer without reinterpreting its first token as a task ID."""
     if not arguments:
         ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}")
     session, endpoint = _running_endpoint(name)
-    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after, setup_github=setup_github)
+    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after, setup_github=setup_github)
 
 
 def dispatch(
@@ -395,6 +397,7 @@ def dispatch(
     stop: bool = False,
     immediate: bool = False,
     stop_after: bool = False,
+    force_stop_after: bool = False,
     list_only: bool = False,
     include_all: bool = False,
     literal_command: bool = False,
@@ -403,6 +406,8 @@ def dispatch(
     """Interpret the unified send grammar and return the desired CLI exit status."""
     if stop_after and (stop or immediate):
         ui.die("--stop-after cannot be combined with --stop or --immediate")
+    if force_stop_after and not stop_after and arguments[:1] != ("stopafter",):
+        ui.die("--force is only valid with --stop-after or the 'stopafter' action")
     if list_only:
         if arguments or stop or immediate or detach or stop_after:
             ui.die("--ls cannot be combined with a task, command, --stop, --stop-after, --immediate, or --detach")
@@ -417,7 +422,7 @@ def dispatch(
         if not arguments:
             ui.die(f"no remote command specified after '--'; use {ui.command('send -- COMMAND [ARG ...]')!r}")
         session, endpoint = _running_endpoint(name)
-        return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after)
+        return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after)
 
     task_store = store()
     subject = arguments[0] if arguments else None
@@ -436,7 +441,7 @@ def dispatch(
         if len(arguments) != 1 or stop or immediate or stop_after:
             ui.die(f"use {ui.command('send stopafter')!r} by itself to queue shutdown after all active work")
         dependencies = tuple(task.id for task in _active_tasks(session, endpoint, include_stop_after=False))
-        _schedule_stop_after(session, endpoint, dependencies)
+        _schedule_stop_after(session, endpoint, dependencies, force=force_stop_after)
         return 0
 
     if exact is not None:
@@ -465,12 +470,12 @@ def dispatch(
                 command=list(agent.send_command(message, session.flags, tmux_session=session.tmux_session, remote_dir=session.remote_dir)),
                 label=message,
             )
-            return _start_task(session, endpoint, replacement, detach=detach, timeout=timeout, stop_after=stop_after)
+            return _start_task(session, endpoint, replacement, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after)
         if remainder:
             ui.die(f"task {exact.id} is an existing task; omit extra arguments to attach")
         if stop_after:
             dependencies = (exact.id,) if exact.active else ()
-            _schedule_stop_after(session, endpoint, dependencies)
+            _schedule_stop_after(session, endpoint, dependencies, force=force_stop_after)
         return follow(_refresh(exact, endpoint), endpoint, timeout=timeout)
 
     if subject in {"agent", *agents.AGENTS.keys()}:
@@ -497,7 +502,7 @@ def dispatch(
                 detail = "none are active" if not active else f"choose one: {', '.join(task.id for task in active)}"
                 ui.die(f"cannot attach by {agent.name} selector: {detail}")
             if stop_after:
-                _schedule_stop_after(session, endpoint, (active[0].id,))
+                _schedule_stop_after(session, endpoint, (active[0].id,), force=force_stop_after)
             return follow(active[0], endpoint, timeout=timeout)
         try:
             _prepare_github_auth(session, endpoint)
@@ -516,7 +521,7 @@ def dispatch(
             status="queued" if dependency else "running",
             depends_on=dependency,
         )
-        return _start_task(session, endpoint, task, detach=detach, timeout=timeout, stop_after=stop_after)
+        return _start_task(session, endpoint, task, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after)
 
     if stop or immediate:
         if subject is None:
@@ -528,4 +533,4 @@ def dispatch(
         ui.die(f"no send task named {subject!r}; run {ui.command('send --ls')!r} to see active task ids")
     if not arguments:
         ui.die(f"no remote command specified; use {ui.command('send -- COMMAND [ARG ...]')!r}, {ui.command('send agent MESSAGE')!r}, or {ui.command('send --ls')!r}")
-    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after)
+    return _run_command_task(session, endpoint, arguments, detach=detach, timeout=timeout, stop_after=stop_after, force_stop_after=force_stop_after)

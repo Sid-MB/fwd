@@ -198,6 +198,12 @@ class Backend(ABC):
         (starting it if stopped) instead of creating a duplicate. Blocks until the machine is at least ssh-reachable
         or returns ``PENDING`` for the caller to poll.
 
+        The returned ``remote_dir`` and ``tool_prefix`` must use storage that survives this backend's normal
+        :meth:`stop` operation by default. A backend whose provider cannot offer durable storage must require an
+        explicit disposable-storage opt-out and surface that limitation loudly; it must never silently place work on
+        a resettable root or container disk. Shared lifecycle code independently refuses stop/remove while the remote
+        Git worktree is dirty, but that is a last line of defense rather than a substitute for persistent storage.
+
         Args:
             session_name: fwd session name; used to derive provider resource names (``fwd-<name>``) and tmux session.
             project_name: Local project directory basename, used to build ``remote_dir`` under ``remote_base``.

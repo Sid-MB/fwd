@@ -11,6 +11,7 @@ import re
 import shlex
 from pathlib import PurePosixPath
 
+from fwd import worktree_safety
 from fwd.backends.base import Backend
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState
@@ -19,7 +20,7 @@ STOP_DELAY_SECONDS = 3
 GUIDANCE_BEGIN = "<!-- fwd stopafter guidance begin -->"
 GUIDANCE_END = "<!-- fwd stopafter guidance end -->"
 GUIDANCE = f"""{GUIDANCE_BEGIN}
-When working inside an fwd-managed remote session, the `stopafter` command is available. Run `stopafter` only as your final action after requested work and durable output are complete; it schedules this fwd session and its remote compute to stop without depending on the user's local computer. Run `stopafter --cancel` before shutdown begins to cancel it.
+When working inside an fwd-managed remote session, the `stopafter` command is available. Run `stopafter` only as your final action after requested work and durable output are complete; it schedules this fwd session and its remote compute to stop without depending on the user's local computer. It refuses to stop while the project Git worktree has uncommitted changes. Run `stopafter --cancel` before shutdown begins to cancel it, or `stopafter --force` only when losing VM-local changes is explicitly acceptable.
 {GUIDANCE_END}
 """
 
@@ -64,8 +65,13 @@ def _render_action(session: SessionState, provider_stop: str) -> str:
     primary = shlex.quote(session.tmux_session)
     manager = shlex.quote(f"fwd-tasks-{_safe_session_name(session.name)}")
     state_dir = _state_dir(session)
+    git_guard = worktree_safety.shell_guard(session.remote_dir)
     return f"""#!/usr/bin/env bash
 set -u
+force_stop=0
+for arg in "$@"; do
+    if [ "$arg" = "--force" ]; then force_stop=1; fi
+done
 state_dir="{state_dir}"
 state_file="$state_dir/state"
 pid_file="$state_dir/pid"
@@ -102,13 +108,31 @@ case "${{1:-}}" in
         trap 'printf "canceled\\n" > "$state_file"; rm -f "$pid_file"; exit 130' INT TERM HUP
         printf "scheduled\\n" > "$state_file"
         sleep {STOP_DELAY_SECONDS}
+        (
+{git_guard}
+        )
+        git_guard_rc=$?
+        if [ "$git_guard_rc" -ne 0 ]; then
+            printf "blocked\\n" > "$state_file"
+            rm -f "$pid_file"
+            exit "$git_guard_rc"
+        fi
         printf "stopping\\n" > "$state_file"
+        (
+            {provider_stop}
+        )
+        provider_rc=$?
+        if [ "$provider_rc" -ne 0 ]; then
+            printf "failed\\n" > "$state_file"
+            rm -f "$pid_file"
+            printf "stop-after failed while stopping the provider target (exit %s)\\n" "$provider_rc" >&2
+            exit "$provider_rc"
+        fi
         if [ -n "${{FWD_TASK_DIR:-}}" ]; then
             printf "0\\n" > "$FWD_TASK_DIR/exit"
             printf "done\\n" > "$FWD_TASK_DIR/state"
         fi
         tmux kill-session -t {primary} 2>/dev/null || true
-        {provider_stop}
         printf "stopped\\n" > "$state_file"
         rm -f "$pid_file"
         tmux kill-session -t {manager} 2>/dev/null || true
@@ -122,7 +146,9 @@ case "${{1:-}}" in
                 exit 0
             fi
         fi
-        nohup "$0" --foreground >> "$state_dir/stop-after.log" 2>&1 < /dev/null &
+        foreground_args=(--foreground)
+        if [ "$force_stop" -eq 1 ]; then foreground_args+=(--force); fi
+        nohup "$0" "${{foreground_args[@]}}" >> "$state_dir/stop-after.log" 2>&1 < /dev/null &
         printf "%s\\n" "$!" > "$pid_file"
         printf "stop-after scheduled for {session.name}\\n"
         ;;
@@ -185,7 +211,7 @@ def status(endpoint: SSHEndpoint, session: SessionState) -> str:
     """Return the remote action marker without raising when an older session has no helper."""
     result = endpoint.run(f"{shlex.quote(action_path(session))} --status", check=False)
     value = (result.stdout or "").strip()
-    return value if value in {"idle", "scheduled", "stopping", "stopped", "canceled"} else "idle"
+    return value if value in {"idle", "scheduled", "stopping", "stopped", "canceled", "blocked", "failed"} else "idle"
 
 
 def with_agent_environment(command: str, action: str) -> str:

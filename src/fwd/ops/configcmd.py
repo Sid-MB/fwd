@@ -71,11 +71,13 @@ FIELD_DOCS: dict[str, str] = {
     "proxy_jump": "external ssh -J host used to reach a non-public target, as user@host",
     "remote_base": "parent dir for checkouts; the project name is appended to form remote_dir",
     "extra_opts": "extra raw ssh options, e.g. [\"-o\", \"ServerAliveInterval=30\"]",
-    "compute_type": f"one of: {' | '.join(sorted(RUNPOD_COMPUTE_TYPES))} — cpu pods get NO persistent volume",
-    "cloud_type": f"one of: {' | '.join(sorted(RUNPOD_CLOUD_TYPES))} — community is cheaper and works fully",
+    "compute_type": f"one of: {' | '.join(sorted(RUNPOD_COMPUTE_TYPES))}",
+    "cloud_type": f"one of: {' | '.join(sorted(RUNPOD_CLOUD_TYPES))} — network volumes require secure",
     "gpu": f"RunPod GPU id; override per launch with {ui.command('up --gpu')!r}",
     "image": "container image the pod boots",
-    "volume_gb": "persistent volume size in GB (gpu pods only)",
+    "persistent": "create a per-session network volume that survives Pod termination",
+    "data_center_id": "RunPod datacenter for the network volume and its Pods",
+    "volume_gb": "persistent network-volume size in GB",
     "volume_mount_path": "where the persistent volume is mounted",
     "tool_prefix": f"where {ui.command()} installs uv/node/bun; must be on persistent storage or every restart re-downloads",
     "allow_proxy": "permit the ssh.runpod.io fallback when no direct IP exists (that proxy cannot run rsync)",
@@ -87,7 +89,7 @@ FIELD_DOCS: dict[str, str] = {
 
 # Field docs that differ by backend, because the same field name carries a different warning per provider.
 TARGET_FIELD_DOCS: dict[str, dict[str, str]] = {
-    "runpod": {"remote_base": "parent dir for checkouts; MUST be under volume_mount_path or it is wiped on stop"},
+    "runpod": {"remote_base": "parent dir for checkouts; keep under volume_mount_path for persistence"},
     "slurm": {
         "remote_base": "parent dir for checkouts; MUST be scratch, never $HOME (inode quotas) (required)",
         "tool_prefix": "scratch-backed tooling root; keeps inode-heavy venvs out of $HOME",

@@ -250,6 +250,7 @@ def _run_up(
     creds: bool = False,
     setup_github: bool | None = None,
     stop_after: bool = False,
+    force_stop_after: bool = False,
     ports: tuple[str, ...] | None = None,
     create_argv: tuple[str, ...] | None = None,
 ) -> int | None:
@@ -282,6 +283,7 @@ def _run_up(
     managed_command = selector.command is not None and not attach
     desired_ports = ports if ports is not None else tuple(config.forwarding.ports)
     github_override = {} if setup_github is None else {"setup_github": setup_github}
+    stop_force_override = {"force_stop_after": True} if force_stop_after else {}
 
     if chosen_match is not None and managed_command and not new:
         from fwd.ops import send as send_ops
@@ -290,7 +292,7 @@ def _run_up(
         ports_ops.preflight_launch_ports(chosen_match, desired_ports)
         ports_ops.ensure_session_ports(chosen_match, desired_ports)
         ui.info(f"selectors matched session {chosen_match.name!r}; running the command as a managed task")
-        return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after, **github_override)
+        return send_ops.run_command(selector.command or (), name=chosen_match.name, stop_after=stop_after, **stop_force_override, **github_override)
 
     if reuse and chosen_match is not None:
         chosen = chosen_match
@@ -316,6 +318,8 @@ def _run_up(
     initial_command = selector.initial_command
     if stop_after and selector.command is None:
         ui.die(f"--stop-after requires an explicit command, for example {ui.command('up --stop-after -- pytest -q')!r}; a general shell or interactive agent has no completion point")
+    if force_stop_after and not stop_after:
+        ui.die("--force-stop-after requires --stop-after")
     if managed_command:
         effective_attach = False
     elif reuse:
@@ -352,7 +356,7 @@ def _run_up(
     if stream_command:
         from fwd.ops import send as send_ops
 
-        return send_ops.run_command(initial_command or (), name=state.name, stop_after=stop_after, **github_override)
+        return send_ops.run_command(initial_command or (), name=state.name, stop_after=stop_after, **stop_force_override, **github_override)
     return None
 
 
@@ -374,6 +378,7 @@ def _up(
     creds: Annotated[bool, typer.Option("--creds", help="DANGER: write your live Claude OAuth token to the remote disk; prefer logging in inside the remote session.", rich_help_panel=PANEL_CLAUDE)] = False,
     setup_github: Annotated[bool | None, typer.Option("--setup-github/--no-setup-github", help="Set up GitHub authentication for this launch; defaults to github.auth (enabled by default).", rich_help_panel=PANEL_TARGET)] = None,
     stop_after: Annotated[bool, typer.Option("--stop-after", help="After an explicit streamed command finishes, stop the remote session from the server even if this computer disconnects.", rich_help_panel=PANEL_TARGET)] = False,
+    force_stop_after: Annotated[bool, typer.Option("--force-stop-after", help="With --stop-after, permit shutdown even if the remote Git worktree is dirty.", rich_help_panel=PANEL_TARGET)] = False,
     ports: Annotated[list[str] | None, typer.Option("--ports", "-p", help="Open PORT or LOCAL:REMOTE after launch; repeat to replace project-configured defaults for this invocation.", rich_help_panel=PANEL_TARGET)] = None,
 ) -> None:
     """Provision/reuse a target, sync and bootstrap it, then start the selected/default command.
@@ -404,6 +409,7 @@ def _up(
         creds=creds,
         setup_github=setup_github,
         stop_after=stop_after,
+        force_stop_after=force_stop_after,
         ports=tuple(ports) if ports else None,
         create_argv=_argv_without_reuse(ctx),
     )
@@ -489,6 +495,7 @@ def _send(
     stop: Annotated[bool, typer.Option("--stop", help="Cancel the selected task; with an agent message, cancel the active turn and send the replacement.")] = False,
     immediate: Annotated[bool, typer.Option("--immediate", help="Agent shorthand for --stop MESSAGE: cancel the active turn and immediately send this message.")] = False,
     stop_after: Annotated[bool, typer.Option("--stop-after", help="Queue a remote-owned stop action after the new command or agent turn finishes.")] = False,
+    force_stop_after: Annotated[bool, typer.Option("--force", help="With --stop-after or 'stopafter', permit shutdown even if the remote Git worktree is dirty.")] = False,
     list_only: Annotated[bool, typer.Option("--ls", help="List send tasks instead of starting one.")] = False,
     include_all: Annotated[bool, typer.Option("--all", help="With --ls, include completed, failed, and canceled tasks.")] = False,
     output_format: Annotated[OutputFormat, typer.Option("--format", help="With --ls, choose Rich, Markdown, or JSON output.", autocompletion=complete_output_format)] = OutputFormat.auto,
@@ -517,6 +524,7 @@ def _send(
         stop=stop,
         immediate=immediate,
         stop_after=stop_after,
+        force_stop_after=force_stop_after,
         list_only=list_only,
         include_all=include_all,
         literal_command=literal_command,
@@ -665,24 +673,25 @@ def diff_cmd(
     raise typer.Exit(code)
 
 
-@app.command("stop", help=f"{command_docs.STOP.summary}\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.")
+@app.command("stop", help=f"{command_docs.STOP.summary}\n\nRestart with {ui.command('attach --restart')!r} or another {ui.command('up')!r}. Persistent RunPod sessions retain their independent volume while terminating disposable compute.")
 def stop_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Stop even if the remote Git worktree is dirty or cannot be inspected.")] = False,
 ) -> None:
     """Kill remote tmux and ask the backend to suspend billable compute; storage preservation depends on the target.
 
-    Restart with 'fwd attach --restart' or another 'fwd up'. SSH/Slurm project storage remains; on RunPod only an attached persistent volume survives, and CPU pod work is wiped.
+    Restart with 'fwd attach --restart' or another 'fwd up'. Persistent RunPod sessions retain their independent volume while terminating disposable compute.
     """
     from fwd.ops import lifecycle
 
-    lifecycle.stop(name)
+    lifecycle.stop(name, force=force)
 
 
 @app.command("rm", help=f"{command_docs.REMOVE.summary} Irreversible — remote data is gone.\n\nThe confirmation defaults to no, so a scripted {ui.command('rm')!r} without --force safely does nothing.")
 def rm_cmd(
     name: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
     all_sessions: Annotated[bool, typer.Option("--all", help="Destroy every tracked session and its remote data. Cannot be combined with a session name.")] = False,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Skip the confirmation prompt; required non-interactively, where the prompt defaults to no.")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation and remote Git safety checks; required non-interactively.")] = False,
 ) -> None:
     """Destroy one or all session targets and forget their state. Irreversible — remote data is gone.
 
@@ -845,6 +854,8 @@ def setup_cmd(
     cloud_type: Annotated[str | None, typer.Option("--cloud-type", help="RunPod cloud pool: secure (default) or community.", autocompletion=complete_cloud_type)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Default RunPod GPU id; used only with --compute-type gpu.", autocompletion=complete_gpu)] = None,
     image: Annotated[str | None, typer.Option("--image", help="Default RunPod container image.", autocompletion=complete_runpod_image)] = None,
+    persistent: Annotated[bool | None, typer.Option("--persistent/--no-persistent", help="Use a network volume that survives Pod termination (default: enabled).")] = None,
+    data_center_id: Annotated[str | None, typer.Option("--data-center-id", help="RunPod datacenter for the persistent network volume.")] = None,
     volume_gb: Annotated[int | None, typer.Option("--volume-gb", help="RunPod persistent volume size in GB.")] = None,
     volume_mount_path: Annotated[str | None, typer.Option("--volume-mount-path", help="RunPod persistent volume mount path.")] = None,
     allow_proxy: Annotated[bool | None, typer.Option("--allow-proxy/--no-allow-proxy", help="Allow the RunPod SSH proxy fallback.")] = None,
@@ -882,6 +893,8 @@ def setup_cmd(
             "cloud_type": cloud_type,
             "gpu": gpu,
             "image": image,
+            "persistent": persistent,
+            "data_center_id": data_center_id,
             "volume_gb": volume_gb,
             "volume_mount_path": volume_mount_path,
             "allow_proxy": allow_proxy,

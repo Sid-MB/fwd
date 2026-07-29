@@ -117,14 +117,15 @@ class RunpodTargetConfig:
     """A RunPod pod, created on demand and reused across launches by name.
 
     Attributes:
-        compute_type: ``"gpu"`` or ``"cpu"``. CPU pods are far cheaper but, as the RunPod spike established, they
-            silently get **no persistent volume** — ``--volume-in-gb`` is folded into the container disk and
-            everything is wiped on stop. The backend detects this from the created pod and relocates ``remote_dir``
-            off the volume with a warning, so a CPU target still works; it just cannot persist across a stop.
+        compute_type: ``"gpu"`` or ``"cpu"``. CPU pods are far cheaper and use an independently managed network
+            volume by default because their Pod volume is not reliable across lifecycle operations.
         cloud_type: ``"secure"`` or ``"community"``. Community cloud is cheaper and was verified to expose a direct
-            ``ip:port`` for 22/tcp (no ``--public-ip`` needed), so rsync still works.
-        volume_mount_path: The *persistent* volume. Container disk is wiped on pod stop, so both ``remote_base`` and
-            ``tool_prefix`` must live under this path or every restart re-downloads all tooling.
+            ``ip:port`` for 22/tcp (no ``--public-ip`` needed), but RunPod network volumes require Secure Cloud.
+        persistent: Create or reuse a per-session network volume. This defaults on; setting it false is the explicit
+            opt-out for disposable or Community Cloud targets.
+        data_center_id: RunPod datacenter in which fwd creates the per-session network volume and schedules its pod.
+        volume_mount_path: Mount path for the persistent volume. Container disk is wiped on restart, so both
+            ``remote_base`` and ``tool_prefix`` must live under this path.
         allow_proxy: Permit falling back to ``ssh.runpod.io`` when no direct IP for 22/tcp is available. That proxy
             cannot run rsync, so the endpoint is marked ``supports_rsync=False`` and sync degrades to tar-over-ssh.
     """
@@ -135,6 +136,8 @@ class RunpodTargetConfig:
     cloud_type: str = "secure"
     gpu: str = "NVIDIA GeForce RTX 4090"
     image: str = ""
+    persistent: bool = True
+    data_center_id: str | None = None
     volume_gb: int = 50
     volume_mount_path: str = "/workspace"
     remote_base: str = "/workspace"

@@ -190,7 +190,14 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     normalized = backend.strip().lower()
     if normalized not in TARGET_TYPES:
         ui.die(f"unknown backend {normalized!r}; expected one of: {', '.join(sorted(TARGET_TYPES))}")
-    required = [parameter for parameter in _parameters(normalized) if parameter.required]
+    cls = TARGET_TYPES[normalized]
+    defaults = {field.name: getattr(cls(name=normalized), field.name) for field in dataclass_fields(cls)}
+    known_values = {**defaults, **{key: value for key, value in values.items() if value is not None}}
+    required = [
+        parameter
+        for parameter in _parameters(normalized)
+        if parameter.required and (not parameter.prompt_when or all(str(known_values.get(dependency, "")).lower() == expected.lower() for dependency, expected in parameter.prompt_when))
+    ]
     missing = [parameter for parameter in required if values.get(parameter.name) in (None, "", [])]
     if missing:
         flags = " ".join(f"{parameter.flag} VALUE" for parameter in missing)
