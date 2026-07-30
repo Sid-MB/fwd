@@ -160,17 +160,24 @@ def _verify_tmux_alive(endpoint: SSHEndpoint, session: str, command: str) -> Non
     )
 
 
-def tmux_attach_command(session: str) -> str:
+def tmux_attach_command(session: str, *, control_mode: bool = False) -> str:
     """Build the remote tmux attach command without post-session output.
 
     Follow-up guidance belongs to the local wrapper in :func:`tmux_attach_argv`: OpenSSH prints its
     ``Shared connection ... closed`` message locally after this remote command exits, so a remote-side reminder would
     necessarily appear above that line rather than below it.
     """
-    return f"{_source_env()}tmux attach -t {_tmux_exact_target(session)}"
+    mode = " -CC" if control_mode else ""
+    return f"{_source_env()}tmux{mode} attach -t {_tmux_exact_target(session)}"
 
 
-def tmux_attach_argv(endpoint: SSHEndpoint, session: str, fwd_session: str | None = None) -> list[str]:
+def tmux_attach_argv(
+    endpoint: SSHEndpoint,
+    session: str,
+    fwd_session: str | None = None,
+    *,
+    control_mode: bool = False,
+) -> list[str]:
     """Return the local argv that attaches and, when possible, prints useful commands after SSH exits.
 
     Without an fwd session name this is the direct ``ssh -t`` argv used by low-level callers. Production attaches
@@ -178,7 +185,7 @@ def tmux_attach_argv(endpoint: SSHEndpoint, session: str, fwd_session: str | Non
     reattach/stop/list examples beneath it, and then preserves SSH's exit status. The shell and SSH share the terminal
     process group; terminal resize, mouse reporting, and Ctrl-C continue to go directly to the foreground SSH client.
     """
-    ssh_argv = [*endpoint.ssh_argv(tty=True), tmux_attach_command(session)]
+    ssh_argv = [*endpoint.ssh_argv(tty=True), tmux_attach_command(session, control_mode=control_mode)]
     if not fwd_session:
         return ssh_argv
     examples = ui.code_examples(command_docs.post_attach_examples(fwd_session), heading=command_docs.NEXT_STEPS_HEADING)

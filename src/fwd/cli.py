@@ -440,6 +440,7 @@ def _attach(
     name: Annotated[str | None, typer.Option("--name", "-n", help="Require this exact session name.", autocompletion=complete_session)] = None,
     restart: Annotated[bool, typer.Option("--restart", "-y", help="Authorize restarting stopped (billable) compute without prompting; required when stdin is not a terminal.")] = False,
     raw: Annotated[bool, typer.Option("--raw", help="If the primary tmux session is missing, start a plain recovery shell without rerunning launch preparation.")] = False,
+    control_mode: Annotated[bool, typer.Option("-CC", "--control-mode", help="Attach tmux with -CC control mode for native iTerm2 windows and tabs.")] = False,
     setup_github: Annotated[bool | None, typer.Option("--setup-github/--no-setup-github", help="Set up GitHub authentication before attaching; defaults to github.auth (enabled by default).")] = None,
 ) -> None:
     """Attach to the unambiguous session matching every supplied selector.
@@ -468,16 +469,16 @@ def _attach(
     ui.info(f"selectors matched session {chosen.name!r}; attaching")
     github_override = {} if setup_github is None else {"setup_github": setup_github}
     if raw:
-        attach_ops.attach(chosen.name, restart=restart, raw=True, **github_override)
+        attach_ops.attach(chosen.name, restart=restart, raw=True, control_mode=control_mode, **github_override)
     else:
-        attach_ops.attach(chosen.name, restart=restart, **github_override)
+        attach_ops.attach(chosen.name, restart=restart, control_mode=control_mode, **github_override)
 
 
 ATTACH_HELP = f"""{command_docs.ATTACH.summary}
 
 Replaces this process with 'ssh -t', so the remote session owns the terminal outright. Detach with tmux's ctrl-b d;
 the session keeps running. If launch preparation failed before tmux started, pass --raw to enter a plain recovery
-shell without rerunning tool or dependency installation.
+shell without rerunning tool or dependency installation. Pass -CC to use tmux control mode with iTerm2.
 """
 
 # Registered from one callback so the tmux-style `a` alias and `attach` always accept identical arguments.

@@ -194,7 +194,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd TARGET/BACKEND/AGENT [COMMAND...]` | Connect by positional selector, or run a managed command on that session | `fwd runpod yes` |
 | `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
 | `fwd up -r [selectors...]` | Reuse a match; attach without a command, or run a supplied command as a managed task | `fwd up -r work yes` |
-| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector; add `--raw` to recover from failed launch preparation | `fwd a work codex` |
+| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector; `-CC` enables native iTerm2 control mode and `--raw` recovers failed launch preparation | `fwd a -CC work codex` |
 | `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
 | `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
 | `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
@@ -834,7 +834,8 @@ speed; the final line records the transferred amount, average speed, and elapsed
   check after its dependencies finish. Commit, stash, or `fwd pull` first; `fwd stop --force`, `fwd rm --force`,
   `fwd send --force stopafter`, and `stopafter --force` are explicit data-loss overrides.
 - **Attach never proxies your terminal.** `fwd` `exec`s into `ssh -t`, replacing itself, so resize, mouse reporting
-  and ctrl-C behave exactly as a hand-typed ssh would.
+  and ctrl-C behave exactly as a hand-typed ssh would. In iTerm2, `fwd a -CC` passes tmux's double control-mode flag
+  through the same native path so remote tmux windows appear as native iTerm2 windows and tabs.
 - **Failed launch preparation is recoverable from inside the target.** If tool or dependency preparation fails after
   provisioning and sync but before the primary tmux session starts, run `fwd attach --raw` (or `fwd a --raw`). On a
   running target this creates a plain login-shell tmux in the synced project without rerunning sync, tool resolution,

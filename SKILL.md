@@ -74,7 +74,7 @@ Use `fwd ls --json` to discover session names and live state. Existing-session c
 
 Every session has one primary persistent process started by `fwd up`. It may be a shell, the layered `default_command`, or a registered agent. An explicit arbitrary command—including a root shortcut such as `fwd runpod pytest -q`—selects or provisions the session, then uses the same durable task manager as `fwd send -- COMMAND`; it therefore appears in `fwd send --ls`. The primary pane remains a shell unless `--attach` explicitly runs the command there and enters tmux. `claude` and `codex` are registered agents with agent-specific configuration and conversation-transfer behavior; use `--agent NAME` when a positional target or command could be ambiguous.
 
-Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running.
+Attaching connects the human terminal to this primary tmux session. Detaching leaves the process and remote compute running. A human using iTerm2 can run `fwd a -CC` to attach through tmux double control mode with native windows and tabs.
 Launch installs `~/.config/fwd/tmux.conf` on the remote from the first existing local `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; if neither exists, fwd installs a portable fallback with clickable window tabs, mouse pane selection, five-line wheel scrolling through copy mode, and deep history. The isolated path preserves the remote user's ordinary tmux config and is reloaded on repair launches.
 When preparation failed before the primary tmux session was created, `fwd attach SESSION --raw` creates a plain
 login-shell tmux in the synced project and attaches to it without repeating launch preparation.

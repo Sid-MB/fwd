@@ -41,7 +41,13 @@ from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState, endpoint_to_dict
 
 
-def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = None, setup_github: bool | None = None) -> NoReturn:
+def _relaunch(
+    session: SessionState,
+    *,
+    forward_ports: tuple[str, ...] | None = None,
+    setup_github: bool | None = None,
+    control_mode: bool = False,
+) -> NoReturn:
     """Re-run the full launch pipeline for an existing session, reusing its recorded launch flags.
 
     Never returns: ``launch`` execs into attach on success.
@@ -57,6 +63,7 @@ def _relaunch(session: SessionState, *, forward_ports: tuple[str, ...] | None = 
         creds=bool(flags.get("creds")),
         setup_github=setup_github,
         attach=True,
+        control_mode=control_mode,
         forward_ports=forward_ports,
     )
     raise typer.Exit(0)
@@ -160,6 +167,7 @@ def attach(
     raw: bool = False,
     forward_ports: tuple[str, ...] | None = None,
     setup_github: bool | None = None,
+    control_mode: bool = False,
 ) -> NoReturn:
     """Attach to an existing session's remote tmux, reconciling live status first.
 
@@ -170,6 +178,7 @@ def attach(
         raw: When the target is running but its primary tmux session is missing, create a plain recovery shell without rerunning sync, tool installation, dependency installation, project setup, or agent startup.
         forward_ports: Optional mappings requested by the ``fwd up --reuse`` compatibility path; direct attach leaves forwarding unchanged.
         setup_github: Per-attach GitHub setup override; ``None`` uses the current project configuration.
+        control_mode: Pass tmux ``-CC`` for native iTerm2 control-mode integration.
 
     Never returns: either execs into ssh, relaunches, or exits with a message.
     """
@@ -200,7 +209,7 @@ def attach(
         # A stopped pod has a wiped container disk, so only the full launch pipeline can repair it.
         ui.warn(f"session {session.name!r}: target is stopped")
         _confirm_restart(f"restart session {session.name!r}?", restart=restart, action="restart billable compute")
-        _relaunch(session, forward_ports=forward_ports, setup_github=setup_github)
+        _relaunch(session, forward_ports=forward_ports, setup_github=setup_github, control_mode=control_mode)
 
     # Re-resolve rather than trusting the cached address: RunPod reassigns IP and port on every restart.
     try:
@@ -234,7 +243,7 @@ def attach(
         else:
             # Cheaper than the other two paths (the target is already up), but it still reruns the whole launch pipeline, so it goes through the same gate rather than inventing a second policy.
             _confirm_restart("restart the remote session on this target?", restart=restart, action="rerun the launch")
-            _relaunch(session, forward_ports=forward_ports, setup_github=setup_github)
+            _relaunch(session, forward_ports=forward_ports, setup_github=setup_github, control_mode=control_mode)
 
     local_cwd = Path(session.local_cwd).expanduser().resolve()
     try:
@@ -267,7 +276,7 @@ def attach(
 
     session.touch_attached()
     launch_ops.store().upsert(session)
-    launch_ops.exec_attach(endpoint, session.tmux_session, session.name)
+    launch_ops.exec_attach(endpoint, session.tmux_session, session.name, control_mode=control_mode)
 
 
 def smart_default(*, restart: bool = False) -> NoReturn:

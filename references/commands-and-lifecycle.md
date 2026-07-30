@@ -198,6 +198,7 @@ Bare `fwd`, root-selector forms, `fwd up --reuse`, `fwd attach`, and `fwd a` con
 ```sh
 fwd attach SESSION
 fwd attach --target work --agent codex
+fwd a -CC SESSION                 # tmux double control mode for native iTerm2 windows and tabs
 ```
 
 Detach with tmux `ctrl-b d`.

@@ -252,7 +252,13 @@ def backend_for(session: SessionState, *, config: Config | None = None) -> Provi
     return backends.make_backend(target, cfg)
 
 
-def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: str | None = None) -> NoReturn:
+def exec_attach(
+    endpoint: sshexec.SSHEndpoint,
+    tmux_session: str,
+    session_name: str | None = None,
+    *,
+    control_mode: bool = False,
+) -> NoReturn:
     """Replace this process with an interactive attach to a remote tmux session.
 
     Prefers :func:`fwd.remote.tmux_attach_argv` so remote-command construction stays in one place, falling back to
@@ -268,12 +274,12 @@ def exec_attach(endpoint: sshexec.SSHEndpoint, tmux_session: str, session_name: 
     if not sys.stdin.isatty():
         ui.die(f"attach needs an interactive terminal; in scripts use {ui.command('up')!r} without --attach")
     try:
-        argv = remote.tmux_attach_argv(endpoint, tmux_session, session_name)
+        argv = remote.tmux_attach_argv(endpoint, tmux_session, session_name, control_mode=control_mode)
     except NotImplementedError:
         argv = None
     if argv:
         os.execvp(argv[0], argv)
-    endpoint.exec_interactive(remote.tmux_attach_command(tmux_session))
+    endpoint.exec_interactive(remote.tmux_attach_command(tmux_session, control_mode=control_mode))
 
 
 def build_tmux_command(
@@ -448,6 +454,7 @@ def launch(
     creds: bool = False,
     setup_github: bool | None = None,
     attach: bool = False,
+    control_mode: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
     forward_ports: tuple[str, ...] | None = None,
@@ -467,6 +474,7 @@ def launch(
             creds=creds,
             setup_github=setup_github,
             attach=attach,
+            control_mode=control_mode,
             push_only=push_only,
             run_command_as_task=run_command_as_task,
             forward_ports=forward_ports,
@@ -490,6 +498,7 @@ def _launch(
     creds: bool = False,
     setup_github: bool | None = None,
     attach: bool = False,
+    control_mode: bool = False,
     push_only: bool = False,
     run_command_as_task: bool = False,
     forward_ports: tuple[str, ...] | None = None,
@@ -511,6 +520,7 @@ def _launch(
         creds: Lift local Claude credentials to the remote machine (warns).
         setup_github: Per-launch GitHub setup override; ``None`` uses the merged ``github.auth`` configuration.
         attach: Exec into the remote tmux session when everything is ready.
+        control_mode: When attaching, start tmux with ``-CC`` for native iTerm2 control-mode integration.
         push_only: Stop after syncing files, before bootstrap.
         run_command_as_task: Start a shell as the primary pane so the caller can run a separate explicit command
             through the durable task manager after launch. The caller passes an empty ``initial_command`` because the
@@ -726,7 +736,7 @@ def _launch(
 
     state.touch_attached()
     st.upsert(state)
-    exec_attach(endpoint, tmux_name, session_name)
+    exec_attach(endpoint, tmux_name, session_name, control_mode=control_mode)
 
 
 def _persist(
