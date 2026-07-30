@@ -89,9 +89,9 @@ it therefore appears in `fwd send --ls` and supports the same streaming, backgro
 `--stop-after` behavior. Inside an attached session, detach with `ctrl-b d` (tmux); the primary process keeps running.
 
 Every launch installs a remote tmux configuration at `~/.config/fwd/tmux.conf`. Fwd copies the first local config found
-at `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; when neither exists, it uses a dependency-free fallback with mouse
-support, 100,000 lines of history, vi copy mode, fast escape handling, clipboard integration, focus events, and
-selection/scroll bindings. The separate fwd path preserves any remote `~/.tmux.conf`. New tmux servers load the file
+at `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; when neither exists, it uses a dependency-free fallback with clickable
+window tabs, mouse pane selection, five-line wheel scrolling through copy mode, 100,000 lines of history, vi copy
+mode, fast escape handling, clipboard integration, focus events, and selection bindings. The separate fwd path preserves any remote `~/.tmux.conf`. New tmux servers load the file
 at startup, while an already-running server reloads it during `fwd up`.
 
 `--reuse` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.

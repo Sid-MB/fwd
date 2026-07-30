@@ -27,6 +27,14 @@ set -s escape-time 10
 set -g focus-events on
 set -g set-clipboard on
 set -g renumber-windows on
+# Keep status-bar window selection and wheel behavior explicit instead of depending on a minimal image's built-in key table.
+bind -T root MouseDown1Status switch-client -t =
+bind -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }
+# Five lines per wheel event is fast enough for logs without making precise navigation frustrating.
+bind -T copy-mode WheelUpPane select-pane \\; send-keys -X -N 5 scroll-up
+bind -T copy-mode WheelDownPane select-pane \\; send-keys -X -N 5 scroll-down
+bind -T copy-mode-vi WheelUpPane select-pane \\; send-keys -X -N 5 scroll-up
+bind -T copy-mode-vi WheelDownPane select-pane \\; send-keys -X -N 5 scroll-down
 bind -T copy-mode-vi v send-keys -X begin-selection
 bind -T copy-mode-vi y send-keys -X copy-selection-and-cancel
 bind -T copy-mode-vi C-u send-keys -X halfpage-up
