@@ -80,6 +80,17 @@ out of `~/.runpod/config.toml` into its own memory, where it could reach a log l
   `volumeInGb`) — no ssh block. Reuse lookup is list-by-name, then `pod get` for details.
 - `pod list --name <x>` exists as a server-side filter, but the backend filters client-side on an exact match so a
   substring behaviour change upstream cannot make fwd adopt the wrong pod.
+- **RunPod under-reports network volumes on reused pods.** `pod list` has no volume field at all, and `pod get
+  --include-network-volume` was observed (live, 2026-07-31) returning neither `networkVolume`/`networkVolumeId` nor a
+  nonzero `volumeInGb` for a pod that demonstrably had its network volume mounted at `/workspace`. Believing it makes
+  `resolve_paths()` relocate the workspace to the container-disk fallback — silently, and the user loses that work on
+  the next stop. It also drops `network_volume_id` from `backend_ids`, which makes `stop` issue `pod stop` (RunPod
+  refuses that for network-volume pods) and makes `destroy` leak the volume. `provision()` therefore ends with a
+  pod-side `mount_probe_script()` check over the freshly resolved ssh endpoint: a device-id comparison against the
+  parent directory, which is ground truth. The probe only ever *upgrades* the verdict — a confident "mounted"
+  overrides the API, while "not mounted" and "cannot tell" leave the API's answer intact, so a genuinely volume-less
+  CPU pod still gets its loud relocation warning. When the probe fires, the id is recovered by name lookup
+  (`_find_network_volume`) so teardown behaves.
 - `pod create`, `pod start` and `pod stop` all return the **same single-pod document** as `pod get`, so one parser
   (`parse_pod`) covers all four.
 - `desiredStatus` is RunPod's *intent*, not liveness: it reads `RUNNING` the instant the pod is provisioned, ~30–60 s

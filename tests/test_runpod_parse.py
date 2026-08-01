@@ -13,7 +13,9 @@ which is exactly why they were factored out of :class:`~fwd.backends.runpod.Runp
 
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -21,12 +23,16 @@ import pytest
 from fwd.backends.base import TargetStatus
 from fwd.backends.runpod import (
     CONTAINER_DISK_BASE,
+    MOUNT_PROBE_MOUNTED,
+    MOUNT_PROBE_UNKNOWN,
+    MOUNT_PROBE_UNMOUNTED,
     RunpodBackend,
     RunpodError,
     create_pod_args,
     error_message,
     find_pod_by_name,
     is_missing_pod_error,
+    mount_probe_script,
     parse_pod,
     parse_pod_list,
     parse_proxy_target,
@@ -37,6 +43,7 @@ from fwd.backends.runpod import (
     resolve_paths,
 )
 from fwd.config import Config, ConfigError, RunpodTargetConfig, parse_target
+from fwd.sshexec import SSHError
 from fwd.state import SessionState
 
 FIXTURES = Path(__file__).parent / "fixtures" / "runpod"
@@ -296,6 +303,99 @@ class TestRunpodConfigFields:
         assert parameters["cloud_type"].allow_free_text is False
         assert parameters["gpu"].allow_free_text is True
         assert parameters["image"].allow_free_text is True
+
+
+class TestMountProbe:
+    """The pod-side volume check that overrides RunPod's unreliable volume reporting on reused pods.
+
+    The snippet is executed for real through ``sh`` rather than string-matched: its whole value is that it behaves
+    correctly on a machine, and a regex over shell source would pass just as happily on a snippet that never runs.
+    A stub ``stat`` on PATH stands in for the device-id readings, which keeps the test hermetic and lets it exercise
+    the mounted branch (unforgeable otherwise without root) on any host, including the macOS dev box where GNU
+    ``stat -c`` does not exist.
+    """
+
+    def _run(self, mount: str, *, path: str | None = None) -> int:
+        env = dict(os.environ)
+        if path is not None:
+            env["PATH"] = path
+        # Absolute interpreter path: one case narrows PATH to an empty dir, which would otherwise hide `sh` itself.
+        return subprocess.run(["/bin/sh", "-c", mount_probe_script(mount)], capture_output=True, env=env).returncode
+
+    def _stub_stat(self, tmp_path: Path, values: list[str]) -> str:
+        """Put a ``stat`` on PATH that prints ``values`` in order, one per call, and return the new PATH."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        counter = bin_dir / "count"
+        script = bin_dir / "stat"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > {counter}\n'
+            + "".join(f'[ "$n" = "{i + 1}" ] && echo "{value}" && exit 0\n' for i, value in enumerate(values))
+            + "exit 1\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return f"{bin_dir}:{os.environ['PATH']}"
+
+    def test_root_is_unknown_because_it_is_its_own_parent(self) -> None:
+        assert self._run("/") == MOUNT_PROBE_UNKNOWN
+
+    def test_missing_directory_is_unmounted(self, tmp_path: Path) -> None:
+        assert self._run(str(tmp_path / "nope")) == MOUNT_PROBE_UNMOUNTED
+
+    def test_same_device_as_parent_is_unmounted(self, tmp_path: Path) -> None:
+        target = tmp_path / "workspace"
+        target.mkdir()
+        assert self._run(str(target), path=self._stub_stat(tmp_path, ["66306", "66306"])) == MOUNT_PROBE_UNMOUNTED
+
+    def test_different_device_from_parent_is_mounted(self, tmp_path: Path) -> None:
+        target = tmp_path / "workspace"
+        target.mkdir()
+        assert self._run(str(target), path=self._stub_stat(tmp_path, ["2049", "66306"])) == MOUNT_PROBE_MOUNTED
+
+    def test_missing_stat_is_unknown_rather_than_a_guess(self, tmp_path: Path) -> None:
+        target = tmp_path / "workspace"
+        target.mkdir()
+        empty = tmp_path / "empty-bin"
+        empty.mkdir()
+        assert self._run(str(target), path=str(empty)) == MOUNT_PROBE_UNKNOWN
+
+    def test_mount_path_with_spaces_survives_quoting(self, tmp_path: Path) -> None:
+        target = tmp_path / "my workspace"
+        target.mkdir()
+        assert self._run(str(target), path=self._stub_stat(tmp_path, ["2049", "66306"])) == MOUNT_PROBE_MOUNTED
+
+
+class TestVolumeIsMounted:
+    """Exit-code → verdict mapping. Only a clean 0 or 1 is an answer; everything else must stay ``None``."""
+
+    class _Endpoint:
+        def __init__(self, outcome: int | Exception) -> None:
+            self.outcome = outcome
+
+        def run(self, cmd: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if isinstance(self.outcome, Exception):
+                raise self.outcome
+            return subprocess.CompletedProcess(args=cmd, returncode=self.outcome, stdout="", stderr="")
+
+    def _probe(self, outcome: int | Exception) -> bool | None:
+        cfg = runpod_target()
+        backend = RunpodBackend(cfg, Config(targets={"pod": cfg}))
+        return backend._volume_is_mounted(self._Endpoint(outcome), "/workspace")  # type: ignore[arg-type]
+
+    def test_zero_is_mounted(self) -> None:
+        assert self._probe(MOUNT_PROBE_MOUNTED) is True
+
+    def test_one_is_unmounted(self) -> None:
+        assert self._probe(MOUNT_PROBE_UNMOUNTED) is False
+
+    def test_unknown_exit_code_is_inconclusive(self) -> None:
+        assert self._probe(MOUNT_PROBE_UNKNOWN) is None
+
+    def test_ssh_transport_failure_is_inconclusive(self) -> None:
+        assert self._probe(255) is None
+        assert self._probe(SSHError("connection refused")) is None
 
 
 def test_interrupted_provision_cleanup_deletes_only_invocation_owned_pod(monkeypatch: pytest.MonkeyPatch) -> None:

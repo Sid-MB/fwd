@@ -40,7 +40,7 @@ from typing import Any, ClassVar
 from fwd import ui
 from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, Config, RunpodTargetConfig
-from fwd.sshexec import SSHEndpoint
+from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
 
 RUNPODCTL = "runpodctl"
@@ -66,6 +66,10 @@ POLL_INTERVAL = 4.0
 # Seconds to wait for a TCP connect when confirming a reported address is actually live. Short on purpose: this runs
 # inside the polling loop, so a slow failure would stretch every iteration.
 PORT_PROBE_TIMEOUT = 4.0
+
+# Seconds allowed for the one-shot volume-mount probe. It is a single `stat` over an already-established ssh
+# connection, so anything slower means the pod is unhealthy and the provider's own verdict should stand.
+MOUNT_PROBE_TIMEOUT = 30.0
 
 # Per-process memo for the grammar probe, so `fwd ls` over N sessions still only shells out once.
 _SYNTAX_OK: bool | None = None
@@ -328,6 +332,40 @@ def resolve_paths(cfg: RunpodTargetConfig, project_name: str, *, has_volume: boo
     return f"{base}/{project_name}", tool_prefix, f"{base}/.fwd-cache", notes
 
 
+# Exit codes for :func:`mount_probe_script`. Kept distinct from the shell's own failure codes so an ssh transport
+# error (255) or a missing shell cannot be mistaken for a confident "not mounted".
+MOUNT_PROBE_MOUNTED = 0
+MOUNT_PROBE_UNMOUNTED = 1
+MOUNT_PROBE_UNKNOWN = 3
+
+
+def mount_probe_script(mount: str) -> str:
+    """Return a shell snippet that reports whether ``mount`` is a real mounted filesystem on the pod.
+
+    Why this exists: RunPod's control plane is an unreliable narrator about volumes on *reused* pods. ``pod list``
+    carries no volume field at all, and ``pod get --include-network-volume`` was observed returning neither
+    ``networkVolume`` nor a nonzero ``volumeInGb`` for a pod that demonstrably had a network volume mounted. Trusting
+    those signals flips :func:`resolve_paths` onto the container-disk fallback and silently relocates the workspace
+    off persistent storage. The machine itself is the only source that cannot be wrong, so we ask it.
+
+    The test is the classic device-id comparison — a directory whose ``st_dev`` differs from its parent's is a mount
+    point — rather than ``mountpoint``/``findmnt``, which are not present in every RunPod base image. ``stat -c`` is
+    GNU-specific, but every RunPod image is Linux with coreutils; where it is missing the snippet reports
+    :data:`MOUNT_PROBE_UNKNOWN` rather than guessing.
+
+    A root ``mount`` is reported unknown: ``/`` is its own parent, so the comparison is meaningless there.
+    """
+    quoted = shlex.quote(mount.rstrip("/") or "/")
+    return (
+        f"d={quoted}; "
+        f'[ "$d" = / ] && exit {MOUNT_PROBE_UNKNOWN}; '
+        f"[ -d \"$d\" ] || exit {MOUNT_PROBE_UNMOUNTED}; "
+        f"a=$(stat -c %d \"$d\" 2>/dev/null) || exit {MOUNT_PROBE_UNKNOWN}; "
+        f"b=$(stat -c %d \"$d/..\" 2>/dev/null) || exit {MOUNT_PROBE_UNKNOWN}; "
+        f'[ "$a" != "$b" ]'
+    )
+
+
 def port_is_open(host: str, port: int, *, timeout: float = PORT_PROBE_TIMEOUT) -> bool:
     """Return whether a TCP connect to ``host:port`` succeeds.
 
@@ -491,6 +529,38 @@ class RunpodBackend(Backend):
         """Create a pod from the target config, always publishing 22/tcp and mounting the persistent volume."""
         return parse_pod(self._run_ctl(create_pod_args(self.target, pod_name, gpu, network_volume_id=network_volume_id), timeout=300.0))
 
+    def _find_network_volume(self, session_name: str) -> str | None:
+        """Return the id of this session's existing network volume, or ``None`` if it has never been created.
+
+        Split out of :func:`_ensure_network_volume` so the reuse path can *recover* an id the pod document failed to
+        report without risking a volume being created as a side effect of a lookup.
+        """
+        cfg = self.target
+        if not cfg.persistent or not cfg.data_center_id:
+            return None
+        volume_name = f"fwd-{_safe_provider_name(session_name)}-data"
+        volumes = parse_network_volume_list(self._run_ctl(["network-volume", "list"]))
+        matches = [volume for volume in volumes if volume.get("name") == volume_name and str(volume.get("dataCenterId") or "") == cfg.data_center_id]
+        if len(matches) > 1:
+            raise RunpodError(f"multiple network volumes named {volume_name!r} exist in {cfg.data_center_id}; remove the duplicate in RunPod before retrying")
+        return str(matches[0]["id"]) if matches else None
+
+    def _volume_is_mounted(self, endpoint: SSHEndpoint, mount: str) -> bool | None:
+        """Ask the pod itself whether ``mount`` is a mounted filesystem. ``None`` means the probe was inconclusive.
+
+        Never raises: this runs on the launch happy path, and a probe that cannot answer must leave the provider's own
+        (possibly wrong) verdict untouched rather than abort a provision.
+        """
+        try:
+            proc = endpoint.run(mount_probe_script(mount), check=False, timeout=MOUNT_PROBE_TIMEOUT)
+        except SSHError:
+            return None
+        if proc.returncode == MOUNT_PROBE_MOUNTED:
+            return True
+        if proc.returncode == MOUNT_PROBE_UNMOUNTED:
+            return False
+        return None
+
     def _ensure_network_volume(self, session_name: str) -> str | None:
         """Find or create the session-owned network volume selected by the target's persistence policy."""
         cfg = self.target
@@ -500,13 +570,10 @@ class RunpodBackend(Backend):
             raise RunpodError("persistent RunPod sessions require Secure Cloud because network volumes are unavailable on Community Cloud; set cloud_type = \"secure\" or explicitly set persistent = false")
         if not cfg.data_center_id:
             raise RunpodError(f"target {cfg.name!r} needs data_center_id for persistent storage; rerun `fwd setup --backend runpod --target-name {cfg.name} --data-center-id DATACENTER --force`")
+        existing = self._find_network_volume(session_name)
+        if existing:
+            return existing
         volume_name = f"fwd-{_safe_provider_name(session_name)}-data"
-        volumes = parse_network_volume_list(self._run_ctl(["network-volume", "list"]))
-        matches = [volume for volume in volumes if volume.get("name") == volume_name and str(volume.get("dataCenterId") or "") == cfg.data_center_id]
-        if len(matches) > 1:
-            raise RunpodError(f"multiple network volumes named {volume_name!r} exist in {cfg.data_center_id}; remove the duplicate in RunPod before retrying")
-        if matches:
-            return str(matches[0]["id"])
         created = _first_json(
             self._run_ctl(
                 ["network-volume", "create", "--name", volume_name, "--size", str(cfg.volume_gb), "--data-center-id", cfg.data_center_id],
@@ -599,8 +666,6 @@ class RunpodBackend(Backend):
         else:
             pod = existing
             network_volume_id = pod_network_volume_id(pod)
-            if cfg.persistent and not network_volume_id:
-                notes.append("existing legacy pod has no independent network volume; stop can discard its container disk, so pull or commit current work and recreate the session")
             pod_id = str(pod["id"])
             if pod_status(pod) is TargetStatus.STOPPED:
                 with ui.step(f"Starting stopped pod {pod_name}"):
@@ -620,6 +685,22 @@ class RunpodBackend(Backend):
         # volume-less) and equally a GPU pod whose volume request was rejected for capacity.
         network_volume_id = network_volume_id or pod_network_volume_id(pod)
         has_volume = bool(network_volume_id or int(pod.get("volumeInGb") or 0))
+
+        # Last word goes to the pod, not the control plane. On reuse, RunPod reports no volume for pods that plainly
+        # have one mounted, and believing it relocates the workspace off persistent storage — the failure is silent
+        # and costs the user their work on the next stop. The probe only ever *upgrades* the verdict: a confident
+        # "yes, mounted" overrides the API, while "no" and "cannot tell" leave the API's answer alone, so a genuinely
+        # volume-less CPU pod still gets the loud container-disk relocation it needs.
+        if not has_volume and self._volume_is_mounted(endpoint, cfg.volume_mount_path) is True:
+            has_volume = True
+            # Recover the id the pod document withheld: `stop` must terminate rather than stop a network-volume pod,
+            # and `destroy` must know there is a volume to delete, and both read it straight out of backend_ids.
+            network_volume_id = network_volume_id or self._find_network_volume(session_name)
+            notes.append(f"RunPod reported no volume for this pod but {cfg.volume_mount_path} is really mounted — keeping the workspace on it")
+
+        if existing is not None and cfg.persistent and not network_volume_id:
+            notes.append("existing legacy pod has no independent network volume; stop can discard its container disk, so pull or commit current work and recreate the session")
+
         remote_dir, tool_prefix, scratch, path_notes = resolve_paths(cfg, project_name, has_volume=has_volume)
         notes += path_notes
 
