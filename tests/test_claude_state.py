@@ -227,6 +227,71 @@ def test_export_bundle_returns_none_for_unknown_session_id(claude_home: Path, tm
     assert export_session_bundle(cwd, tmp_path / "out", session_id="zzzz") is None
 
 
+def _write_plan(home: Path, name: str, body: str = "# plan\n") -> Path:
+    """Create a plan file under the synthetic ``~/.claude/plans`` and return its path."""
+    path = home / "plans" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def _append_line(transcript: Path, payload: dict) -> None:
+    with transcript.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload) + "\n")
+
+
+def test_referenced_plans_finds_all_path_spellings(claude_home: Path, tmp_path: Path) -> None:
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    transcript = _seed_session(claude_home, cwd, "aaaa")
+    for name in ("absolute.md", "tilde.md", "envvar.md"):
+        _write_plan(claude_home, name)
+    _append_line(transcript, {"text": f"see {claude_home}/plans/absolute.md for details"})
+    _append_line(transcript, {"text": "read ~/.claude/plans/tilde.md"})
+    _append_line(transcript, {"text": "cat $HOME/.claude/plans/envvar.md"})
+
+    assert [p.name for p in claude_state.referenced_plans(transcript)] == ["absolute.md", "tilde.md", "envvar.md"]
+
+
+def test_referenced_plans_skips_missing_and_deduplicates(claude_home: Path, tmp_path: Path) -> None:
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    transcript = _seed_session(claude_home, cwd, "aaaa")
+    _write_plan(claude_home, "real.md")
+    _append_line(transcript, {"text": f"{claude_home}/plans/real.md and {claude_home}/plans/gone.md"})
+    _append_line(transcript, {"text": f"{claude_home}/plans/real.md again"})
+
+    assert [p.name for p in claude_state.referenced_plans(transcript)] == ["real.md"]
+
+
+def test_referenced_plans_rejects_traversal_out_of_plans_dir(claude_home: Path, tmp_path: Path) -> None:
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    transcript = _seed_session(claude_home, cwd, "aaaa")
+    _write_plan(claude_home, "keep.md")
+    (claude_home / "secret.md").write_text("nope", encoding="utf-8")
+    _append_line(transcript, {"text": f"{claude_home}/plans/../secret.md"})
+
+    assert claude_state.referenced_plans(transcript) == []
+
+
+def test_export_bundle_carries_referenced_plans(claude_home: Path, tmp_path: Path) -> None:
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    transcript = _seed_session(claude_home, cwd, "aaaa")
+    _write_plan(claude_home, "wanted.md")
+    _write_plan(claude_home, "unreferenced.md")
+    _append_line(transcript, {"text": f"the plan is at {claude_home}/plans/wanted.md"})
+
+    bundle = export_session_bundle(cwd, tmp_path / "out")
+
+    assert bundle is not None
+    with tarfile.open(bundle) as tar:
+        names = set(tar.getnames())
+    assert "plans/wanted.md" in names
+    assert "plans/unreferenced.md" not in names
+
+
 # --------------------------------------------------------------------------------------------- import_session_bundle
 
 

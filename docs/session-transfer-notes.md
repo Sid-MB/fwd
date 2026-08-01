@@ -41,6 +41,11 @@ not invertible** — fwd only ever needs the forward direction, which is why `en
 - `~/.claude/todos/` does **not** exist on 2.1.220; the todo state moved to `~/.claude/tasks/<session-id>/`.
   fwd ships both paths in the bundle so it keeps working across versions.
 - `~/.claude/sessions/*.json` are per-process runtime records written at launch; they are irrelevant to resume.
+- `~/.claude/plans/<slug>.md` holds plan-mode output. It lives in the **home** directory, so a project rsync never
+  carries it. The plan body is duplicated inside the transcript's `ExitPlanMode` tool call, so a resumed session is
+  not amnesiac — but a re-read of the plan *by path* would 404 remotely. fwd scans the transcript for plan paths
+  (absolute, `~/…` and `$HOME/…` spellings) and ships only those files, landing them at
+  `<remote home>/.claude/plans/`, which is exactly where the home-rewrite pass repoints the references.
 
 ## 3. Experiments run
 

@@ -79,6 +79,17 @@ DEFAULT_CONFIG_INCLUDE: tuple[str, ...] = ("CLAUDE.md", "skills", "agents", "com
 # Where todo/task state lives, newest layout first (see spike finding 5).
 TODO_DIRS: tuple[str, ...] = ("tasks", "todos")
 
+# Plan files written by plan mode live in ``~/.claude/plans/<slug>.md``, i.e. in the *home* directory rather than the
+# synced project tree, so a plain rsync leaves them behind. The plan body is embedded in the transcript's
+# ``ExitPlanMode`` tool call, so a resumed session still knows the plan — but any instruction to re-read the file by
+# path breaks on the remote. :func:`referenced_plans` therefore carries exactly the plan files the transcript names.
+PLANS_DIR_NAME = "plans"
+
+# Bounds on the plan sweep. Plans are prose Markdown (a few KB each); anything far outside that is not a plan file and
+# does not belong in a session bundle. Both caps are silent-drop guards, not correctness requirements.
+MAX_PLAN_FILES = 20
+MAX_PLAN_BYTES = 2 * 1024 * 1024
+
 HANDOFF_PROMPT = (
     "Write a concise HANDOFF.md in the current directory summarising this working session so another engineer (or "
     "another Claude instance on a different machine) can pick it up cold. Use these sections: '## Current task state', "
@@ -210,6 +221,59 @@ def _todo_paths(session_id: str) -> list[Path]:
     return found
 
 
+def _plan_reference_pattern() -> re.Pattern[str]:
+    """Build the regex that spots plan-file paths inside a transcript line.
+
+    Three spellings reach a transcript and all three must match: the absolute local path (what a tool result or an
+    assistant message quotes), the tilde form a user typed, and the ``$HOME`` form a shell command used. The captured
+    group is the path *relative to* ``plans/`` so nested layouts survive; the capture class excludes quotes, spaces
+    and backslashes so a match stops at the end of the path rather than running into the surrounding JSON.
+    """
+    roots = "|".join(re.escape(root) for root in (str(_claude_home()), "~/.claude", "$HOME/.claude", "${HOME}/.claude"))
+    return re.compile(rf"(?:{roots})/{PLANS_DIR_NAME}/([^\"'\s\\`,;:)\]]+\.md)")
+
+
+def referenced_plans(transcript: str | Path) -> list[Path]:
+    """Return the plan files a transcript mentions by path, in first-mention order.
+
+    Scanning is line-by-line over the raw JSONL for the same reason :func:`rewrite_jsonl` is: the schema is
+    undocumented, so pattern-matching the text is more durable than walking fields that get renamed between releases.
+    It also means a plan named in a tool result, a user message or an assistant reply is found equally well.
+
+    Every candidate is resolved and re-checked against the plans directory before it is accepted, so a crafted
+    ``../../.credentials.json`` reference inside a transcript cannot pull a file out of the plans tree. Missing files
+    are skipped silently — transcripts routinely name plans that were since deleted or that came from another machine.
+    """
+    plans_dir = _claude_home() / PLANS_DIR_NAME
+    if not plans_dir.is_dir():
+        return []
+    root = plans_dir.resolve()
+    pattern = _plan_reference_pattern()
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    try:
+        with Path(transcript).open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                for relative in pattern.findall(line):
+                    candidate = (plans_dir / relative).resolve()
+                    if candidate in seen:
+                        continue
+                    seen.add(candidate)
+                    if not candidate.is_relative_to(root) or not candidate.is_file():
+                        continue
+                    if candidate.stat().st_size > MAX_PLAN_BYTES:
+                        ui.warn(f"Skipping plan {candidate.name}: larger than {MAX_PLAN_BYTES // 1024} KiB.")
+                        continue
+                    found.append(candidate)
+                    if len(found) >= MAX_PLAN_FILES:
+                        ui.warn(f"Only the first {MAX_PLAN_FILES} referenced plan files are transferred.")
+                        return found
+    except OSError:
+        return found
+    return found
+
+
 def export_session_bundle(local_cwd: str | Path, dest: str | Path, *, session_id: str | None = None) -> Path | None:
     """Collect the local transcript(s) for a project into a transferable bundle.
 
@@ -219,6 +283,7 @@ def export_session_bundle(local_cwd: str | Path, dest: str | Path, *, session_id
     - ``transcript/<session-id>.jsonl`` — the conversation
     - ``transcript/<session-id>/…`` — sidecars (``subagents/``, ``memory/``) when present
     - ``todos/<name>`` — matching ``tasks/``/``todos/`` state
+    - ``plans/<name>.md`` — plan files the transcript references by path (see :func:`referenced_plans`)
 
     Args:
         session_id: Specific session to export; defaults to the most recently modified transcript for ``local_cwd``.
@@ -269,6 +334,12 @@ def export_session_bundle(local_cwd: str | Path, dest: str | Path, *, session_id
                 tar.add(sidecar, arcname=f"transcript/{sidecar.name}")
             for todo in _todo_paths(sid):
                 tar.add(todo, arcname=f"todos/{todo.name}")
+            plans_root = (_claude_home() / PLANS_DIR_NAME).resolve()
+            plans = referenced_plans(chosen)
+            for plan in plans:
+                tar.add(plan, arcname=f"{PLANS_DIR_NAME}/{plan.relative_to(plans_root)}")
+    if plans:
+        ui.info(f"Carrying {len(plans)} plan file(s) referenced by the session.")
     return dest_path
 
 
@@ -297,7 +368,10 @@ def import_session_bundle(
     Sequence, all remote-side work done by one shell script so the whole install is a single round trip:
     upload the tar.gz → extract into a temp dir → rewrite paths (cwd pass, then home pass — done with ``python3`` on
     the remote because the substitution must be byte-identical to :func:`rewrite_jsonl`) → move into the re-encoded
-    project directory → restore todo state → verify the transcript landed.
+    project directory → restore todo state and any referenced plan files → verify the transcript landed.
+
+    Plans are restored into ``<remote home>/.claude/plans/`` because that is exactly where the home-directory rewrite
+    pass repoints the transcript's plan references, so a resumed session that re-reads its plan by path finds it.
 
     Verification is a file-existence check, not a ``claude --resume`` probe: per the S1 spike, resume resolution is a
     pure path lookup, and burning a remote model call to confirm what ``test -f`` already proves would be wasteful.
@@ -373,6 +447,7 @@ with open(src, encoding="utf-8", errors="replace") as fh, open(dst, "w", encodin
 PYEOF
 if [ -d {staging}/x/transcript/{session} ]; then cp -R {staging}/x/transcript/{session} "$DEST/"; fi
 if [ -d {staging}/x/todos ]; then mkdir -p {home}/.claude/tasks && cp -R {staging}/x/todos/. {home}/.claude/tasks/; fi
+if [ -d {staging}/x/plans ]; then mkdir -p {home}/.claude/plans && cp -R {staging}/x/plans/. {home}/.claude/plans/; fi
 test -s "$DEST/{session}.jsonl"
 rm -rf {staging}
 """
