@@ -158,7 +158,7 @@ def test_root_completion_includes_targets_and_backend_shorthands(monkeypatch: py
     monkeypatch.setattr(target_alias, "load_config", lambda: Config(targets={"work": SshTargetConfig(name="work", host="example")}))
     root = get_command(app)
     values = {item.value for item in root.shell_complete(Context(root), "")}
-    assert {"ssh", "runpod", "slurm", "work"} <= values
+    assert {"lambda", "ssh", "runpod", "slurm", "work"} <= values
 
 
 def test_recognized_dynamic_alias_is_invocable_through_root_cli(monkeypatch: pytest.MonkeyPatch) -> None:

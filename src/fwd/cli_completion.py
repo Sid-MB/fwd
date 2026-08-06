@@ -15,7 +15,7 @@ from typer import _click
 from fwd import ui
 from fwd.agents import AGENTS
 from fwd.backends import backend_names
-from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, load_config, ssh_config_host_aliases
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, LambdaTargetConfig, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, TargetConfig, load_config, ssh_config_host_aliases
 from fwd.output import OutputFormat
 from fwd.send_tasks import SendTaskStore
 from fwd.state import SessionState, StateStore
@@ -131,13 +131,15 @@ def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str)
     return _matches(candidates.items(), incomplete)
 
 
-def _target_help(target: SshTargetConfig | RunpodTargetConfig | SlurmTargetConfig) -> str:
+def _target_help(target: TargetConfig) -> str:
     """Describe a configured target with the fields that most clearly distinguish it."""
     if isinstance(target, SshTargetConfig):
         return f"ssh · {target.user + '@' if target.user else ''}{target.host or '<host unset>'}"
     if isinstance(target, RunpodTargetConfig):
         detail = target.gpu if target.compute_type == "gpu" and target.gpu else target.compute_type
         return f"runpod · {detail} · {target.cloud_type}"
+    if isinstance(target, LambdaTargetConfig):
+        return f"lambda · {target.instance_type or '<instance type unset>'} · {target.region or '<region unset>'}"
     partition = f" · partition={target.partition}" if target.partition else ""
     return f"slurm · {target.login_host or '<login host unset>'}{partition}"
 
@@ -202,6 +204,7 @@ complete_output_format = static_completer(
 complete_example_backend = static_completer(
     (
         ("all", "complete example for every backend"),
+        ("lambda", "Lambda Cloud target example"),
         ("ssh", "SSH target example"),
         ("runpod", "RunPod target example"),
         ("slurm", "Slurm target example"),

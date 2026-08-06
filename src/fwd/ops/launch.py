@@ -5,7 +5,7 @@ Design intent
 This module owns the *sequence*, and nothing else. Every individual action (transfer files, install tooling, move
 Claude state, create tmux) lives in a mechanical module; ``launch`` decides what happens in what order and what to do
 when a stage fails. Keeping the ordering in one readable function is the payoff of the ``Provisioner`` boundary: the
-same seven steps work for a static SSH box, a RunPod pod and a Slurm allocation.
+same seven steps work for a static SSH box, a RunPod pod, a Lambda instance, and a Slurm allocation.
 
 Two properties are load-bearing and every change here must preserve them:
 

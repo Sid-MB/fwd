@@ -730,6 +730,7 @@ def uninstall_cmd(
 class ExampleBackend(str, Enum):
     """Choices for ``fwd config --example``. An Enum so Typer renders and validates the list for free."""
 
+    lambda_cloud = "lambda"
     ssh = "ssh"
     runpod = "runpod"
     slurm = "slurm"
@@ -846,7 +847,7 @@ def default_cmd(
 
 @app.command("setup")
 def setup_cmd(
-    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: ssh, runpod, or slurm. Required in non-interactive mode.", autocompletion=complete_backend)] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: lambda, ssh, runpod, or slurm. Required in non-interactive mode.", autocompletion=complete_backend)] = None,
     target_name: Annotated[str | None, typer.Option("--target-name", help=f"Local {ui.command()} label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
     host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.", autocompletion=complete_ssh_host)] = None,
     login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.", autocompletion=complete_ssh_host)] = None,
@@ -856,11 +857,16 @@ def setup_cmd(
     proxy_jump: Annotated[str | None, typer.Option("--proxy-jump", help="External SSH host used to reach a non-public target, as user@host.", autocompletion=complete_ssh_host)] = None,
     extra_ssh_option: Annotated[list[str] | None, typer.Option("--extra-ssh-option", help="Additional raw SSH argv entry; repeat to preserve argument boundaries.")] = None,
     remote_base: Annotated[str | None, typer.Option("--remote-base", help="Remote parent directory for project checkouts.")] = None,
+    region: Annotated[str | None, typer.Option("--region", help="Lambda Cloud region containing both compute and persistent storage.")] = None,
+    instance_type: Annotated[str | None, typer.Option("--instance-type", help="Lambda Cloud instance type.")] = None,
+    ssh_key_name: Annotated[str | None, typer.Option("--ssh-key-name", help="SSH public key name registered in Lambda Cloud.")] = None,
+    image_id: Annotated[str | None, typer.Option("--image-id", help="Optional Lambda Cloud image id.")] = None,
+    filesystem_mount_path: Annotated[str | None, typer.Option("--fs-mount-path", help="Lambda persistent filesystem mount path.")] = None,
     compute_type: Annotated[str | None, typer.Option("--compute-type", help="RunPod compute type: cpu (default) or gpu.", autocompletion=complete_compute_type)] = None,
     cloud_type: Annotated[str | None, typer.Option("--cloud-type", help="RunPod cloud pool: secure (default) or community.", autocompletion=complete_cloud_type)] = None,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Default RunPod GPU id; used only with --compute-type gpu.", autocompletion=complete_gpu)] = None,
     image: Annotated[str | None, typer.Option("--image", help="Default RunPod container image.", autocompletion=complete_runpod_image)] = None,
-    persistent: Annotated[bool | None, typer.Option("--persistent/--no-persistent", help="Use a network volume that survives Pod termination (default: enabled).")] = None,
+    persistent: Annotated[bool | None, typer.Option("--persistent/--no-persistent", help="Use provider storage that survives compute termination (default: enabled).")] = None,
     data_center_id: Annotated[str | None, typer.Option("--data-center-id", help="RunPod datacenter for the persistent network volume.")] = None,
     volume_gb: Annotated[int | None, typer.Option("--volume-gb", help="RunPod persistent volume size in GB.")] = None,
     volume_mount_path: Annotated[str | None, typer.Option("--volume-mount-path", help="RunPod persistent volume mount path.")] = None,
@@ -895,6 +901,11 @@ def setup_cmd(
             "proxy_jump": proxy_jump,
             "extra_opts": extra_ssh_option,
             "remote_base": remote_base,
+            "region": region,
+            "instance_type": instance_type,
+            "ssh_key_name": ssh_key_name,
+            "image_id": image_id,
+            "filesystem_mount_path": filesystem_mount_path,
             "compute_type": compute_type,
             "cloud_type": cloud_type,
             "gpu": gpu,

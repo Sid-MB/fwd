@@ -185,7 +185,7 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     if not backend:
         ui.die(
             f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required flag: --backend.\n"
-            "Choose a backend with --backend ssh, --backend runpod, or --backend slurm. To force prompts, pass --interactive."
+            "Choose a backend with --backend lambda, --backend ssh, --backend runpod, or --backend slurm. To force prompts, pass --interactive."
         )
     normalized = backend.strip().lower()
     if normalized not in TARGET_TYPES:

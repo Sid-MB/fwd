@@ -165,6 +165,54 @@ class RunpodTargetConfig:
 
 
 @dataclass(slots=True)
+class LambdaTargetConfig:
+    """A Lambda On-Demand Cloud instance recreated around a persistent filesystem.
+
+    Lambda does not expose a suspend operation: stopping billable compute terminates the instance and destroys its
+    local disk. Persistent targets therefore attach one deterministic fwd-owned filesystem at ``filesystem_mount_path``
+    and keep the checkout, installed tools, agent state, and task state below that mount. A later launch creates a new
+    instance against the same filesystem. ``persistent = false`` is the explicit disposable-storage opt-out.
+
+    The full-access Lambda Cloud API key is read only from ``LAMBDA_API_KEY`` and is never stored in target config,
+    session state, logs, or the remote instance. ``ssh_key_name`` identifies the public key registered with Lambda;
+    ``key_path`` optionally selects the corresponding local private key when the SSH agent/config does not already do so.
+    """
+
+    name: str
+    backend: Literal["lambda"] = "lambda"
+    region: str = ""
+    instance_type: str = ""
+    ssh_key_name: str = ""
+    image_id: str | None = None
+    persistent: bool = True
+    filesystem_mount_path: str = "/home/ubuntu/fwd-data"
+    remote_base: str = "/home/ubuntu/fwd-data/projects"
+    tool_prefix: str = "/home/ubuntu/fwd-data/.fwd-tools"
+    user: str = "ubuntu"
+    port: int = 22
+    key_path: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize required provider identifiers and reject paths that cannot satisfy the persistence contract."""
+        self.region = str(self.region).strip()
+        self.instance_type = str(self.instance_type).strip()
+        self.ssh_key_name = str(self.ssh_key_name).strip()
+        self.filesystem_mount_path = str(self.filesystem_mount_path).strip().rstrip("/") or "/"
+        self.remote_base = str(self.remote_base).strip().rstrip("/") or "/"
+        self.tool_prefix = str(self.tool_prefix).strip().rstrip("/") or "/"
+        for field_name, path in (("filesystem_mount_path", self.filesystem_mount_path), ("remote_base", self.remote_base), ("tool_prefix", self.tool_prefix)):
+            if not path.startswith("/"):
+                raise ConfigError(f"target {self.name!r}: {field_name} must be an absolute remote path (got {path!r})")
+        if self.filesystem_mount_path == "/":
+            raise ConfigError(f"target {self.name!r}: filesystem_mount_path cannot replace the instance root filesystem")
+        if self.persistent:
+            mount = self.filesystem_mount_path
+            for field_name, path in (("remote_base", self.remote_base), ("tool_prefix", self.tool_prefix)):
+                if path != mount and not path.startswith(f"{mount}/"):
+                    raise ConfigError(f"target {self.name!r}: {field_name} must be under filesystem_mount_path {mount!r} when persistent = true (got {path!r})")
+
+
+@dataclass(slots=True)
 class SlurmTargetConfig:
     """A Slurm cluster reached through its login node.
 
@@ -194,12 +242,13 @@ class SlurmTargetConfig:
     account: str | None = None
 
 
-TargetConfig = SshTargetConfig | RunpodTargetConfig | SlurmTargetConfig
+TargetConfig = SshTargetConfig | RunpodTargetConfig | LambdaTargetConfig | SlurmTargetConfig
 
 # Backend name -> dataclass. Also the authoritative list of valid ``backend =`` values in config.
 TARGET_TYPES: dict[str, type] = {
     "ssh": SshTargetConfig,
     "runpod": RunpodTargetConfig,
+    "lambda": LambdaTargetConfig,
     "slurm": SlurmTargetConfig,
 }
 
@@ -252,15 +301,15 @@ def implicit_target(name: str, *, ssh_config: Path | None = None) -> tuple[Targe
       job that is. ``user`` is left empty on purpose so ssh resolves it from that same block; hardcoding the local
       username here would *override* a ``User`` directive the user explicitly set.
 
-    Slurm is excluded by design and handled by the caller: a login host, a scratch path and an allocation spec are all
-    site-specific, so there is no default that would do anything but fail confusingly a minute into a launch.
+    Lambda and Slurm are excluded by design: Lambda needs an account-specific region, instance type, and SSH key,
+    while Slurm needs a login host, scratch path, and allocation spec. Neither has a safe default to guess.
 
     Returns:
         ``(target, origin_label)`` where the label names the provenance for ``fwd config``, or ``None`` if the name is
         not inferable.
     """
     if name in TARGET_TYPES and name != "ssh":
-        # 'runpod' resolves; 'slurm' is intentionally absent from the inferable set (see above).
+        # 'runpod' resolves; providers with required account-specific fields intentionally do not.
         if name == "runpod":
             return RunpodTargetConfig(name="runpod"), ORIGIN_BUILTIN
         return None
@@ -449,9 +498,15 @@ class Config:
     def _unknown_target_message(self, name: str) -> str:
         """Build the error for a name that is neither configured nor inferable.
 
-        ``slurm`` gets its own sentence because it is the one backend that *looks* like it should be inferable — the
-        other two names work — and a user who tried it deserves to know it is a deliberate refusal rather than a bug.
+        Cloud/cluster backends with required account-specific fields get their own explanation so a failed backend
+        selector reads as a deliberate safety choice rather than a missing registration.
         """
+        if name == "lambda":
+            return (
+                "target 'lambda' cannot be inferred: Lambda Cloud needs an account-specific region, instance type, and "
+                f"SSH key name. Run {ui.command('setup --backend lambda')!r} to define one, or "
+                f"{ui.command('config --example lambda')!r} for a commented reference to paste into ~/.fwd/config.toml."
+            )
         if name == "slurm":
             return (
                 "target 'slurm' cannot be inferred: a cluster needs a site-specific login host, a scratch path and an "
@@ -488,7 +543,7 @@ def parse_target(name: str, raw: dict[str, Any]) -> TargetConfig:
         raw: Merged key/value mapping for this target.
 
     Raises:
-        ConfigError: If ``backend`` is missing or not one of ``ssh``/``runpod``/``slurm``.
+        ConfigError: If ``backend`` is missing or not one of the registered target backend names.
     """
     backend = raw.get("backend")
     if not backend:

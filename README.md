@@ -19,7 +19,7 @@ Existing tools either remote-*view* a session that stays pinned to your laptop, 
 story at all. `fwd` does the handoff itself.
 
 ```
-laptop                                    remote (ssh / RunPod / Slurm)
+laptop                                    remote (ssh / RunPod / Lambda / Slurm)
 ──────                                    ────────────────────────────
 your project dir  ──── rsync ──────────▶  ~/fwd/project
 Claude transcript ──── optional ───────▶  ~/.claude/projects/<re-encoded>/
@@ -121,11 +121,12 @@ of opening a prompt. Run `fwd setup --help` for every field, or pass `--interact
 fwd setup --backend ssh --host my-box --target-name work
 fwd setup --backend slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
 fwd setup --backend runpod --data-center-id US-GA-1 --target-name pod
+fwd setup --backend lambda --region us-west-1 --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
 ```
 
 Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
-`Set advanced options? (Defaults: …)` gate. Persistent RunPod setup asks for a datacenter and creates one independent
-network volume per fwd session; `--no-persistent` is the explicit disposable-storage opt-out.
+`Set advanced options? (Defaults: …)` gate. Persistent RunPod and Lambda targets create one independent storage
+resource per fwd session; `--no-persistent` is the explicit disposable-storage opt-out.
 
 ## Commands
 
@@ -256,7 +257,8 @@ fwd send cancel all                   # cancel every active task
 to finish, then stops the session from the remote host, so closing or shutting down the local computer cannot defeat
 it. `fwd send stopafter` queues the same action after all current work. The stop action and its dependencies appear
 in `fwd send --ls`; `fwd ls` has a `stop after` column. RunPod uses its preinstalled pod-scoped `runpodctl`, Slurm
-uses `scancel`, and SSH closes fwd's tmux sessions without powering off a machine fwd does not own.
+uses `scancel`, and SSH closes fwd's tmux sessions without powering off a machine fwd does not own. Lambda rejects
+remote stop-after because its full-account API key deliberately remains on the local machine; use local `fwd stop`.
 
 It never provisions or restarts compute, so stopped, pending, ended, missing, and unknown targets fail with an
 actionable message. Arguments are executed literally. To use shell syntax such as pipes, redirects, or globs, request
@@ -432,7 +434,7 @@ positional, followed by an agent or arbitrary command. If a target and agent hav
 fwd warns with `--agent NAME` plus the config location needed to rename the target. Registered top-level commands
 always have higher priority, so a target called `stop` cannot shadow `fwd stop`. Unknown root words remain errors.
 
-Backend selectors such as `ssh`, `runpod`, and `slurm` use the most recently used configured target of that type; a
+Backend selectors such as `ssh`, `runpod`, `lambda`, and `slurm` use the most recently used configured target of that type; a
 sole target is unambiguous before it has history. If several targets share a backend and history cannot choose, fwd
 asks for an exact target. In non-interactive mode, `--reuse` always errors with either an exact attach instruction or
 the corresponding creation command without `--reuse`.
@@ -628,9 +630,9 @@ fwd up --target my-box              # any Host alias in your ~/.ssh/config
 ```
 
 Configured targets always win — declaring `[targets.runpod]` overrides the built-in rather than competing with it.
-Slurm is deliberately **not** inferable: the login host, scratch path and allocation spec are all site-specific, so
-`fwd` asks you to run `fwd setup` or crib from `fwd config --example slurm` instead of guessing and failing a minute
-into a launch.
+Lambda and Slurm are deliberately **not** inferable. Lambda needs an account-specific region, instance type, and SSH
+key name; Slurm needs a site-specific login host, scratch path, and allocation spec. `fwd` asks you to run setup or
+use the corresponding `fwd config --example BACKEND` reference rather than guessing.
 
 ### SSH — a machine you already have
 
@@ -692,6 +694,49 @@ Pods are reused by name while running. Persistent sessions recreate the Pod agai
 and their IP/port are re-resolved on every attach. If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
 because that transport cannot run rsync — it warns, and pushes get slower. Tar pushes still mirror synchronized
 files: stale files are deleted while excluded remote environments and caches are preserved.
+
+### Lambda Cloud — provision GPU instances through the Cloud API
+
+```toml
+[targets.lambda-gpu]
+backend = "lambda"
+region = "us-west-1"
+instance_type = "gpu_1x_a10"
+ssh_key_name = "my-public-key"
+persistent = true
+filesystem_mount_path = "/home/ubuntu/fwd-data"
+remote_base = "/home/ubuntu/fwd-data/projects"
+tool_prefix = "/home/ubuntu/fwd-data/.fwd-tools"
+user = "ubuntu"
+key_path = "~/.ssh/id_ed25519"       # optional when ssh-agent/config already selects the matching key
+# image_id = "..."                    # optional; unset uses Lambda's default image
+```
+
+Create an API key in Lambda Cloud and export it only on the local machine:
+
+```sh
+export LAMBDA_API_KEY="..."
+fwd doctor --target lambda-gpu
+fwd up --target lambda-gpu
+```
+
+The backend calls Lambda's public REST API directly; there is no provider CLI dependency. Interactive setup discovers
+current regions, instance types with regional capacity, registered SSH keys, and optional images from the API. The
+API key is never written to fwd config, session state, subprocess arguments, logs, or the remote machine.
+
+- **Stopping terminates compute and retains storage.** Lambda has no suspend operation and destroys an instance's local
+  disk at termination. Fwd keeps durable state on `fwd-<session>-data`; the next launch creates a fresh instance and
+  reattaches that filesystem at `filesystem_mount_path`.
+- **Removing deletes both resources.** `fwd rm` terminates compute, waits for the filesystem to detach, and deletes the
+  session-owned filesystem after the normal consequence-aware confirmation.
+- **Disposable mode is explicit.** `persistent = false` avoids filesystem billing but means `fwd stop` permanently
+  erases the checkout, installed tools, credentials, conversations, and agent state on that instance.
+- **Capacity is checked at launch time.** Lambda inventory varies by region. `fwd setup` suggests current capacity and
+  launch errors preserve the provider's actionable message rather than silently selecting different hardware.
+- **Remote stop-after is unavailable.** Lambda API keys currently grant broad account access, so fwd will not copy one
+  onto the instance merely to let it terminate itself. Local `fwd stop` remains fully supported.
+
+See [Lambda Cloud backend notes](docs/lambda-notes.md) for exact API, lifecycle, storage, and recovery semantics.
 
 ### Slurm — your university or lab cluster
 

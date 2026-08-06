@@ -219,7 +219,7 @@ def test_backend_registry_resolves_all_backends() -> None:
     from fwd.backends import BACKENDS, Backend, backend_names, get_backend
     from fwd.config import TARGET_TYPES
 
-    assert backend_names() == ["runpod", "slurm", "ssh"]
+    assert backend_names() == ["lambda", "runpod", "slurm", "ssh"]
     for name in BACKENDS:
         cls = get_backend(name)
         assert issubclass(cls, Backend)

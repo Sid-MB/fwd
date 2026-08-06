@@ -81,6 +81,11 @@ FIELD_DOCS: dict[str, str] = {
     "volume_mount_path": "where the persistent volume is mounted",
     "tool_prefix": f"where {ui.command()} installs uv/node/bun; must be on persistent storage or every restart re-downloads",
     "allow_proxy": "permit the ssh.runpod.io fallback when no direct IP exists (that proxy cannot run rsync)",
+    "region": "Lambda Cloud region; the instance and filesystem must be colocated",
+    "instance_type": "Lambda instance type; launch requires current capacity in the selected region",
+    "ssh_key_name": "public SSH key name already registered in Lambda Cloud",
+    "image_id": "optional Lambda image id; unset uses the provider default image",
+    "filesystem_mount_path": "where the session-owned Lambda filesystem is mounted",
     "alloc": "flags spliced into the salloc line",
     "env_setup": "shell lines run before the allocation, e.g. module loads",
     "partition": "slurm partition (-p)",
@@ -89,6 +94,11 @@ FIELD_DOCS: dict[str, str] = {
 
 # Field docs that differ by backend, because the same field name carries a different warning per provider.
 TARGET_FIELD_DOCS: dict[str, dict[str, str]] = {
+    "lambda": {
+        "persistent": "retain a per-session Lambda filesystem after instance termination; disable only for disposable work",
+        "remote_base": "parent dir for checkouts; keep under filesystem_mount_path for persistence",
+        "tool_prefix": "installed tools and agent state; keep under filesystem_mount_path for persistence",
+    },
     "runpod": {"remote_base": "parent dir for checkouts; keep under volume_mount_path for persistence"},
     "slurm": {
         "remote_base": "parent dir for checkouts; MUST be scratch, never $HOME (inode quotas) (required)",
@@ -118,6 +128,7 @@ _KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 # Fields with no usable default that the user must fill in for the target to work at all. Emitted uncommented with a
 # placeholder so the example is a working skeleton; everything else optional is emitted commented out.
 REQUIRED_PLACEHOLDERS: dict[str, dict[str, Any]] = {
+    "lambda": {"region": "us-west-1", "instance_type": "gpu_1x_a10", "ssh_key_name": "my-public-key"},
     "ssh": {"host": "gpu.example.com", "user": "you"},
     "runpod": {},
     "slurm": {"login_host": "login.hpc.example.edu", "user": "you", "remote_base": "/scratch/you/fwd"},
@@ -132,9 +143,10 @@ OPTIONAL_PLACEHOLDERS: dict[str, Any] = {
     "account": "your-account",
     "tool_prefix": "/scratch/you/.fwd-tools",
     "user": "you",
+    "image_id": "ddaedf1b7a0e41ac981711504493b242",
 }
 
-EXAMPLE_TARGET_NAMES: dict[str, str] = {"ssh": "box", "runpod": "pod", "slurm": "hpc"}
+EXAMPLE_TARGET_NAMES: dict[str, str] = {"ssh": "box", "runpod": "pod", "lambda": "lambda-gpu", "slurm": "hpc"}
 
 
 def _toml_key(value: str) -> str:
@@ -305,7 +317,7 @@ def render_example(which: str = "all") -> str:
     """Render a commented reference config for one backend or all of them.
 
     Args:
-        which: ``"ssh"``, ``"runpod"``, ``"slurm"`` or ``"all"``.
+        which: ``"ssh"``, ``"runpod"``, ``"lambda"``, ``"slurm"`` or ``"all"``.
 
     Returns:
         Valid TOML. Every value shown is the real dataclass default (or a marked placeholder for fields that have no

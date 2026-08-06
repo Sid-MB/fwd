@@ -1,6 +1,6 @@
 ---
 name: fwd
-description: Move a coding project or active Claude Code/Codex workflow to remote compute with fwd. Use for remote development, CPU or GPU VMs, SSH hosts and aliases, RunPod pods, Slurm clusters, extra compute or memory, cluster-local data, persistent remote agents, durable remote commands, file synchronization, sync diffs, attaching, stopping, or destroying remote sessions.
+description: Move a coding project or active Claude Code/Codex workflow to remote compute with fwd. Use for remote development, CPU or GPU VMs, SSH hosts and aliases, RunPod pods, Lambda Cloud instances, Slurm clusters, extra compute or memory, cluster-local data, persistent remote agents, durable remote commands, file synchronization, sync diffs, attaching, stopping, or destroying remote sessions.
 ---
 
 # fwd remote development
@@ -30,7 +30,7 @@ Treat the text following the skill name as work to perform remotely, not as lite
 
 For an explicitly requested shell command instead of coding-agent work, use `fwd send --name SESSION -- COMMAND...`. List or resume background tasks with `fwd send --ls --json` and `fwd send TASK_ID`; cancel only that task with `fwd send TASK_ID --stop`.
 
-When the user wants disposable compute to stop after work finishes, arm remote-owned shutdown with `fwd up --stop-after -- COMMAND...` for initial command work or `fwd send --name SESSION --stop-after agent "TASK"` for an agent turn. To stop after work that is already active, run `fwd send --name SESSION stopafter`. Confirm the lifecycle task in `fwd send --ls --json`; disarm it before shutdown begins with `fwd send --name SESSION cancel stopafter`. Stop-after checks the remote Git worktree at execution time and remains blocked if it is dirty; never add `--force` unless the user explicitly accepts losing those changes. Never substitute a local delayed `fwd stop`: the local process may disconnect or shut down before it runs.
+When the user wants disposable compute to stop after work finishes, first confirm that the selected backend supports remote stop-after. For a supported backend, arm remote-owned shutdown with `fwd up --stop-after -- COMMAND...` for initial command work or `fwd send --name SESSION --stop-after agent "TASK"` for an agent turn. To stop after work that is already active, run `fwd send --name SESSION stopafter`. Confirm the lifecycle task in `fwd send --ls --json`; disarm it before shutdown begins with `fwd send --name SESSION cancel stopafter`. Stop-after checks the remote Git worktree at execution time and remains blocked if it is dirty; never add `--force` unless the user explicitly accepts losing those changes. Lambda does not support remote stop-after because its broad API key remains local-only: do not issue or promise a stop-after command for a Lambda session, and instead tell the user that local `fwd stop SESSION` must be run from a connected machine after durable results are retrieved. For supported backends, never substitute a local delayed `fwd stop`: the local process may disconnect or shut down before it runs.
 
 ## Agent safety rules
 
@@ -56,11 +56,11 @@ When investigating a local timing regression, run `UV_CACHE_DIR=.uv-cache uv run
 
 ### Backends
 
-A backend implements one kind of remote compute: `runpod` provisions RunPod pods, `ssh` connects to an existing SSH host, and `slurm` submits work through a Slurm cluster. Backends define their configuration fields, defaults, setup choices, provisioning behavior, and lifecycle operations.
+A backend implements one kind of remote compute: `runpod` provisions RunPod pods, `lambda` provisions Lambda Cloud instances through its API, `ssh` connects to an existing SSH host, and `slurm` submits work through a Slurm cluster. Backends define their configuration fields, defaults, setup choices, provisioning behavior, and lifecycle operations.
 
 ### Targets
 
-A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect all valid fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup --backend BACKEND` plus the required flags shown by `fwd setup --help`.
+A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, Lambda region and instance type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect all valid fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup --backend BACKEND` plus the required flags shown by `fwd setup --help`.
 
 Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSSH host alias can work without a saved target. Prefer CPU compute unless the user explicitly requests a GPU.
 
@@ -83,7 +83,7 @@ login-shell tmux in the synced project and attaches to it without repeating laun
 
 A send task is durable work started inside an already-running session with `fwd send`; it never provisions or restarts compute. Each command or agent turn runs through the session's remote tmux task manager and receives a task ID and log. Stream until completion by default; after two seconds Ctrl-C cancels the remote task and Ctrl-B backgrounds only the local viewer. Use `--detach` to background immediately, `fwd send TASK_ID` to reattach, `fwd send --ls --all --json` for task history, `fwd send cancel` for queued work, and `fwd send cancel all` for every active task. GitHub setup defaults on; launch prepares it, while direct pushes and sent agent turns repair older sessions in place without synchronizing over remote-only commits.
 
-`--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. Immediately before shutdown it refuses a dirty Git worktree and records `blocked`; `--force-stop-after` on `fwd up`, `--force` on `fwd send`, or `stopafter --force` are explicit data-loss overrides. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Persistent RunPod sessions terminate the disposable Pod and retain their per-session network volume; `fwd rm` deletes both. Registered remote agents receive instructions for the literal helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
+`--stop-after` atomically adds a remotely owned lifecycle task after new work, while `fwd send stopafter` queues it after all current work and `fwd send cancel stopafter` disarms it. The lifecycle task and dependencies appear in `fwd send --ls`; active shutdown also appears in `fwd ls`. Immediately before shutdown it refuses a dirty Git worktree and records `blocked`; `--force-stop-after` on `fwd up`, `--force` on `fwd send`, or `stopafter --force` are explicit data-loss overrides. RunPod and Slurm stop their owned compute, while SSH stops only fwd-owned tmux sessions and does not power off an external machine. Persistent RunPod sessions terminate the disposable Pod and retain their per-session network volume; `fwd rm` deletes both. Lambda does not support remote stop-after because its broad API key remains local-only; use local `fwd stop`, which terminates compute while retaining the session filesystem. Registered remote agents receive instructions for the literal helper and may run it only as their final action after requested work and durable output are complete; `stopafter --cancel` disarms it before shutdown begins. Canceling an ordinary task stops only that work, while `fwd stop` affects the entire session and target.
 
 ### Synchronization
 
@@ -106,11 +106,11 @@ fwd up --new --target runpod           # provision a separate session instead of
 fwd up --target work_cluster --agent codex     # sync Codex settings/skills and start remote Codex
 fwd up work_cluster claude                     # positional target + agent; transfer the Claude transcript
 fwd up -- pytest -q                    # provision, stream a durable task, and return its exit status
-fwd up --stop-after -- pytest -q       # run tests, then stop remotely even if the local computer disconnects
+fwd up --stop-after -- pytest -q       # supported backends only; unavailable on Lambda
 fwd up -a -- bash                      # provision and attach directly to the primary pane
 fwd send -- pytest -q                  # durable task; stream output and return its exit status
-fwd send --stop-after -- pytest -q     # queue remote stop after this task
-fwd send stopafter                     # queue remote stop after all active tasks
+fwd send --stop-after -- pytest -q     # supported backends only; unavailable on Lambda
+fwd send stopafter                     # supported backends only; queue stop after all active tasks
 fwd send cancel stopafter              # cancel queued remote shutdown
 fwd send --detach -- pytest -q         # start in remote tmux and return immediately
 fwd send --ls --json                   # inspect active command and agent tasks

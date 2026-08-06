@@ -360,6 +360,11 @@ def _removal_data(plan: _RemovalPlan) -> str:
     network_volume_id = session.backend_ids.get("network_volume_id")
     if network_volume_id:
         return f"persistent RunPod network volume {network_volume_id!r} and project data at {remote_dir!r}"
+    filesystem_id = session.backend_ids.get("filesystem_id")
+    if session.backend == "lambda" and filesystem_id:
+        return f"persistent Lambda filesystem {filesystem_id!r} and project data at {remote_dir!r}"
+    if session.backend == "lambda":
+        return f"disposable Lambda instance storage and project data at {remote_dir!r}"
     if session.backend == "runpod":
         return f"RunPod pod storage and project data at {remote_dir!r}"
     if session.backend == "slurm":

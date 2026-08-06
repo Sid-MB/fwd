@@ -32,7 +32,7 @@ from fwd.config import (
 )
 from fwd.ops import configcmd
 
-BACKENDS = ["ssh", "runpod", "slurm", "all"]
+BACKENDS = ["lambda", "ssh", "runpod", "slurm", "all"]
 
 
 @pytest.mark.parametrize("which", BACKENDS)
@@ -43,7 +43,7 @@ def test_example_is_valid_toml(which: str) -> None:
     assert parsed["default_target"] in parsed["targets"]
 
 
-@pytest.mark.parametrize("which", ["ssh", "runpod", "slurm"])
+@pytest.mark.parametrize("which", ["lambda", "ssh", "runpod", "slurm"])
 def test_example_targets_are_accepted_by_parse_target(which: str) -> None:
     """The example's target tables survive real config parsing, with no unknown-key warnings."""
     parsed = tomllib.loads(configcmd.render_example(which))
@@ -54,9 +54,9 @@ def test_example_targets_are_accepted_by_parse_target(which: str) -> None:
 
 
 def test_example_all_covers_every_backend_and_section() -> None:
-    """`--example all` documents all three backends plus the [claude] and [sync] sections."""
+    """`--example all` documents every backend plus the [claude] and [sync] sections."""
     parsed = tomllib.loads(configcmd.render_example("all"))
-    assert {t["backend"] for t in parsed["targets"].values()} == {"ssh", "runpod", "slurm"}
+    assert {t["backend"] for t in parsed["targets"].values()} == {"lambda", "ssh", "runpod", "slurm"}
     assert set(parsed["claude"]) == {"user_config", "creds", "session", "handoff"}
     assert set(parsed["agents"]) == {"claude", "codex"}
     assert all(set(agent) == {"full_access", "args", "environment"} for agent in parsed["agents"].values())

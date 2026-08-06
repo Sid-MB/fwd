@@ -4,7 +4,7 @@ Design intent
 -------------
 A backend answers exactly one question: *how do I get an SSH-reachable machine with a working directory on it?* It
 knows nothing about Claude, rsync filters or tmux — those are the same everywhere and live in ``ops/launch.py``. This
-boundary is what lets ``ops`` be written once against three very different providers.
+boundary is what lets ``ops`` be written once against SSH hosts, RunPod/Lambda clouds, and Slurm clusters.
 
 The protocol is deliberately split into provision (create/reuse, potentially slow and costly) and ``endpoint``
 (re-resolve connection details, cheap). RunPod hands a pod a new IP every time it restarts, so ``attach`` must call
@@ -63,8 +63,8 @@ class TargetInfo:
         status: Usually ``RUNNING``; ``PENDING`` if the caller must keep polling.
         backend_ids: Provider handles to persist in state (``pod_id``, ``job_id``, pinned ``login_host``).
         tool_prefix: Where bootstrap should install tooling. Backends set this to persistent storage — ``/workspace``
-            on RunPod (container disk is wiped on stop), scratch on Slurm (home inode quotas) — so restarts and later
-            launches skip re-downloading uv/bun/node/claude.
+            on RunPod, the attached filesystem on Lambda, scratch on Slurm — so restarts and later launches skip
+            re-downloading uv/bun/node/claude.
         scratch: Optional cache/temp root exported to bootstrap and dependency installs.
         notes: Human-readable warnings to surface after provisioning, e.g. "using RunPod proxy, rsync unavailable".
         ephemeral_home: Whether ``$HOME`` is erased across target stops even when ``tool_prefix`` persists. Agent
@@ -244,7 +244,7 @@ class Backend(ABC):
 
     @abstractmethod
     def stop(self, session: SessionState) -> None:
-        """Suspend the target while preserving data (RunPod ``pod stop``, Slurm ``scancel``).
+        """Suspend billable compute while preserving configured data (RunPod/Lambda teardown, Slurm ``scancel``).
 
         Must be safe to call on an already-stopped or already-gone target.
         """

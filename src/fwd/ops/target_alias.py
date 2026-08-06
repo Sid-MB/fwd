@@ -19,7 +19,7 @@ import shlex
 import sys
 
 from fwd import ui
-from fwd.config import Config, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, TARGET_TYPES, TargetConfig, load_config
+from fwd.config import Config, LambdaTargetConfig, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, TARGET_TYPES, TargetConfig, load_config
 from fwd.state import SessionState, StateStore
 
 
@@ -110,6 +110,8 @@ def _identity(target: TargetConfig) -> str:
         endpoint = f"{target.user + '@' if target.user else ''}{target.login_host}:{target.port}"
         extras = ", ".join(part for part in (f"partition={target.partition}" if target.partition else "", f"account={target.account}" if target.account else "") if part)
         return f"slurm login {endpoint}" + (f", {extras}" if extras else "")
+    if isinstance(target, LambdaTargetConfig):
+        return f"lambda {target.instance_type or '<instance type unset>'}, region={target.region or '<region unset>'}"
     detail = target.gpu if isinstance(target, RunpodTargetConfig) and target.compute_type == "gpu" else "cpu"
     return f"runpod {detail}, {target.cloud_type} cloud"
 

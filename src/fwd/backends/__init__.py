@@ -3,9 +3,9 @@
 Design intent
 -------------
 Backends are resolved by name through a table of ``(module, class)`` strings and imported only when actually used.
-Eager imports would make every ``fwd`` invocation pay for all three backends' module-level work, and would couple
+Eager imports would make every ``fwd`` invocation pay for every backend's module-level work, and would couple
 startup time to the slowest backend. Lazy resolution also means a broken or half-written backend cannot break
-unrelated commands — relevant here, since the three backends are being built in parallel by different teammates.
+unrelated commands to provider-specific optional code.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ __all__ = [
 
 # Backend name (matches config's ``backend =`` value) -> (module path, class name).
 BACKENDS: dict[str, tuple[str, str]] = {
+    "lambda": ("fwd.backends.lambda_cloud", "LambdaCloudBackend"),
     "ssh": ("fwd.backends.ssh", "SshHostBackend"),
     "runpod": ("fwd.backends.runpod", "RunpodBackend"),
     "slurm": ("fwd.backends.slurm", "SlurmBackend"),
