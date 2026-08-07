@@ -24,9 +24,10 @@ Treat the text following the skill name as work to perform remotely, not as lite
 ## Core workflow
 
 1. Choose the caller's agent—`codex` from Codex or `claude` from Claude—unless the user names another. Launch it with `fwd up --agent AGENT` plus `--target TARGET` only when requested; fwd handles provisioning, sync, tools, and persistence.
-2. Read the exact session name from `fwd ls --json`, then send the preserved task with `fwd send --name SESSION agent "TASK"`. Let it stream and iterate; use `--detach` only when the user asks to background the work.
-3. If setup is required, follow fwd's exact error flags. Do not preconfigure a target or guess fields.
-4. When work changes project files, inspect `fwd diff SESSION`, then retrieve the accepted result with `fwd pull --name SESSION`. Report the result and the exact attach/send/stop commands the user may need.
+2. When hardware is not already specified, inspect it with `fwd up --machines` for all targets or `fwd up TARGET --machines` for one target. The output marks the effective default and separates currently available from unavailable provider strings. SSH and other fixed targets appear without machine strings. Select an exact available value for a one-off RunPod or Lambda launch with `fwd up TARGET --machine/-m MACHINE`; never guess or shorten provider identifiers.
+3. Read the exact session name from `fwd ls --json`, then send the preserved task with `fwd send --name SESSION agent "TASK"`. Let it stream and iterate; use `--detach` only when the user asks to background the work.
+4. If setup is required, follow fwd's exact error flags. Do not preconfigure a target or guess fields.
+5. When work changes project files, inspect `fwd diff SESSION`, then retrieve the accepted result with `fwd pull --name SESSION`. Report the result and the exact attach/send/stop commands the user may need.
 
 For an explicitly requested shell command instead of coding-agent work, use `fwd send --name SESSION -- COMMAND...`. List or resume background tasks with `fwd send --ls --json` and `fwd send TASK_ID`; cancel only that task with `fwd send TASK_ID --stop`.
 
@@ -60,7 +61,7 @@ A backend implements one kind of remote compute: `runpod` provisions RunPod pods
 
 ### Targets
 
-A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, Lambda region and instance type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect all valid fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup --backend BACKEND` plus the required flags shown by `fwd setup --help`.
+A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, Lambda region and instance type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect current machine strings and defaults with `fwd up --machines` or `fwd up TARGET --machines`; inspect all valid configuration fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup --backend BACKEND` plus the required flags shown by `fwd setup --help`.
 
 Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSSH host alias can work without a saved target. Prefer CPU compute unless the user explicitly requests a GPU.
 
@@ -119,7 +120,6 @@ fwd send cancel                        # cancel queued tasks
 fwd send agent --detach "fix tests"    # queue work in the running remote agent
 fwd send agent --stop "try another approach"  # interrupt the active turn and send a replacement
 fwd diff                               # show local/remote project differences
-fwd diff -q                            # machine-readable sync check
 fwd push                               # mirror local changes to the remote
 fwd pull outputs/                      # retrieve selected remote results
 fwd ls --json                          # inspect live sessions

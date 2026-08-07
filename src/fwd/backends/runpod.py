@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, Config, RunpodTargetConfig
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
@@ -237,7 +237,7 @@ def is_missing_pod_error(message: str) -> bool:
     return "not found" in lowered or "404" in lowered
 
 
-def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = None, *, network_volume_id: str | None = None) -> list[str]:
+def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = None, *, machine: str | None = None, network_volume_id: str | None = None) -> list[str]:
     """Build the full ``runpodctl pod create`` argv for a target. Pure, so the flag matrix is unit-testable.
 
     Two rules encode what the CLI actually accepts (per the captured ``pod create --help`` fixture):
@@ -247,17 +247,23 @@ def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = No
     - **CPU pods carry no GPU flags at all.** ``--gpu-id`` is meaningless there and passing it is how you get an
       opaque scheduling failure, so the ``--gpu-id`` flag (and any ``--gpu`` override) is omitted entirely.
     """
+    compute_type = "cpu" if machine == "cpu" else ("gpu" if machine else cfg.compute_type)
+    image = cfg.image
+    if machine == "cpu" and image == DEFAULT_RUNPOD_GPU_IMAGE:
+        image = DEFAULT_RUNPOD_CPU_IMAGE
+    elif machine not in (None, "cpu") and image == DEFAULT_RUNPOD_CPU_IMAGE:
+        image = DEFAULT_RUNPOD_GPU_IMAGE
     args = [
         "pod",
         "create",
         "--name",
         pod_name,
         "--image",
-        cfg.image,
+        image,
         "--ports",
         "22/tcp",
         "--compute-type",
-        cfg.compute_type.upper(),
+        compute_type.upper(),
         "--cloud-type",
         cfg.cloud_type.upper(),
         "--volume-mount-path",
@@ -269,14 +275,14 @@ def create_pod_args(cfg: RunpodTargetConfig, pod_name: str, gpu: str | None = No
             args += ["--data-center-ids", cfg.data_center_id]
     else:
         args += ["--volume-in-gb", str(cfg.volume_gb)]
-    if cfg.compute_type != "cpu":
-        gpu_id = gpu or cfg.gpu
+    if compute_type != "cpu":
+        gpu_id = machine or gpu or cfg.gpu
         if gpu_id:
             args += ["--gpu-id", gpu_id]
     return args
 
 
-def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, network_volume_id: str | None = None) -> str:
+def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, machine: str | None = None, network_volume_id: str | None = None) -> str:
     """Describe the pod about to be created, mentioning only values actually sent to ``runpodctl``.
 
     Derived from :func:`create_pod_args` rather than from the config so the progress line cannot drift from the real
@@ -284,7 +290,7 @@ def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, network_v
     ``(NVIDIA GeForce RTX 4090, 20 GB volume)`` — a GPU that was never requested and a volume RunPod ignores — which
     is exactly the sort of label that sends someone debugging in the wrong direction.
     """
-    args = create_pod_args(cfg, "-", gpu, network_volume_id=network_volume_id)
+    args = create_pod_args(cfg, "-", gpu, machine=machine, network_volume_id=network_volume_id)
     parts: list[str] = []
     if "--gpu-id" in args:
         parts.append(args[args.index("--gpu-id") + 1])
@@ -294,7 +300,7 @@ def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, network_v
     if network_volume_id:
         parts.append(f"persistent volume {network_volume_id}")
     else:
-        parts.append(f"{cfg.volume_gb} GB Pod volume" if cfg.compute_type != "cpu" else "container disk only")
+        parts.append(f"{cfg.volume_gb} GB Pod volume" if args[args.index('--compute-type') + 1] != "CPU" else "container disk only")
     return ", ".join(parts)
 
 
@@ -400,6 +406,51 @@ class RunpodBackend(Backend):
     def __init__(self, target: RunpodTargetConfig, config: Config) -> None:
         super().__init__(target, config)
         self._created_pod_id: str | None = None
+        self._selected_machine: str | None = None
+
+    def machine_inventory(self) -> MachineInventory:
+        """Return exact RunPod GPU ids for the configured cloud pool, with CPU as the provider-neutral CPU choice."""
+        cfg = self.target
+        default = "cpu" if cfg.compute_type == "cpu" else cfg.gpu
+        try:
+            payload = _first_json(self._run_ctl(["gpu", "list"], timeout=30.0))
+        except RunpodError as exc:
+            unavailable = () if default == "cpu" else (MachineType(default, "configured default; availability could not be checked"),)
+            return MachineInventory(default=default, selectable=True, available=(MachineType("cpu", "CPU pod"),), unavailable=unavailable, error=str(exc))
+        if not isinstance(payload, list):
+            unavailable = () if default == "cpu" else (MachineType(default, "configured default; availability could not be checked"),)
+            return MachineInventory(default=default, selectable=True, available=(MachineType("cpu", "CPU pod"),), unavailable=unavailable, error="runpodctl gpu list returned an invalid machine inventory")
+        available: list[MachineType] = [MachineType("cpu", "CPU pod")]
+        unavailable: list[MachineType] = []
+        seen = {"cpu"}
+        cloud_field = "secureCloud" if cfg.cloud_type == "secure" else "communityCloud"
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("gpuId") or item.get("id") or item.get("gpuTypeId") or item.get("displayName") or item.get("name") or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            label = str(item.get("displayName") or item.get("name") or value)
+            memory = item.get("memoryInGb")
+            stock = str(item.get("stockStatus") or "").strip()
+            detail = " · ".join(part for part in (label if label != value else "", f"{memory} GB" if memory else "", f"capacity: {stock}" if stock else "") if part)
+            selectable = bool(item.get("available")) and bool(item.get(cloud_field, True))
+            (available if selectable else unavailable).append(MachineType(value, detail))
+        if default not in seen:
+            unavailable.append(MachineType(default, "configured default was not returned by RunPod"))
+        return MachineInventory(default=default, selectable=True, available=tuple(sorted(available, key=lambda item: (item.value != default, item.value.lower()))), unavailable=tuple(sorted(unavailable, key=lambda item: (item.value != default, item.value.lower()))))
+
+    def select_machine(self, machine: str) -> None:
+        """Validate and retain an exact RunPod machine id before any pod or volume is created."""
+        inventory = self.machine_inventory()
+        if inventory.error and machine != "cpu":
+            raise MachineSelectionError(f"could not validate RunPod machine {machine!r} for target {self.target.name!r}: {inventory.error}", inventory, self.target)
+        if machine in {item.value for item in inventory.unavailable}:
+            raise MachineSelectionError(f"RunPod machine {machine!r} is currently unavailable for target {self.target.name!r}", inventory, self.target)
+        if machine not in {item.value for item in inventory.available}:
+            raise MachineSelectionError(f"unknown RunPod machine {machine!r} for target {self.target.name!r}", inventory, self.target)
+        self._selected_machine = machine
 
     @classmethod
     def config_parameters(cls) -> tuple[ConfigParameter, ...]:
@@ -527,7 +578,7 @@ class RunpodBackend(Backend):
 
     def _create_pod(self, pod_name: str, gpu: str | None, network_volume_id: str | None) -> dict[str, Any]:
         """Create a pod from the target config, always publishing 22/tcp and mounting the persistent volume."""
-        return parse_pod(self._run_ctl(create_pod_args(self.target, pod_name, gpu, network_volume_id=network_volume_id), timeout=300.0))
+        return parse_pod(self._run_ctl(create_pod_args(self.target, pod_name, gpu, machine=self._selected_machine, network_volume_id=network_volume_id), timeout=300.0))
 
     def _find_network_volume(self, session_name: str) -> str | None:
         """Return the id of this session's existing network volume, or ``None`` if it has never been created.
@@ -658,7 +709,7 @@ class RunpodBackend(Backend):
         if existing is None:
             with ui.step(f"Preparing persistent storage for {pod_name}"):
                 network_volume_id = self._ensure_network_volume(session_name)
-            with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu, network_volume_id=network_volume_id)})"):
+            with ui.step(f"Creating pod {pod_name} ({create_summary(cfg, gpu, machine=self._selected_machine, network_volume_id=network_volume_id)})"):
                 pod = self._create_pod(pod_name, gpu, network_volume_id)
             # Record ownership before the readiness wait: Ctrl-C during that wait must delete this invocation's pod,
             # while a pod discovered by name remains categorically off-limits to interruption cleanup.

@@ -55,6 +55,8 @@ def _relaunch(
     flags = session.flags
     launch_ops.launch(
         target=flags.get("target"),
+        machine=flags.get("machine"),
+        gpu=flags.get("gpu"),
         name=session.name,
         initial_command=launch_ops.initial_command_for(session),
         session=bool(flags.get("session")),

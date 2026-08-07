@@ -50,6 +50,7 @@ class SessionSelector:
     target: TargetSelector | None = None
     agent: str | None = None
     command: tuple[str, ...] | None = None
+    machine: str | None = None
     gpu: str | None = None
 
     @property
@@ -62,7 +63,7 @@ class SessionSelector:
     @property
     def constrained(self) -> bool:
         """Return whether the user supplied anything beyond the implicit current-project selector."""
-        return any((self.name, self.target, self.agent, self.command is not None, self.gpu))
+        return any((self.name, self.target, self.agent, self.command is not None, self.machine, self.gpu))
 
     def describe(self) -> str:
         """Render a concise description for errors without exposing provider credentials."""
@@ -75,6 +76,8 @@ class SessionSelector:
             parts.append(f"agent={self.agent!r}")
         if self.command is not None:
             parts.append(f"command={shlex.join(self.command)!r}")
+        if self.machine:
+            parts.append(f"machine={self.machine!r}")
         if self.gpu:
             parts.append(f"gpu={self.gpu!r}")
         return ", ".join(parts) or "the current project"
@@ -146,6 +149,7 @@ def parse(
     target: str | None = None,
     agent: str | None = None,
     name: str | None = None,
+    machine: str | None = None,
     gpu: str | None = None,
 ) -> SessionSelector:
     """Parse flags and positional selectors using the shared session-target-agent-command precedence."""
@@ -185,7 +189,7 @@ def parse(
         else:
             command = tuple(remaining)
 
-    return SessionSelector(name=selected_name, target=selected_target, agent=selected_agent, command=command, gpu=gpu)
+    return SessionSelector(name=selected_name, target=selected_target, agent=selected_agent, command=command, machine=machine, gpu=gpu)
 
 
 def matches(session: SessionState, selector: SessionSelector, *, cwd: Path) -> bool:
@@ -201,6 +205,8 @@ def matches(session: SessionState, selector: SessionSelector, *, cwd: Path) -> b
     if selector.agent is not None and initial_command != agents.AGENTS[selector.agent].command:
         return False
     if selector.command is not None and initial_command != selector.command:
+        return False
+    if selector.machine is not None and session.flags.get("machine") != selector.machine:
         return False
     if selector.gpu is not None and session.flags.get("gpu") != selector.gpu:
         return False
@@ -218,6 +224,7 @@ def parse_current(
     target: str | None = None,
     agent: str | None = None,
     name: str | None = None,
+    machine: str | None = None,
     gpu: str | None = None,
     project_dir: Path | None = None,
     state: StateStore | None = None,
@@ -232,7 +239,7 @@ def parse_current(
         config = load_config(cwd)
     except (ConfigError, OSError) as exc:
         ui.die(str(exc))
-    return parse(positional, config=config, sessions=sessions, target=target, agent=agent, name=name, gpu=gpu), config, sessions, cwd
+    return parse(positional, config=config, sessions=sessions, target=target, agent=agent, name=name, machine=machine, gpu=gpu), config, sessions, cwd
 
 
 def select_current(
@@ -241,6 +248,7 @@ def select_current(
     target: str | None = None,
     agent: str | None = None,
     name: str | None = None,
+    machine: str | None = None,
     gpu: str | None = None,
     project_dir: Path | None = None,
     state: StateStore | None = None,
@@ -253,8 +261,8 @@ def select_current(
             this because the command owns the primary pane. Managed-command callers disable it because the command is
             work sent to whichever session the remaining target/name selectors choose.
     """
-    selector, config, sessions, cwd = parse_current(positional, target=target, agent=agent, name=name, gpu=gpu, project_dir=project_dir, state=state)
-    matching_selector = selector if match_command or selector.command is None else SessionSelector(name=selector.name, target=selector.target, agent=selector.agent, gpu=selector.gpu)
+    selector, config, sessions, cwd = parse_current(positional, target=target, agent=agent, name=name, machine=machine, gpu=gpu, project_dir=project_dir, state=state)
+    matching_selector = selector if match_command or selector.command is None else SessionSelector(name=selector.name, target=selector.target, agent=selector.agent, machine=selector.machine, gpu=selector.gpu)
     matched = matching_sessions(sessions, matching_selector, cwd=cwd)
     exact = next((candidate for candidate in sessions if selector.name and candidate.name == selector.name), None)
     if exact is not None and not matched:

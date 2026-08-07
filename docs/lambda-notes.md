@@ -5,6 +5,10 @@ documented on **2026-08-05**. It is an implementation reference, not evidence of
 advertising a release as live-verified, exercise one explicitly named instance/filesystem through create, SSH, sync,
 stop, recreate, and remove while watching the Lambda console.
 
+## Per-launch instance types
+
+`fwd up TARGET --machines` reads the complete `/instance-types` catalog, marks the target's configured `instance_type` as its default, and separates exact instance-type names by capacity in the configured region. `fwd up TARGET --machine/-m NAME` overrides that default for one session launch only. The exact name must be in the available list; unknown and unavailable selections fail before instance or filesystem creation and reprint the scoped inventory. The chosen name is persisted in session flags so reuse and restart cannot silently drift back to different hardware.
+
 ## Prerequisites and authentication
 
 Create an API key and SSH key in the Lambda Cloud console. Export the API key locally as `LAMBDA_API_KEY`; configure

@@ -443,6 +443,7 @@ def _sync_project(
 
 def launch(
     target: str | None = None,
+    machine: str | None = None,
     gpu: str | None = None,
     name: str | None = None,
     *,
@@ -464,6 +465,7 @@ def launch(
     try:
         return _launch(
             target=target,
+            machine=machine,
             gpu=gpu,
             name=name,
             new=new,
@@ -487,6 +489,7 @@ def launch(
 
 def _launch(
     target: str | None = None,
+    machine: str | None = None,
     gpu: str | None = None,
     name: str | None = None,
     *,
@@ -508,6 +511,7 @@ def _launch(
 
     Args:
         target: Target name from config; ``None`` resolves via the existing session, then ``default_target``.
+        machine: Exact provider machine identifier selected for this launch.
         gpu: GPU override passed to the backend.
         name: Session name; defaults to :func:`derive_session_name` of the cwd.
         new: Create a fresh randomly suffixed session instead of reusing the current directory's session.
@@ -538,14 +542,6 @@ def _launch(
         ui.die(str(exc))
     setup_github_effective = cfg.github.auth if setup_github is None else setup_github
     github_credential: github_auth.GitHubCredential | None = None
-    if setup_github_effective and not push_only:
-        try:
-            github_credential = github_auth.resolve_local_credential(local_cwd, required=setup_github is True)
-        except github_auth.GitHubAuthError as exc:
-            ui.die(str(exc))
-        if github_credential is None:
-            ui.warn("GitHub setup skipped because no usable local credential was available; pass --setup-github to require it")
-            setup_github_effective = False
 
     st = interrupt_cleanup.store
     if new and name is not None:
@@ -563,6 +559,9 @@ def _launch(
         if existing is not None:
             session_name = existing.name
         target_hint = existing
+    if machine is None and existing is not None:
+        stored_machine = existing.flags.get("machine")
+        machine = str(stored_machine) if stored_machine else None
     interrupt_cleanup.session_name = session_name
     desired_ports = tuple(cfg.forwarding.ports) if forward_ports is None else forward_ports
     from fwd.ops import ports as ports_ops
@@ -572,6 +571,16 @@ def _launch(
     target_cfg = _resolve_target_or_setup(cfg, target, target_hint, local_cwd)
     backend = backends.make_backend(target_cfg, cfg)
     interrupt_cleanup.backend = backend
+    if machine is not None:
+        backend.select_machine(machine)
+    if setup_github_effective and not push_only:
+        try:
+            github_credential = github_auth.resolve_local_credential(local_cwd, required=setup_github is True)
+        except github_auth.GitHubAuthError as exc:
+            ui.die(str(exc))
+        if github_credential is None:
+            ui.warn("GitHub setup skipped because no usable local credential was available; pass --setup-github to require it")
+            setup_github_effective = False
     if initial_command is None:
         initial_command = cfg.command_for(target_cfg.name)
     agent = agents.resolve(initial_command)
@@ -591,6 +600,7 @@ def _launch(
         ui.die(f"--session, --handoff, --user-config, and --creds require a compatible coding agent such as {ui.command('up claude')!r}")
     flags["initial_command"] = list(initial_command)
     flags["command_via_send"] = run_command_as_task
+    flags["machine"] = machine
 
     if new:
         replaced = f" instead of reusing {directory_session.name!r}" if directory_session is not None else ""

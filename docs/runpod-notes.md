@@ -130,6 +130,8 @@ explicit `--gpu` override is ignored rather than passed through, because `--gpu-
 scheduling failure. One test asserts that every `--flag` the backend emits actually appears in the captured
 `pod-create-help.txt`, so inventing a flag that RunPod does not accept fails locally.
 
+The provider-neutral `fwd up runpod --machine/-m MACHINE` path is intentionally different from legacy `--gpu`: it may switch a CPU-configured target to an exact GPU id returned by `runpodctl gpu list`, or switch a GPU target to the literal `cpu` selector. `fwd up runpod --machines` marks the configured default and separates entries by the selected Secure/Community pool's current availability. Unknown or unavailable values are rejected before pod or volume creation and the inventory is printed again.
+
 ## CPU pods do not get a persistent volume
 
 Worth knowing before anyone configures a cheap CPU target:

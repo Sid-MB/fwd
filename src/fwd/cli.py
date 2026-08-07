@@ -238,6 +238,8 @@ def _run_up(
     target: str | None = None,
     agent: str | None = None,
     name: str | None = None,
+    machine: str | None = None,
+    machines: bool = False,
     gpu: str | None = None,
     new: bool = False,
     reuse: bool = False,
@@ -257,8 +259,11 @@ def _run_up(
     """Shared launch/reuse implementation, returning an explicit streamed-command exit code when applicable."""
     from fwd.ops import attach as attach_ops
     from fwd.ops import launch as launch_ops
+    from fwd.ops import machines as machines_ops
     from fwd.ops import session_select
 
+    if machine and gpu:
+        ui.die("--machine and the legacy --gpu override are mutually exclusive")
     if reuse and new:
         ui.die("--reuse and --new are mutually exclusive")
     if reuse and no_attach:
@@ -268,6 +273,7 @@ def _run_up(
         target=target,
         agent=agent,
         name=name,
+        machine=machine,
         gpu=gpu,
         state=launch_ops.store(),
         match_command=attach,
@@ -276,6 +282,16 @@ def _run_up(
     config = selection.config
     sessions = selection.sessions
     cwd = selection.cwd
+    if machines:
+        if len(positional) > 1 or any((name, agent, machine, gpu, new, reuse, restart, attach, no_attach, session, handoff, user_config, creds, setup_github is not None, stop_after, force_stop_after, ports)):
+            ui.die("--machines can only be combined with an optional target/backend selector or --target")
+        listing_target = selector.target
+        if positional:
+            listing_target = session_select.target_selector(positional[0], config, sessions)
+            if listing_target is None:
+                ui.die(f"{positional[0]!r} is not a configured target or backend; --machines accepts only an optional target/backend selector")
+        machines_ops.render(machines_ops.targets_for_listing(config, listing_target), config)
+        return None
     if new and selector.name is not None:
         ui.die("--new and --name are mutually exclusive")
     matches = selection.matches
@@ -338,21 +354,31 @@ def _run_up(
         launch_new = has_project_session
 
     stream_command = managed_command
-    state = launch_ops.launch(
-        target=selector.target.launch_name if selector.target else None,
-        gpu=gpu,
-        name=launch_name,
-        new=launch_new,
-        initial_command=() if stream_command else initial_command,
-        run_command_as_task=stream_command,
-        session=session,
-        handoff=handoff,
-        user_config=user_config,
-        creds=creds,
-        attach=effective_attach,
-        forward_ports=ports,
-        **github_override,
-    )
+    try:
+        state = launch_ops.launch(
+            target=selector.target.launch_name if selector.target else None,
+            machine=machine,
+            gpu=gpu,
+            name=launch_name,
+            new=launch_new,
+            initial_command=() if stream_command else initial_command,
+            run_command_as_task=stream_command,
+            session=session,
+            handoff=handoff,
+            user_config=user_config,
+            creds=creds,
+            attach=effective_attach,
+            forward_ports=ports,
+            **github_override,
+        )
+    except Exception as exc:
+        from fwd.backends import MachineSelectionError
+
+        if not isinstance(exc, MachineSelectionError):
+            raise
+        ui.error(str(exc))
+        machines_ops.render_target(exc.target, exc.inventory)
+        raise typer.Exit(1) from None
     if stream_command:
         from fwd.ops import send as send_ops
 
@@ -365,6 +391,8 @@ def _up(
     selectors: Annotated[list[str] | None, typer.Argument(help="Optional target/backend followed by a coding agent or command. Target names take precedence over agent names.", autocompletion=complete_session_selector)] = None,
     target: Annotated[str | None, typer.Option("--target", "-t", help="Configured target to use; defaults to default_target, or the existing session's target.", autocompletion=complete_target, rich_help_panel=PANEL_TARGET)] = None,
     agent: Annotated[str | None, typer.Option("--agent", help="Registered coding agent to launch, such as claude or codex.", autocompletion=complete_agent, rich_help_panel=PANEL_TARGET)] = None,
+    machine: Annotated[str | None, typer.Option("--machine", "-m", help="Exact provider machine string for this launch; inspect valid and currently available values with --machines.", rich_help_panel=PANEL_TARGET)] = None,
+    machines: Annotated[bool, typer.Option("--machines", help="List available and unavailable machine strings, marking each target's default, then exit.", rich_help_panel=PANEL_TARGET)] = False,
     gpu: Annotated[str | None, typer.Option("--gpu", help="Override GPU selection for an explicitly GPU-enabled target (RunPod GPU id or Slurm --gres spec).", autocompletion=complete_gpu, rich_help_panel=PANEL_TARGET)] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Session name; defaults to a stable slug derived from this directory.", autocompletion=complete_session, rich_help_panel=PANEL_TARGET)] = None,
     new: Annotated[bool, typer.Option("--new", help="Create a fresh session instead of reusing this directory's existing session. Cannot be combined with --name.", rich_help_panel=PANEL_TARGET)] = False,
@@ -396,6 +424,8 @@ def _up(
         tuple(selectors or ()),
         target=target,
         agent=agent,
+        machine=machine,
+        machines=machines,
         gpu=gpu,
         name=name,
         new=new,

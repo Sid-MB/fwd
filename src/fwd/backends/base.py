@@ -103,6 +103,40 @@ class ProvisionError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class MachineType:
+    """One exact provider machine selector and the human-readable detail shown by ``fwd up --machines``."""
+
+    value: str
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MachineInventory:
+    """Current machine choices for one target, split by launchability and carrying its configured default.
+
+    ``selectable`` distinguishes a provider whose catalog is temporarily empty from targets that never accept machine
+    strings. ``fixed`` describes SSH and Slurm targets whose endpoint or allocation policy is configured elsewhere.
+    ``error`` preserves a discovery failure without hiding the target or its configured default from a listing.
+    """
+
+    default: str | None = None
+    selectable: bool = False
+    available: tuple[MachineType, ...] = ()
+    unavailable: tuple[MachineType, ...] = ()
+    fixed: str | None = None
+    error: str | None = None
+
+
+class MachineSelectionError(ProvisionError):
+    """Raised before provisioning when an unsupported, unknown, or unavailable machine string is selected."""
+
+    def __init__(self, message: str, inventory: MachineInventory, target: TargetConfig) -> None:
+        super().__init__(message)
+        self.inventory = inventory
+        self.target = target
+
+
+@dataclass(frozen=True, slots=True)
 class ConfigChoice:
     """One provider-suggested value for a setup parameter."""
 
@@ -189,6 +223,19 @@ class Backend(ABC):
         """
         del session_name
         return False
+
+    def machine_inventory(self) -> MachineInventory:
+        """Return current selectable hardware; the default represents a fixed target with no machine selector."""
+        fixed = "fixed SSH endpoint" if self.name == "ssh" else "configured Slurm allocation" if self.name == "slurm" else "configured endpoint/allocation"
+        return MachineInventory(fixed=fixed)
+
+    def select_machine(self, machine: str) -> None:
+        """Apply an exact per-launch machine selector before provisioning begins.
+
+        Provider backends override this after validating against :meth:`machine_inventory`. Fixed targets retain this
+        implementation so the shared CLI gives the same actionable error and inventory output for every backend.
+        """
+        raise MachineSelectionError(f"target {self.target.name!r} ({self.name}) does not support machine selectors; omit --machine", self.machine_inventory(), self.target)
 
     @abstractmethod
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:

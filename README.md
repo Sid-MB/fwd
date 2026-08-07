@@ -166,6 +166,7 @@ fwd up <TAB>                 # sessions, targets/backends, and coding agents
 fwd up --target <TAB>        # configured targets, RunPod, and SSH aliases
 fwd up --agent <TAB>         # registered coding agents
 fwd up --gpu <TAB>           # locally configured GPU identifiers
+fwd up --machines            # current provider strings for every target, with defaults and availability
 fwd rm <TAB>
 fwd stop <TAB>
 fwd send --name <TAB>
@@ -374,6 +375,8 @@ neither the checkout nor the remote project is modified.
 | `[TARGET] [AGENT\|COMMAND...]` | Optional target/backend, then a registered agent or streamed durable command; omit the command to use layered `default_command` | `fwd up pod codex` |
 | `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
 | `--agent NAME` | Select a registered coding agent without positional ambiguity | `fwd up --agent codex` |
+| `--machine/-m MACHINE` | Select an exact provider machine string for this launch; retained for session reuse/restart | `fwd up lambda -m gpu_1x_h100_sxm5` |
+| `--machines` | List each target's default and currently available/unavailable machine strings; fixed targets remain listed without sub-machines | `fwd up lambda --machines` |
 | `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
 | `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
 | `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
@@ -402,6 +405,8 @@ fwd --agent codex                 # connect to this project's Codex session, or 
 fwd --name demo                   # connect to exact name, or create it interactively
 fwd up                            # launch layered default_command and use default_target
 fwd up runpod                     # launch layered default_command on RunPod
+fwd up runpod --machines          # discover exact RunPod strings and the configured default
+fwd up runpod -m "NVIDIA H100 80GB HBM3"  # choose an exact currently available GPU
 fwd up runpod codex               # launch Codex on RunPod
 fwd up --target work --agent codex  # the fully explicit spelling
 fwd up claude                       # transfer this conversation and auto-attach in a human terminal
@@ -651,6 +656,8 @@ remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 
 ### RunPod — provision CPU or GPU compute per session
 
+Run `fwd up runpod --machines` to query `runpodctl gpu list`, see the target's explicit default, and view available and unavailable GPU ids separately. The literal `cpu` selector is always present. Select one exact listed value for an individual launch with `fwd up runpod --machine/-m MACHINE`; switching between `cpu` and a GPU also selects the corresponding built-in image unless the target has a custom image. An unknown or currently unavailable value fails before storage or a pod is created and reprints the scoped inventory. The older `--gpu` flag remains for compatibility with explicitly GPU-configured targets and Slurm allocation specs.
+
 ```toml
 [targets.pod]
 backend = "runpod"
@@ -718,6 +725,8 @@ Create an API key in Lambda Cloud and export it only on the local machine:
 export LAMBDA_API_KEY="..."
 fwd doctor --target lambda-gpu
 fwd up --target lambda-gpu
+fwd up lambda-gpu --machines              # exact instance types, regional availability, and configured default
+fwd up lambda-gpu -m gpu_1x_h100_sxm5    # one-launch override using an available exact name
 ```
 
 The backend calls Lambda's public REST API directly; there is no provider CLI dependency. Interactive setup discovers
@@ -731,8 +740,7 @@ API key is never written to fwd config, session state, subprocess arguments, log
   session-owned filesystem after the normal consequence-aware confirmation.
 - **Disposable mode is explicit.** `persistent = false` avoids filesystem billing but means `fwd stop` permanently
   erases the checkout, installed tools, credentials, conversations, and agent state on that instance.
-- **Capacity is checked at launch time.** Lambda inventory varies by region. `fwd setup` suggests current capacity and
-  launch errors preserve the provider's actionable message rather than silently selecting different hardware.
+- **Capacity is checked at launch time.** Lambda inventory varies by region. `fwd up TARGET --machines` separates the complete instance-type catalog into available and unavailable lists for the target region and marks the configured default even when it has no capacity. `--machine/-m` accepts only an exact currently available instance-type name; invalid selections fail before resources are created and print that same scoped inventory. `fwd setup` suggests current capacity and launch errors preserve the provider's actionable message rather than silently selecting different hardware.
 - **Remote stop-after is unavailable.** Lambda API keys currently grant broad account access, so fwd will not copy one
   onto the instance merely to let it terminate itself. Local `fwd stop` remains fully supported.
 

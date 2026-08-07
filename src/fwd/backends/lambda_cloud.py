@@ -30,7 +30,7 @@ import urllib.request
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import Config, LambdaTargetConfig
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState
@@ -243,6 +243,7 @@ class LambdaCloudBackend(Backend):
         self._client: LambdaCloudClient | None = None
         self._created_instance_id: str | None = None
         self._created_filesystem_id: str | None = None
+        self._selected_machine: str | None = None
 
     @property
     def client(self) -> LambdaCloudClient:
@@ -250,6 +251,53 @@ class LambdaCloudBackend(Backend):
         if self._client is None:
             self._client = LambdaCloudClient()
         return self._client
+
+    @property
+    def effective_instance_type(self) -> str:
+        """Return the per-launch override when present, otherwise the target's configured default instance type."""
+        return self._selected_machine or self.target.instance_type
+
+    def machine_inventory(self) -> MachineInventory:
+        """Split Lambda's current instance-type catalog by capacity in this target's configured region."""
+        try:
+            data = self.client.request("GET", "/instance-types")
+        except LambdaCloudError as exc:
+            unavailable = (MachineType(self.target.instance_type, "configured default; availability could not be checked"),) if self.target.instance_type else ()
+            return MachineInventory(default=self.target.instance_type or None, selectable=True, unavailable=unavailable, error=str(exc))
+        if not isinstance(data, dict):
+            unavailable = (MachineType(self.target.instance_type, "configured default; availability could not be checked"),) if self.target.instance_type else ()
+            return MachineInventory(default=self.target.instance_type or None, selectable=True, unavailable=unavailable, error="Lambda Cloud returned an invalid instance-type inventory")
+        available: list[MachineType] = []
+        unavailable: list[MachineType] = []
+        for key, item in data.items():
+            if not isinstance(item, dict):
+                continue
+            spec = item.get("instance_type") if isinstance(item.get("instance_type"), dict) else {}
+            value = str(spec.get("name") or key).strip()
+            if not value:
+                continue
+            regions = item.get("regions_with_capacity_available")
+            region_names = {str(region.get("name")) for region in regions if isinstance(region, dict) and region.get("name")} if isinstance(regions, list) else set()
+            gpu = str(spec.get("gpu_description") or spec.get("description") or "").strip()
+            price = spec.get("price_cents_per_hour")
+            detail = ", ".join(part for part in (gpu, f"{price} cents/hour" if price is not None else "") if part)
+            (available if self.target.region in region_names else unavailable).append(MachineType(value, detail or f"no capacity in {self.target.region}"))
+        values = {item.value for item in (*available, *unavailable)}
+        if self.target.instance_type and self.target.instance_type not in values:
+            unavailable.append(MachineType(self.target.instance_type, "configured default was not returned by Lambda Cloud"))
+        default = self.target.instance_type or None
+        return MachineInventory(default=default, selectable=True, available=tuple(sorted(available, key=lambda item: (item.value != default, item.value))), unavailable=tuple(sorted(unavailable, key=lambda item: (item.value != default, item.value))))
+
+    def select_machine(self, machine: str) -> None:
+        """Validate regional Lambda capacity and retain the exact instance-type name for this launch."""
+        inventory = self.machine_inventory()
+        if inventory.error:
+            raise MachineSelectionError(f"could not validate Lambda machine {machine!r} for target {self.target.name!r}: {inventory.error}", inventory, self.target)
+        if machine in {item.value for item in inventory.unavailable}:
+            raise MachineSelectionError(f"Lambda machine {machine!r} is currently unavailable in {self.target.region} for target {self.target.name!r}", inventory, self.target)
+        if machine not in {item.value for item in inventory.available}:
+            raise MachineSelectionError(f"unknown Lambda machine {machine!r} for target {self.target.name!r}", inventory, self.target)
+        self._selected_machine = machine
 
     @classmethod
     def config_parameters(cls) -> tuple[ConfigParameter, ...]:
@@ -355,8 +403,8 @@ class LambdaCloudBackend(Backend):
         actual_type = str(instance_type.get("name") or "")
         if actual_region and actual_region != cfg.region:
             raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} is in {actual_region}, but target {cfg.name!r} now selects {cfg.region}; stop the session before changing regions or restore the original config")
-        if actual_type and actual_type != cfg.instance_type:
-            raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} uses {actual_type}, but target {cfg.name!r} now selects {cfg.instance_type}; stop the session before changing hardware or restore the original config")
+        if actual_type and actual_type != self.effective_instance_type:
+            raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} uses {actual_type}, but this launch selects {self.effective_instance_type}; stop the session before changing hardware or restore the original selection")
         if cfg.persistent and filesystem is None:
             raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} has no deterministic session filesystem; refusing to claim its local disk is persistent—stop/remove it or set persistent = false explicitly")
         if filesystem is None:
@@ -376,7 +424,7 @@ class LambdaCloudBackend(Backend):
         cfg = self.target
         payload: dict[str, Any] = {
             "region_name": cfg.region,
-            "instance_type_name": cfg.instance_type,
+            "instance_type_name": self.effective_instance_type,
             "ssh_key_names": [cfg.ssh_key_name],
             "name": name,
         }
@@ -417,8 +465,8 @@ class LambdaCloudBackend(Backend):
         """Reuse live compute or launch a replacement around the session's deterministic persistent filesystem."""
         del gpu
         cfg = self.target
-        if not cfg.region or not cfg.instance_type or not cfg.ssh_key_name:
-            missing = [name for name, value in (("region", cfg.region), ("instance_type", cfg.instance_type), ("ssh_key_name", cfg.ssh_key_name)) if not value]
+        if not cfg.region or not self.effective_instance_type or not cfg.ssh_key_name:
+            missing = [name for name, value in (("region", cfg.region), ("instance_type", self.effective_instance_type), ("ssh_key_name", cfg.ssh_key_name)) if not value]
             raise LambdaCloudError(f"target {cfg.name!r} is missing required Lambda setting(s): {', '.join(missing)}; rerun `fwd setup --backend lambda --force` with the required flags")
         name = instance_name_for(session_name)
         notes: list[str] = []
@@ -428,7 +476,7 @@ class LambdaCloudBackend(Backend):
             filesystem = self._find_filesystem(filesystem_name_for(session_name))
         if instance is None:
             filesystem = self._ensure_filesystem(session_name, filesystem)
-            with ui.step(f"Launching Lambda instance {name} ({cfg.instance_type} in {cfg.region})"):
+            with ui.step(f"Launching Lambda instance {name} ({self.effective_instance_type} in {cfg.region})"):
                 instance_id = self._launch_instance(name, filesystem)
         else:
             self._validate_existing_instance(instance, filesystem)
