@@ -157,7 +157,9 @@ class ConfigParameter:
     """Standard setup metadata owned by a backend.
 
     ``choices`` contains cheap static suggestions. Backends override :meth:`Backend.config_choices` for provider or
-    machine-derived values such as SSH aliases, RunPod GPU identifiers, or cloud machine types. ``prompt_when`` keeps
+    machine-derived values such as SSH aliases, RunPod GPU identifiers, or cloud machine types. ``search_labels`` opts
+    into description/location searches; identifiers remain the safe default so availability metadata cannot produce
+    unrelated machine matches. ``prompt_when`` keeps
     conditional setup knowledge in the backend rather than teaching the generic wizard about provider fields; flags
     and schema discovery remain available even when a field is irrelevant to the current interactive choices.
     """
@@ -170,6 +172,8 @@ class ConfigParameter:
     advanced: bool = False
     choices: tuple[ConfigChoice, ...] = ()
     allow_free_text: bool = True
+    searchable: bool = False
+    search_labels: bool = False
     prompt_when: tuple[tuple[str, str], ...] = ()
 
 
@@ -236,6 +240,9 @@ class Backend(ABC):
         implementation so the shared CLI gives the same actionable error and inventory output for every backend.
         """
         raise MachineSelectionError(f"target {self.target.name!r} ({self.name}) does not support machine selectors; omit --machine", self.machine_inventory(), self.target)
+
+    def validate_setup(self) -> None:
+        """Validate provider-backed target values before setup writes them; static backends need no extra checks."""
 
     @abstractmethod
     def provision(self, session_name: str, project_name: str, *, gpu: str | None = None) -> TargetInfo:

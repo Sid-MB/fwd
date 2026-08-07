@@ -5,6 +5,7 @@ description = "Move coding work and agent sessions to remote compute"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "prompt-toolkit>=3.0",
     "typer>=0.12",
     "rich>=13",
     "tomlkit>=0.13",

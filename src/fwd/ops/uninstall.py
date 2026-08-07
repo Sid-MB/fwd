@@ -1,7 +1,7 @@
 """Remove fwd-owned local data while leaving final package-manager removal to the still-running CLI process.
 
 The executable cannot reliably delete its own environment on every platform while it is running. This module removes
-the data around that executable—state/config, installed coding-agent skill, completions, and temporary artifacts—then
+the data around that executable—state/config, saved provider credentials, installed coding-agent skill, completions, and temporary artifacts—then
 prints package-manager-specific commands that the user can run after this process exits.
 
 Remote resources are deliberately outside the uninstall boundary. Losing ``state.json`` while a pod or allocation is
@@ -227,7 +227,7 @@ def uninstall(*, force: bool = False) -> int:
     if not force:
         if not ui.interactive_terminal():
             ui.die("uninstall is destructive and cannot confirm in non-interactive mode; pass --force to remove local files")
-        if not ui.confirm("Remove fwd config, state, coding-agent skill, completions, and temporary files?", default=False):
+        if not ui.confirm("Remove fwd config, state, saved provider credentials, coding-agent skill, completions, and temporary files?", default=False):
             ui.info("aborted")
             return 0
 

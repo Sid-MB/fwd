@@ -23,7 +23,9 @@ work before the backends are finished.
 
 from __future__ import annotations
 
+import importlib
 import os
+import re
 import shlex
 import sys
 from dataclasses import fields as dataclass_fields
@@ -32,25 +34,131 @@ from typing import Any
 
 import tomlkit
 import typer
+from prompt_toolkit import prompt as interactive_prompt
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.validation import ValidationError, Validator
 
 from fwd import ui
-from fwd.backends import ConfigChoices, ConfigParameter, get_backend, make_backend
-from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, TargetConfig, load_config
+from fwd.backends import ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, get_backend, make_backend
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, ConfigError, TargetConfig, load_config
+
+_TERMINAL_KEY_SEQUENCE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)")
+_LINE_EDITING_INITIALIZED = False
+_READLINE: Any | None = None
+
 
 def _parameters(backend: str) -> tuple[ConfigParameter, ...]:
     """Return setup metadata from the backend class, the single source of truth for wizard fields."""
     return get_backend(backend).config_parameters()
 
 
+def _enable_line_editing() -> Any | None:
+    """Load readline/libedit once and return its module, or ``None`` when the platform does not provide it."""
+    global _LINE_EDITING_INITIALIZED, _READLINE
+    if not _LINE_EDITING_INITIALIZED:
+        try:
+            _READLINE = importlib.import_module("readline")
+        except ImportError:
+            _READLINE = None
+        _LINE_EDITING_INITIALIZED = True
+    return _READLINE
+
+
+class _ProviderChoiceCompleter(Completer):
+    """Filter closed provider values while keeping descriptions as optional searchable/display metadata."""
+
+    def __init__(self, choices: tuple[ConfigChoice, ...], *, search_labels: bool) -> None:
+        self.choices = choices
+        self.search_labels = search_labels
+
+    def get_completions(self, document: Document, complete_event: Any) -> Any:
+        """Yield prefix matches first, then substring/description matches, always replacing the full input buffer."""
+        entered = document.text_before_cursor
+        query = entered.lower()
+        matching = [choice for choice in self.choices if query in choice.value.lower() or (self.search_labels and choice.label is not None and query in choice.label.lower())]
+        matching.sort(key=lambda choice: (not choice.value.lower().startswith(query), choice.value))
+        for choice in matching:
+            yield Completion(choice.value, start_position=-len(entered), display=choice.value, display_meta=choice.label or "")
+
+
+def _choice_key_bindings() -> KeyBindings:
+    """Return completion navigation plus macOS-friendly editing for provider identifiers."""
+    bindings = KeyBindings()
+
+    @bindings.add("tab")
+    def next_completion(event: Any) -> None:
+        """Open the menu or move to its next matching provider value."""
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_first=True)
+        else:
+            buffer.complete_next()
+
+    @bindings.add("s-tab")
+    def previous_completion(event: Any) -> None:
+        """Open the menu or move to its previous matching provider value."""
+        buffer = event.current_buffer
+        if buffer.complete_state is None:
+            buffer.start_completion(select_last=True)
+        else:
+            buffer.complete_previous()
+
+    @bindings.add("enter")
+    def accept_completion(event: Any) -> None:
+        """Apply the highlighted provider value and submit it with the same Enter press."""
+        buffer = event.current_buffer
+        if buffer.complete_state is not None and buffer.complete_state.current_completion is not None:
+            buffer.apply_completion(buffer.complete_state.current_completion)
+        buffer.validate_and_handle()
+
+    @bindings.add("escape", "backspace")
+    def delete_identifier_component(event: Any) -> None:
+        """Delete one underscore/dash-separated component when macOS sends Option-Backspace as Escape+Delete."""
+        buffer = event.current_buffer
+        before_cursor = buffer.document.text_before_cursor
+        component = re.search(r"(?:[\s_./-]+)?[^\s_./-]+$", before_cursor)
+        if component is not None:
+            buffer.delete_before_cursor(len(component.group(0)))
+
+    return bindings
+
+
+class _ExactProviderChoice(Validator):
+    """Require selection of a canonical provider value while allowing arbitrary text during filtering."""
+
+    def __init__(self, values: dict[str, str], field_name: str, default: str) -> None:
+        self.values = values
+        self.field_name = field_name
+        self.default = default
+
+    def validate(self, document: Document) -> None:
+        """Reject partial searches on submission while allowing an empty input to accept a displayed default."""
+        entered = document.text.strip()
+        if not entered and self.default:
+            return
+        if entered.lower() not in self.values:
+            raise ValidationError(message=f"Choose a {self.field_name} from the options", cursor_position=len(document.text))
+
+
 def _ask(label: str, default: str = "") -> str:
-    """Prompt for a free-text value, allowing Click to abort cleanly on Ctrl-C or Ctrl-D.
+    """Prompt for a free-text value with terminal line editing and clean Click abort behavior.
 
     Kept local to the wizard rather than added to :mod:`fwd.ui` because this is the only interactive-input site in
     fwd; everything else is confirmations. Do not catch :class:`typer.Abort` or ``EOFError`` here: Click translates
     both interrupt keys into its normal ``Aborted!`` exit. Treating either as an empty answer traps users in required
     field loops, and silently accepting defaults on closed stdin can write an unintended partial configuration.
+
+    Importing the standard-library-compatible ``readline`` module activates libedit/GNU Readline handling for the
+    built-in ``input`` used by Click, so left/right edit the line and up/down use input history instead of inserting
+    terminal escape bytes. The final filter protects configuration values when readline is unavailable or the input
+    is redirected through a terminal implementation that still returns raw key sequences.
     """
-    return typer.prompt(label, default=default, show_default=bool(default))
+    _enable_line_editing()
+    answer = typer.prompt(label, default=default, show_default=bool(default))
+    return _TERMINAL_KEY_SEQUENCE.sub("", answer)
 
 
 def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: str | None = None, choices: ConfigChoices | None = None) -> Any:
@@ -67,9 +175,12 @@ def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: s
         suffix = f"choices: {rendered_choices}" + ("; custom value allowed" if choice_set.allow_free_text else "")
         guidance = f"{guidance}; {suffix}" if guidance else suffix
     label = f"{field_name} ({guidance})" if guidance else field_name
-    default_display = "" if current in (None, "", [], 0) else current
-    if isinstance(current, list):
+    if isinstance(current, bool):
+        default_display = str(current).lower()
+    elif isinstance(current, list):
         default_display = ", ".join(current)
+    else:
+        default_display = "" if current in (None, "", 0) else current
 
     while True:
         raw = _ask(label, default=str(default_display) if default_display != "" else "")
@@ -79,10 +190,13 @@ def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: s
                 ui.warn(f"{field_name} is required")
                 continue
             return current
-        allowed = {choice.value for choice in choice_set.values}
-        if allowed and not choice_set.allow_free_text and raw not in allowed:
-            ui.warn(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
-            continue
+        allowed = {choice.value.lower(): choice.value for choice in choice_set.values}
+        if allowed and not choice_set.allow_free_text:
+            canonical = allowed.get(raw.lower())
+            if canonical is None:
+                ui.warn(f"{field_name} must be one of: {', '.join(sorted(allowed.values()))}")
+                continue
+            raw = canonical
         if isinstance(current, bool):
             return raw.lower() in {"1", "true", "yes", "y"}
         if isinstance(current, int) and not isinstance(current, bool):
@@ -94,6 +208,111 @@ def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: s
         if isinstance(current, list):
             return [part.strip() for part in raw.split(",") if part.strip()]
         return raw
+
+
+def _prompt_searchable_choice(field_name: str, current: str, *, help_text: str, choices: ConfigChoices, search_labels: bool = False) -> str:
+    """Select one closed provider value from a transient, searchable completion menu.
+
+    Provider catalogs need richer interaction than readline's one-shot completion: the prompt stays above its menu,
+    typing filters the full catalog, Tab/Shift-Tab and arrow keys navigate matches, and the menu disappears after the
+    selection. ``prompt_toolkit`` also owns the redraw, preventing escape bytes and stale prompt fragments when users
+    edit with macOS Option-Backspace. A closed selector always requires one exact choice; optional parameters express
+    their default as a selectable value that an empty Enter accepts.
+    """
+    values = tuple(choices.values)
+    by_value = {choice.value.lower(): choice.value for choice in values}
+    if not values:
+        raise ValueError(f"{field_name} has no provider choices")
+    default_suffix = f" [{current}]" if current else ""
+    try:
+        selected = interactive_prompt(
+            f"{field_name} ({help_text}){default_suffix}: ",
+            completer=_ProviderChoiceCompleter(values, search_labels=search_labels),
+            complete_while_typing=True,
+            complete_style=CompleteStyle.COLUMN,
+            key_bindings=_choice_key_bindings(),
+            validator=_ExactProviderChoice(by_value, field_name, current),
+            validate_while_typing=False,
+            reserve_space_for_menu=5,
+        ).strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise typer.Abort() from exc
+    if not selected and current:
+        return current
+    return by_value[selected.lower()]
+
+
+def _prepare_lambda_setup() -> None:
+    """Acquire, persist, and verify a missing Lambda API key without echoing or adding it to target configuration."""
+    from fwd.backends.lambda_cloud import API_KEY_ENV, LambdaCloudClient, LambdaCloudError
+    from fwd.credentials import CredentialInputError, forget_saved_secret, prompt_secret, secret_source
+
+    while True:
+        try:
+            client = LambdaCloudClient()
+        except LambdaCloudError:
+            try:
+                prompt_secret("Lambda Cloud API key", environment_name=API_KEY_ENV)
+            except CredentialInputError as exc:
+                ui.die(str(exc))
+            client = LambdaCloudClient()
+            ui.info(f"saved the {API_KEY_ENV} credential source under ~/.fwd/credentials for future fwd commands")
+        try:
+            client.request("GET", "/instance-types")
+            return
+        except LambdaCloudError as exc:
+            if exc.status == 401 and secret_source(API_KEY_ENV) == "saved":
+                try:
+                    forget_saved_secret(API_KEY_ENV)
+                except CredentialInputError as cleanup_exc:
+                    ui.die(f"Lambda Cloud rejected the saved API key and fwd could not remove it: {cleanup_exc}")
+                ui.warn("Lambda Cloud rejected the saved API key; its fwd credential source was removed so you can enter another")
+                continue
+            ui.die(f"could not authenticate to Lambda Cloud or load its instance catalog: {exc}")
+
+
+def _local_ssh_public_keys() -> tuple[tuple[Path, str], ...]:
+    """Return readable OpenSSH public keys from ``~/.ssh`` with compact labels for the upload selector."""
+    candidates: list[tuple[Path, str]] = []
+    for path in sorted((Path.home() / ".ssh").glob("*.pub")):
+        try:
+            public_key = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        parts = public_key.split()
+        if len(parts) >= 2 and (parts[0].startswith("ssh-") or parts[0].startswith("ecdsa-") or parts[0].startswith("sk-")) and len(public_key) <= 4096:
+            candidates.append((path, " ".join((parts[0], parts[2] if len(parts) > 2 else "")).strip()))
+    return tuple(candidates)
+
+
+def _prompt_lambda_ssh_key(current: str, choices: ConfigChoices) -> tuple[str, str | None]:
+    """Select a registered Lambda SSH key or explicitly upload one discovered local public key."""
+    from fwd.backends.lambda_cloud import LambdaCloudClient, LambdaCloudError
+
+    local_keys = _local_ssh_public_keys()
+    if local_keys and ui.confirm("Upload a local SSH public key to Lambda Cloud?", default=not choices.values):
+        local_choices = ConfigChoices(tuple(ConfigChoice(str(path), label) for path, label in local_keys), allow_free_text=False)
+        selected_path = Path(_prompt_searchable_choice("local SSH public key", str(local_keys[0][0]), help_text="public half to register with Lambda Cloud", choices=local_choices, search_labels=True))
+        public_key = selected_path.read_text(encoding="utf-8").strip()
+        default_name = selected_path.name.removesuffix(".pub")[:64]
+        while True:
+            name = _ask("Lambda Cloud SSH key name", default=default_name).strip()
+            if 1 <= len(name) <= 64:
+                break
+            ui.warn("Lambda Cloud SSH key names must contain 1 to 64 characters")
+        try:
+            LambdaCloudClient().add_ssh_key(name, public_key)
+        except LambdaCloudError as exc:
+            ui.die(f"could not upload SSH public key {selected_path}: {exc}")
+        private_path = selected_path.with_suffix("")
+        ui.ok(f"uploaded {selected_path} as Lambda Cloud SSH key {name!r}")
+        return name, str(private_path) if private_path.is_file() else None
+    if not choices.values:
+        if not local_keys:
+            ui.die("Lambda Cloud has no registered SSH keys and no ~/.ssh/*.pub keys were found to upload; create a local SSH key pair or register one in the Lambda console")
+        ui.die("Lambda Cloud has no registered SSH keys; rerun setup and accept the local public-key upload")
+    default = current or (choices.values[0].value if len(choices.values) == 1 else "")
+    return _prompt_searchable_choice("ssh_key_name", default, help_text="exact registered Lambda Cloud SSH key name", choices=choices), None
 
 
 def _advanced_options_enabled(parameters: list[ConfigParameter], values: dict[str, Any], provider_summary: tuple[str, ...]) -> bool:
@@ -164,7 +383,18 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
             defaults["image"] = DEFAULT_RUNPOD_CPU_IMAGE if effective_compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE
         known_values = {**defaults, **provided, **answers}
         choice_set = backend_class.config_choices(parameter, known_values)
-        value = provided[field_name] if provided.get(field_name) is not None else _prompt_value(field_name, defaults[field_name], required=parameter.required, help_text=parameter.help, choices=choice_set)
+        if provided.get(field_name) is not None:
+            value = provided[field_name]
+        elif backend == "lambda" and field_name == "ssh_key_name":
+            value, inferred_private_key = _prompt_lambda_ssh_key(str(defaults[field_name]), choice_set)
+            if inferred_private_key and provided.get("key_path") is None:
+                answers["key_path"] = inferred_private_key
+        elif parameter.searchable and choice_set.values and not choice_set.allow_free_text:
+            value = _prompt_searchable_choice(field_name, str(defaults[field_name]), help_text=parameter.help, choices=choice_set, search_labels=parameter.search_labels)
+        elif parameter.searchable and not choice_set.allow_free_text:
+            ui.die(f"Lambda Cloud returned no valid values for required setup field {field_name!r}")
+        else:
+            value = _prompt_value(field_name, defaults[field_name], required=parameter.required, help_text=parameter.help, choices=choice_set)
         if value != defaults[field_name]:
             answers[field_name] = value
     return answers
@@ -184,8 +414,8 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
     """Validate flag-only setup and return the resolved backend, otherwise exit with an actionable invocation."""
     if not backend:
         ui.die(
-            f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required flag: --backend.\n"
-            "Choose a backend with --backend lambda, --backend ssh, --backend runpod, or --backend slurm. To force prompts, pass --interactive."
+            f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required backend selector.\n"
+            f"Choose one with {ui.command('setup lambda')}, {ui.command('setup ssh')}, {ui.command('setup runpod')}, or {ui.command('setup slurm')}. The equivalent --backend flag remains supported. To force prompts, pass --interactive."
         )
     normalized = backend.strip().lower()
     if normalized not in TARGET_TYPES:
@@ -204,7 +434,7 @@ def _validate_non_interactive(backend: str | None, values: dict[str, Any], reaso
         ui.die(
             f"{ui.command('setup')} is running in non-interactive mode because {reason}. Missing required flag(s) for {normalized}: "
             f"{', '.join(parameter.flag for parameter in missing)}.\n"
-            f"Required form: {ui.command(f'setup --backend {normalized} {flags}')}\n"
+            f"Required form: {ui.command(f'setup {normalized} {flags}')}\n"
             f"Run {ui.command('setup --help')!r} for every optional field, or pass --interactive to force prompts."
         )
     return normalized
@@ -299,6 +529,8 @@ def run_wizard(
     else:
         resolved_backend = _validate_non_interactive(backend, provided, reason)
 
+    if interactive and resolved_backend == "lambda":
+        _prepare_lambda_setup()
     parameter_names = {parameter.name for parameter in _parameters(resolved_backend)}
     target_values = _prompt_target_values(resolved_backend, provided) if interactive else {key: value for key, value in provided.items() if key in parameter_names and value is not None}
 
@@ -314,7 +546,14 @@ def run_wizard(
             ui.info("aborted")
             return
 
-    target = TARGET_TYPES[resolved_backend](name=resolved_name, **target_values)
+    try:
+        target = TARGET_TYPES[resolved_backend](name=resolved_name, **target_values)
+    except ConfigError as exc:
+        ui.die(str(exc))
+    try:
+        make_backend(target, existing).validate_setup()
+    except ProvisionError as exc:
+        ui.die(str(exc))
     should_make_default = make_default or not existing.default_target
     if interactive and existing.default_target and not make_default:
         should_make_default = ui.confirm(f"make {resolved_name!r} the default target?", default=not existing.targets)

@@ -6,8 +6,7 @@ session, ``stop`` terminates only compute, and the next ``provision`` launches a
 filesystem mounted. ``destroy`` is the sole path that deletes the filesystem.
 
 The API key is intentionally local-only. Lambda API keys currently grant the full account API surface, so fwd reads
-``LAMBDA_API_KEY`` for each local invocation and never writes it to config, session state, subprocess argv, or the
-instance. Consequently this backend inherits the safe default of no ``remote_stop_command`` and does not support
+``LAMBDA_API_KEY`` or a mode-600 local credential source saved by interactive setup, and never writes it to target config, session state, subprocess argv, or the instance. Consequently this backend inherits the safe default of no ``remote_stop_command`` and does not support
 ``--stop-after``; enabling that feature would otherwise require copying a broad credential onto remote compute.
 
 The provider documents a general limit of one request per second. A process-wide start-rate gate covers backend
@@ -19,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import socket
 import threading
@@ -32,6 +30,7 @@ from typing import Any, ClassVar
 from fwd import ui
 from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import Config, LambdaTargetConfig
+from fwd.credentials import CredentialInputError, resolve_secret, secret_source
 from fwd.sshexec import SSHEndpoint
 from fwd.state import SessionState
 
@@ -110,9 +109,12 @@ class LambdaCloudClient:
     """Small JSON client for the Lambda Cloud endpoints fwd needs, with secrets confined to HTTP headers."""
 
     def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = (api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")).strip()
+        try:
+            self.api_key = (api_key if api_key is not None else resolve_secret(API_KEY_ENV)).strip()
+        except CredentialInputError as exc:
+            raise LambdaCloudError(f"saved Lambda Cloud API credential is unusable: {exc}") from exc
         if not self.api_key:
-            raise LambdaCloudError(f"{API_KEY_ENV} is not set; create an API key in the Lambda Cloud console and export it locally")
+            raise LambdaCloudError(f"{API_KEY_ENV} is not set and no saved credential source exists; export it locally or run interactive fwd setup lambda")
 
     @staticmethod
     def _rate_limit() -> None:
@@ -201,6 +203,18 @@ class LambdaCloudClient:
         data = self.request("GET", "/file-systems")
         return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
+    def list_ssh_keys(self) -> list[dict[str, Any]]:
+        """Return SSH public keys registered to the Lambda account."""
+        data = self.request("GET", "/ssh-keys")
+        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
+    def add_ssh_key(self, name: str, public_key: str) -> dict[str, Any]:
+        """Register an existing local public key and return Lambda's key document without generating private material."""
+        data = self.request("POST", "/ssh-keys", {"name": name, "public_key": public_key})
+        if not isinstance(data, dict) or str(data.get("name") or "") != name:
+            raise LambdaCloudError("Lambda Cloud SSH-key upload returned an invalid key document")
+        return data
+
     def create_filesystem(self, name: str, region: str) -> dict[str, Any]:
         """Create one region-bound persistent filesystem and return its provider document."""
         data = self.request("POST", "/filesystems", {"name": name, "region": region})
@@ -244,6 +258,10 @@ class LambdaCloudBackend(Backend):
         self._created_instance_id: str | None = None
         self._created_filesystem_id: str | None = None
         self._selected_machine: str | None = None
+        self._resolved_region: str | None = None
+        self._regions_cache: tuple[dict[str, Any], ...] | None = None
+        self._instance_types_cache: dict[str, Any] | None = None
+        self._images_cache: tuple[dict[str, Any], ...] | None = None
 
     @property
     def client(self) -> LambdaCloudClient:
@@ -257,10 +275,121 @@ class LambdaCloudBackend(Backend):
         """Return the per-launch override when present, otherwise the target's configured default instance type."""
         return self._selected_machine or self.target.instance_type
 
-    def machine_inventory(self) -> MachineInventory:
-        """Split Lambda's current instance-type catalog by capacity in this target's configured region."""
-        try:
+    def _regions(self) -> tuple[dict[str, Any], ...]:
+        """Return Lambda's live region catalog once per backend invocation."""
+        if self._regions_cache is None:
+            data = self.client.request("GET", "/regions")
+            if not isinstance(data, list):
+                raise LambdaCloudError("Lambda Cloud returned an invalid region catalog")
+            self._regions_cache = tuple(item for item in data if isinstance(item, dict) and item.get("name"))
+        return self._regions_cache
+
+    def _instance_types(self) -> dict[str, Any]:
+        """Return Lambda's live instance-type and capacity catalog once per backend invocation."""
+        if self._instance_types_cache is None:
             data = self.client.request("GET", "/instance-types")
+            if not isinstance(data, dict):
+                raise LambdaCloudError("Lambda Cloud returned an invalid instance-type inventory")
+            self._instance_types_cache = data
+        return self._instance_types_cache
+
+    def _ordered_policy_regions(self) -> tuple[str, ...]:
+        """Expand exact/prefix preferences against Lambda's catalog, followed by deterministic auto fallbacks."""
+        catalog = tuple(str(item["name"]) for item in self._regions())
+        if self.target.region != "auto":
+            if self.target.region not in catalog:
+                raise LambdaCloudError(f"unknown Lambda region {self.target.region!r}; choose one returned by GET /regions or set region = \"auto\"")
+            return (self.target.region,)
+        ordered: list[str] = []
+        for preference in self.target.preferred_regions:
+            matches = [region for region in catalog if region.startswith(preference)]
+            if not matches:
+                raise LambdaCloudError(f"preferred Lambda region prefix {preference!r} matches no region returned by GET /regions: {', '.join(catalog)}")
+            ordered.extend(region for region in matches if region not in ordered)
+        ordered.extend(region for region in catalog if region not in ordered)
+        return tuple(ordered)
+
+    def _capacity_regions(self, machine: str) -> set[str]:
+        """Return exact regions currently reporting capacity for one instance type."""
+        item = self._instance_types().get(machine)
+        regions = item.get("regions_with_capacity_available") if isinstance(item, dict) else []
+        return {str(region.get("name")) for region in regions if isinstance(region, dict) and region.get("name")} if isinstance(regions, list) else set()
+
+    def _image_region(self) -> str | None:
+        """Return the exact region of a configured custom image; provider-default images impose no extra constraint."""
+        if not self.target.image_id:
+            return None
+        if self._images_cache is None:
+            data = self.client.request("GET", "/images")
+            if not isinstance(data, list):
+                raise LambdaCloudError("Lambda Cloud returned an invalid image catalog")
+            self._images_cache = tuple(item for item in data if isinstance(item, dict))
+        image = next((item for item in self._images_cache if str(item.get("id") or "") == self.target.image_id), None)
+        if image is None:
+            raise LambdaCloudError(f"Lambda image {self.target.image_id!r} was not returned by GET /images")
+        region = image.get("region") if isinstance(image.get("region"), dict) else {}
+        exact_region = str(region.get("name") or "")
+        if not exact_region:
+            raise LambdaCloudError(f"Lambda image {self.target.image_id!r} did not report its region")
+        return exact_region
+
+    def _resolve_region(self, *, pinned: str | None = None) -> str:
+        """Resolve fwd's region policy to the exact code required by Lambda's launch and filesystem APIs.
+
+        An existing instance or filesystem always pins an auto target to its durable region. An explicitly configured
+        exact region remains a hard constraint. New auto sessions choose the first preferred prefix match with current
+        capacity for the selected machine, then fall back through the remainder of Lambda's catalog.
+        """
+        if pinned:
+            catalog = {str(item["name"]) for item in self._regions()}
+            if pinned not in catalog:
+                raise LambdaCloudError(f"existing Lambda resource is in unknown region {pinned!r}, which GET /regions did not return")
+            if self.target.region != "auto" and pinned != self.target.region:
+                raise LambdaCloudError(f"existing Lambda resource is in {pinned}, but target {self.target.name!r} explicitly selects {self.target.region}; restore the original region or remove the session")
+            image_region = self._image_region()
+            if image_region and pinned != image_region:
+                raise LambdaCloudError(f"Lambda image {self.target.image_id!r} is available in {image_region}, but retained session resources are pinned to {pinned}")
+            if self._resolved_region and self._resolved_region != pinned:
+                raise LambdaCloudError(f"Lambda session resources disagree on region ({self._resolved_region} and {pinned}); refusing to launch across regions")
+            self._resolved_region = pinned
+            return pinned
+        if self._resolved_region:
+            return self._resolved_region
+        capacity = self._capacity_regions(self.effective_instance_type)
+        image_region = self._image_region()
+        if image_region:
+            capacity &= {image_region}
+        selected = next((region for region in self._ordered_policy_regions() if region in capacity), None)
+        if selected is None:
+            policy = self.target.region if self.target.region != "auto" else ", ".join(self.target.preferred_regions) or "any region"
+            raise LambdaCloudError(f"Lambda machine {self.effective_instance_type!r} has no reported capacity matching region policy {policy!r}")
+        self._resolved_region = selected
+        return selected
+
+    def validate_setup(self) -> None:
+        """Validate region policy, instance type, and SSH-key name against Lambda's live provider catalogs."""
+        if self.target.region != "auto" or self.target.preferred_regions:
+            self._ordered_policy_regions()
+        instance_types = self._instance_types()
+        offered_names = {str((item.get("instance_type") if isinstance(item.get("instance_type"), dict) else {}).get("name") or key).strip() for key, item in instance_types.items() if isinstance(item, dict)}
+        if self.target.instance_type not in offered_names:
+            offered = ", ".join(sorted(name for name in offered_names if name)) or "<none returned>"
+            raise LambdaCloudError(f"unknown Lambda instance type {self.target.instance_type!r}; choose one returned by GET /instance-types: {offered}")
+        ssh_key_names = {str(item.get("name") or "").strip() for item in self.client.list_ssh_keys()}
+        if self.target.ssh_key_name not in ssh_key_names:
+            offered = ", ".join(sorted(name for name in ssh_key_names if name)) or "<none registered>"
+            raise LambdaCloudError(f"unknown Lambda SSH key {self.target.ssh_key_name!r}; choose or upload a key returned by GET /ssh-keys: {offered}")
+        if self.target.image_id:
+            self._resolve_region()
+
+    def machine_inventory(self) -> MachineInventory:
+        """Split Lambda's instance types by capacity under the target's exact/automatic region policy."""
+        try:
+            data = self._instance_types()
+            eligible_regions = set(self._ordered_policy_regions())
+            image_region = self._image_region()
+            if image_region:
+                eligible_regions &= {image_region}
         except LambdaCloudError as exc:
             unavailable = (MachineType(self.target.instance_type, "configured default; availability could not be checked"),) if self.target.instance_type else ()
             return MachineInventory(default=self.target.instance_type or None, selectable=True, unavailable=unavailable, error=str(exc))
@@ -280,8 +409,10 @@ class LambdaCloudBackend(Backend):
             region_names = {str(region.get("name")) for region in regions if isinstance(region, dict) and region.get("name")} if isinstance(regions, list) else set()
             gpu = str(spec.get("gpu_description") or spec.get("description") or "").strip()
             price = spec.get("price_cents_per_hour")
-            detail = ", ".join(part for part in (gpu, f"{price} cents/hour" if price is not None else "") if part)
-            (available if self.target.region in region_names else unavailable).append(MachineType(value, detail or f"no capacity in {self.target.region}"))
+            matching_regions = sorted(region_names & eligible_regions)
+            region_detail = f"regions: {', '.join(matching_regions)}" if matching_regions else "no capacity matching region policy"
+            detail = " · ".join(part for part in (gpu, f"{price} cents/hour" if price is not None else "", region_detail) if part)
+            (available if matching_regions else unavailable).append(MachineType(value, detail))
         values = {item.value for item in (*available, *unavailable)}
         if self.target.instance_type and self.target.instance_type not in values:
             unavailable.append(MachineType(self.target.instance_type, "configured default was not returned by Lambda Cloud"))
@@ -294,7 +425,7 @@ class LambdaCloudBackend(Backend):
         if inventory.error:
             raise MachineSelectionError(f"could not validate Lambda machine {machine!r} for target {self.target.name!r}: {inventory.error}", inventory, self.target)
         if machine in {item.value for item in inventory.unavailable}:
-            raise MachineSelectionError(f"Lambda machine {machine!r} is currently unavailable in {self.target.region} for target {self.target.name!r}", inventory, self.target)
+            raise MachineSelectionError(f"Lambda machine {machine!r} is currently unavailable for target {self.target.name!r}'s region policy", inventory, self.target)
         if machine not in {item.value for item in inventory.available}:
             raise MachineSelectionError(f"unknown Lambda machine {machine!r} for target {self.target.name!r}", inventory, self.target)
         self._selected_machine = machine
@@ -303,10 +434,11 @@ class LambdaCloudBackend(Backend):
     def config_parameters(cls) -> tuple[ConfigParameter, ...]:
         """Describe required account choices first and keep path/image overrides behind the advanced gate."""
         return (
-            ConfigParameter("region", "--region", "Lambda Cloud region", required=True),
-            ConfigParameter("instance_type", "--instance-type", "Lambda instance type with current regional capacity", required=True),
-            ConfigParameter("ssh_key_name", "--ssh-key-name", "Lambda Cloud SSH key name", required=True),
+            ConfigParameter("region", "--region", "Lambda region or auto", choices=(ConfigChoice("auto", "choose by capacity at launch"),), allow_free_text=False, searchable=True, search_labels=True),
+            ConfigParameter("instance_type", "--instance-type", "Lambda machine type", required=True, allow_free_text=False, searchable=True),
+            ConfigParameter("ssh_key_name", "--ssh-key-name", "registered SSH key", required=True, allow_free_text=False, searchable=True),
             ConfigParameter("persistent", "--persistent", "retain a session-owned filesystem when compute terminates", choices=(ConfigChoice("true"), ConfigChoice("false")), allow_free_text=False),
+            ConfigParameter("preferred_regions", "--preferred-region", "ordered exact region codes or prefixes used before auto fallback", advanced=True),
             ConfigParameter("image_id", "--image-id", "optional Lambda image id", advanced=True),
             ConfigParameter("filesystem_mount_path", "--fs-mount-path", "absolute mount path for persistent session data", advanced=True),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts", advanced=True),
@@ -323,11 +455,15 @@ class LambdaCloudBackend(Backend):
             client = LambdaCloudClient()
             if parameter.name == "region":
                 data = client.request("GET", "/regions")
+                choices = (ConfigChoice("auto", "choose by capacity at launch"), *(ConfigChoice(str(item["name"]), str(item.get("description") or "") or None) for item in data if isinstance(item, dict) and item.get("name"))) if isinstance(data, list) else (ConfigChoice("auto", "choose by capacity at launch"),)
+                return ConfigChoices(choices, allow_free_text=False)
+            if parameter.name == "preferred_regions":
+                data = client.request("GET", "/regions")
                 choices = tuple(ConfigChoice(str(item["name"]), str(item.get("description") or "") or None) for item in data if isinstance(item, dict) and item.get("name")) if isinstance(data, list) else ()
                 return ConfigChoices(choices, allow_free_text=True)
             if parameter.name == "instance_type":
                 data = client.request("GET", "/instance-types")
-                region = str(values.get("region") or "")
+                region = str(values.get("region") or "auto")
                 choices: list[ConfigChoice] = []
                 if isinstance(data, dict):
                     for key, item in data.items():
@@ -335,27 +471,32 @@ class LambdaCloudBackend(Backend):
                             continue
                         regions = item.get("regions_with_capacity_available")
                         region_names = {str(entry.get("name")) for entry in regions if isinstance(entry, dict) and entry.get("name")} if isinstance(regions, list) else set()
-                        if region and region not in region_names:
-                            continue
                         detail = item.get("instance_type") if isinstance(item.get("instance_type"), dict) else {}
-                        name = str(detail.get("name") or key)
-                        description = str(detail.get("description") or detail.get("gpu_description") or "") or None
-                        choices.append(ConfigChoice(name, description))
-                return ConfigChoices(tuple(choices), allow_free_text=True)
+                        name = str(detail.get("name") or key).strip()
+                        if not name:
+                            continue
+                        matching_regions = sorted(region_names if region == "auto" else region_names & {region})
+                        description = str(detail.get("description") or detail.get("gpu_description") or "").strip()
+                        price = detail.get("price_cents_per_hour")
+                        availability = f"available in {', '.join(matching_regions)}" if matching_regions else f"currently unavailable in {region}" if region != "auto" else "currently unavailable in all regions"
+                        label = " · ".join(part for part in (description, f"{price} cents/hour" if price is not None else "", availability) if part)
+                        choices.append(ConfigChoice(name, label or None))
+                choices.sort(key=lambda choice: ("currently unavailable" in (choice.label or ""), choice.value))
+                return ConfigChoices(tuple(choices), allow_free_text=False)
             if parameter.name == "ssh_key_name":
                 data = client.request("GET", "/ssh-keys")
                 choices = tuple(ConfigChoice(str(item["name"])) for item in data if isinstance(item, dict) and item.get("name")) if isinstance(data, list) else ()
-                return ConfigChoices(choices, allow_free_text=True)
+                return ConfigChoices(choices, allow_free_text=False)
             if parameter.name == "image_id":
                 data = client.request("GET", "/images")
-                region = str(values.get("region") or "")
+                region = str(values.get("region") or "auto")
                 choices = []
                 if isinstance(data, list):
                     for item in data:
                         if not isinstance(item, dict) or not item.get("id"):
                             continue
                         item_region = item.get("region") if isinstance(item.get("region"), dict) else {}
-                        if region and str(item_region.get("name") or "") != region:
+                        if region != "auto" and str(item_region.get("name") or "") != region:
                             continue
                         choices.append(ConfigChoice(str(item["id"]), str(item.get("description") or item.get("name") or "") or None))
                 return ConfigChoices(tuple(choices), allow_free_text=True)
@@ -369,19 +510,30 @@ class LambdaCloudBackend(Backend):
         if len(matches) > 1:
             ids = ", ".join(str(instance.get("id") or "<unknown>") for instance in matches)
             raise LambdaCloudError(f"multiple live Lambda instances named {name!r} exist ({ids}); terminate the duplicate before retrying")
-        return matches[0] if matches else None
+        if not matches:
+            return None
+        instance = matches[0]
+        region = instance.get("region") if isinstance(instance.get("region"), dict) else {}
+        exact_region = str(region.get("name") or "")
+        if exact_region:
+            self._resolve_region(pinned=exact_region)
+        return instance
 
     def _find_filesystem(self, name: str) -> dict[str, Any] | None:
-        """Find the session filesystem in the configured region, rejecting duplicates and cross-region collisions."""
+        """Find the session filesystem globally and adopt its exact region for an auto target."""
         matches = [filesystem for filesystem in self.client.list_filesystems() if filesystem.get("name") == name]
-        in_region = [filesystem for filesystem in matches if str((filesystem.get("region") or {}).get("name") if isinstance(filesystem.get("region"), dict) else filesystem.get("region") or "") == self.target.region]
-        if len(in_region) > 1:
-            ids = ", ".join(str(filesystem.get("id") or "<unknown>") for filesystem in in_region)
-            raise LambdaCloudError(f"multiple Lambda filesystems named {name!r} exist in {self.target.region} ({ids}); delete the duplicate before retrying")
-        if matches and not in_region:
-            regions = ", ".join(sorted({str((filesystem.get("region") or {}).get("name") if isinstance(filesystem.get("region"), dict) else filesystem.get("region") or "unknown") for filesystem in matches}))
-            raise LambdaCloudError(f"Lambda filesystem {name!r} exists in {regions}, but target {self.target.name!r} uses {self.target.region}; use the original region or remove the conflicting filesystem")
-        return in_region[0] if in_region else None
+        if len(matches) > 1:
+            ids = ", ".join(str(filesystem.get("id") or "<unknown>") for filesystem in matches)
+            raise LambdaCloudError(f"multiple Lambda filesystems named {name!r} exist ({ids}); delete the duplicate before retrying")
+        if not matches:
+            return None
+        filesystem = matches[0]
+        region_value = filesystem.get("region")
+        exact_region = str((region_value or {}).get("name") if isinstance(region_value, dict) else region_value or "")
+        if not exact_region:
+            raise LambdaCloudError(f"Lambda filesystem {name!r} did not report its region")
+        self._resolve_region(pinned=exact_region)
+        return filesystem
 
     def _ensure_filesystem(self, session_name: str, existing: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Reuse prior session storage even after config drift, or create it when persistent policy requires one."""
@@ -390,7 +542,7 @@ class LambdaCloudBackend(Backend):
         if not self.target.persistent:
             return None
         name = filesystem_name_for(session_name)
-        filesystem = self.client.create_filesystem(name, self.target.region)
+        filesystem = self.client.create_filesystem(name, self._resolve_region())
         self._created_filesystem_id = str(filesystem["id"])
         return filesystem
 
@@ -401,8 +553,8 @@ class LambdaCloudBackend(Backend):
         actual_region = str(instance_region.get("name") or "")
         instance_type = instance.get("instance_type") if isinstance(instance.get("instance_type"), dict) else {}
         actual_type = str(instance_type.get("name") or "")
-        if actual_region and actual_region != cfg.region:
-            raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} is in {actual_region}, but target {cfg.name!r} now selects {cfg.region}; stop the session before changing regions or restore the original config")
+        if actual_region:
+            self._resolve_region(pinned=actual_region)
         if actual_type and actual_type != self.effective_instance_type:
             raise LambdaCloudError(f"live Lambda instance {instance.get('name')!r} uses {actual_type}, but this launch selects {self.effective_instance_type}; stop the session before changing hardware or restore the original selection")
         if cfg.persistent and filesystem is None:
@@ -423,7 +575,7 @@ class LambdaCloudBackend(Backend):
         """Issue one launch with the configured key/image and optional filesystem mounted at the durable path."""
         cfg = self.target
         payload: dict[str, Any] = {
-            "region_name": cfg.region,
+            "region_name": self._resolve_region(),
             "instance_type_name": self.effective_instance_type,
             "ssh_key_names": [cfg.ssh_key_name],
             "name": name,
@@ -465,8 +617,8 @@ class LambdaCloudBackend(Backend):
         """Reuse live compute or launch a replacement around the session's deterministic persistent filesystem."""
         del gpu
         cfg = self.target
-        if not cfg.region or not self.effective_instance_type or not cfg.ssh_key_name:
-            missing = [name for name, value in (("region", cfg.region), ("instance_type", self.effective_instance_type), ("ssh_key_name", cfg.ssh_key_name)) if not value]
+        if not self.effective_instance_type or not cfg.ssh_key_name:
+            missing = [name for name, value in (("instance_type", self.effective_instance_type), ("ssh_key_name", cfg.ssh_key_name)) if not value]
             raise LambdaCloudError(f"target {cfg.name!r} is missing required Lambda setting(s): {', '.join(missing)}; rerun `fwd setup --backend lambda --force` with the required flags")
         name = instance_name_for(session_name)
         notes: list[str] = []
@@ -475,8 +627,9 @@ class LambdaCloudBackend(Backend):
         with ui.step(f"Preparing Lambda storage for {name}"):
             filesystem = self._find_filesystem(filesystem_name_for(session_name))
         if instance is None:
+            exact_region = self._resolve_region()
             filesystem = self._ensure_filesystem(session_name, filesystem)
-            with ui.step(f"Launching Lambda instance {name} ({self.effective_instance_type} in {cfg.region})"):
+            with ui.step(f"Launching Lambda instance {name} ({self.effective_instance_type} in {exact_region})"):
                 instance_id = self._launch_instance(name, filesystem)
         else:
             self._validate_existing_instance(instance, filesystem)
@@ -501,7 +654,7 @@ class LambdaCloudBackend(Backend):
             backend_ids={
                 "instance_id": instance_id,
                 "instance_name": name,
-                "region": cfg.region,
+                "region": self._resolve_region(),
                 **({"filesystem_id": filesystem_id, "filesystem_name": str(filesystem.get("name") or filesystem_name_for(session_name))} if filesystem_id and filesystem is not None else {}),
             },
             tool_prefix=cfg.tool_prefix,
@@ -595,23 +748,26 @@ class LambdaCloudBackend(Backend):
     def doctor(self) -> list[CheckResult]:
         """Check local credentials, required target fields, API access/capacity, and the configured SSH key."""
         checks: list[CheckResult] = []
-        has_key = bool(os.environ.get(API_KEY_ENV, "").strip())
-        checks.append(CheckResult("lambda api key", has_key, f"{API_KEY_ENV} set" if has_key else f"{API_KEY_ENV} is not set", None if has_key else "create an API key in the Lambda Cloud console and export LAMBDA_API_KEY locally"))
-        required = {"region": self.target.region, "instance_type": self.target.instance_type, "ssh_key_name": self.target.ssh_key_name}
+        try:
+            source = secret_source(API_KEY_ENV)
+            credential_error = None
+        except CredentialInputError as exc:
+            source = None
+            credential_error = str(exc)
+        has_key = source is not None
+        key_detail = f"{API_KEY_ENV} set" if source == "environment" else "saved credential source" if source == "saved" else "provided transiently for this setup process" if source == "transient" else credential_error or f"{API_KEY_ENV} is not set"
+        checks.append(CheckResult("lambda api key", has_key, key_detail, None if has_key else "rerun fwd setup lambda to replace the saved credential, or export LAMBDA_API_KEY locally"))
+        required = {"instance_type": self.target.instance_type, "ssh_key_name": self.target.ssh_key_name}
         missing = [name for name, value in required.items() if not value]
-        checks.append(CheckResult("lambda target", not missing, f"{self.target.instance_type or '<instance type>'} in {self.target.region or '<region>'}" if not missing else f"missing {', '.join(missing)}", None if not missing else "rerun fwd setup --backend lambda with --region, --instance-type, and --ssh-key-name"))
+        policy = self.target.region if self.target.region != "auto" else f"auto ({', '.join(self.target.preferred_regions) or 'any region'})"
+        checks.append(CheckResult("lambda target", not missing, f"{self.target.instance_type or '<instance type>'} with region policy {policy}" if not missing else f"missing {', '.join(missing)}", None if not missing else "rerun fwd setup lambda with --instance-type and --ssh-key-name"))
         if not has_key:
             return checks
         try:
-            data = self.client.request("GET", "/instance-types")
-            item = data.get(self.target.instance_type) if isinstance(data, dict) else None
-            regions = item.get("regions_with_capacity_available") if isinstance(item, dict) else []
-            available_regions = {str(region.get("name")) for region in regions if isinstance(region, dict) and region.get("name")} if isinstance(regions, list) else set()
-            available = bool(self.target.instance_type and self.target.region in available_regions)
-            detail = f"{self.target.instance_type} has capacity in {self.target.region}" if available else f"{self.target.instance_type or '<unset>'} has no reported capacity in {self.target.region or '<unset>'}"
-            checks.append(CheckResult("lambda capacity", available, detail, None if available else "run fwd setup again and select an instance type and region with current capacity"))
+            exact_region = self._resolve_region()
+            checks.append(CheckResult("lambda capacity", True, f"{self.target.instance_type} currently resolves to {exact_region}", None))
         except LambdaCloudError as exc:
-            checks.append(CheckResult("lambda api", False, str(exc), "check LAMBDA_API_KEY and network connectivity"))
+            checks.append(CheckResult("lambda capacity", False, str(exc), "check the region policy and current instance-type capacity with fwd up TARGET --machines"))
             return checks
         try:
             data = self.client.request("GET", "/ssh-keys")

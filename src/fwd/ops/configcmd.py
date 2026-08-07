@@ -81,7 +81,8 @@ FIELD_DOCS: dict[str, str] = {
     "volume_mount_path": "where the persistent volume is mounted",
     "tool_prefix": f"where {ui.command()} installs uv/node/bun; must be on persistent storage or every restart re-downloads",
     "allow_proxy": "permit the ssh.runpod.io fallback when no direct IP exists (that proxy cannot run rsync)",
-    "region": "Lambda Cloud region; the instance and filesystem must be colocated",
+    "region": "exact Lambda Cloud region, or auto to choose from current capacity",
+    "preferred_regions": "ordered Lambda region codes or prefixes considered before other auto candidates",
     "instance_type": "Lambda instance type; launch requires current capacity in the selected region",
     "ssh_key_name": "public SSH key name already registered in Lambda Cloud",
     "image_id": "optional Lambda image id; unset uses the provider default image",
@@ -128,7 +129,7 @@ _KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 # Fields with no usable default that the user must fill in for the target to work at all. Emitted uncommented with a
 # placeholder so the example is a working skeleton; everything else optional is emitted commented out.
 REQUIRED_PLACEHOLDERS: dict[str, dict[str, Any]] = {
-    "lambda": {"region": "us-west-1", "instance_type": "gpu_1x_a10", "ssh_key_name": "my-public-key"},
+    "lambda": {"instance_type": "gpu_1x_a10", "ssh_key_name": "my-public-key"},
     "ssh": {"host": "gpu.example.com", "user": "you"},
     "runpod": {},
     "slurm": {"login_host": "login.hpc.example.edu", "user": "you", "remote_base": "/scratch/you/fwd"},

@@ -79,7 +79,7 @@ Important configuration rules:
 - `backend` is required in TOML and must be a stable lowercase identifier.
 - Validate enum-like values and incompatible combinations in `__post_init__` so bad config fails before provisioning.
 - Use `None` for an absent optional value. TOML has no null, so the example renderer will show a commented placeholder.
-- Keep secrets out of config whenever the provider already has a credential store, environment variable, CLI login, workload identity, or keychain.
+- Keep secrets out of target config whenever the provider already has a credential store, environment variable, CLI login, workload identity, or keychain. Provider clients that support fwd-managed credentials should use `fwd.credentials.resolve_secret()` and `secret_source()`; setup should use `prompt_secret()` so one hidden key-or-file prompt, quoted-path handling, invalid-path rejection, whitespace stripping, mode-600 managed files/references, and environment-first resolution stay consistent across providers such as Lambda and RunPod.
 - Treat paths according to their persistence guarantees. Tool caches and project data should not default to ephemeral container storage.
 
 Do not automatically make a provider zero-config merely because its dataclass has defaults. Add implicit resolution in `implicit_target()` only when naming the backend gives one unambiguous, reasonably safe result. RunPod can do this; a GCP project and zone generally cannot.
@@ -249,12 +249,13 @@ target dataclass field (except injected `name` and discriminator `backend`) with
 - set `prompt=False` for advanced fields that remain flag/config-only;
 - use closed choices with `allow_free_text=False` for real provider enums;
 - override `config_choices()` for machine types, regions, GPU identifiers, SSH aliases, or other dynamic suggestions;
-- keep provider discovery best-effort so missing credentials or network access never prevents manual setup;
+- set `searchable=True` on closed provider catalogs to use the shared transient menu; users can filter values, navigate matches with Tab/Shift-Tab or arrow keys, and submit only an exact provider value;
+- keep provider discovery best-effort unless the setup field is explicitly defined by a live authenticated provider catalog and accepting an unchecked value would create a broken target;
 - expose `parameter.flag` from `fwd setup` so every value is available non-interactively to agents.
 
 Do not prompt for every option. The wizard should produce the smallest useful target and leave advanced settings discoverable through `fwd config --example <backend>`.
 
-If the provider requires authentication, the wizard should not collect or write credentials. Point users to the provider's standard login flow and let `doctor()` verify it.
+If a provider does not have a suitable standard credential store, use the shared `fwd.credentials` component rather than adding secrets to target TOML or implementing a backend-specific prompt. Pasted secrets are stored only in fwd's private credential directory, while user-owned file paths remain references and are reread on each invocation.
 
 ## 6. Account for local diagnostics
 

@@ -1,19 +1,17 @@
 # Lambda Cloud backend — API and lifecycle notes
 
 This document records the contract implemented by `src/fwd/backends/lambda_cloud.py` against the Lambda Cloud API
-documented on **2026-08-05**. It is an implementation reference, not evidence of a live billable end-to-end run. Before
+documented on **2026-08-06**. It is an implementation reference, not evidence of a live billable end-to-end run. Before
 advertising a release as live-verified, exercise one explicitly named instance/filesystem through create, SSH, sync,
 stop, recreate, and remove while watching the Lambda console.
 
 ## Per-launch instance types
 
-`fwd up TARGET --machines` reads the complete `/instance-types` catalog, marks the target's configured `instance_type` as its default, and separates exact instance-type names by capacity in the configured region. `fwd up TARGET --machine/-m NAME` overrides that default for one session launch only. The exact name must be in the available list; unknown and unavailable selections fail before instance or filesystem creation and reprint the scoped inventory. The chosen name is persisted in session flags so reuse and restart cannot silently drift back to different hardware.
+`fwd up TARGET --machines` reads the complete `/instance-types` catalog, marks the target's configured `instance_type` as its default, and separates exact instance-type names by capacity under the target's region policy. Matching exact region codes are included in each machine's details. `fwd up TARGET --machine/-m NAME` overrides that default for one session launch only. The exact name must be in the available list; unknown and unavailable selections fail before instance or filesystem creation and reprint the scoped inventory. The chosen name is persisted in session flags so reuse and restart cannot silently drift back to different hardware.
 
 ## Prerequisites and authentication
 
-Create an API key and SSH key in the Lambda Cloud console. Export the API key locally as `LAMBDA_API_KEY`; configure
-the registered public key's name as `ssh_key_name` and, when SSH cannot select its matching private key through the
-agent or OpenSSH config, set `key_path`.
+Create an API key in the Lambda Cloud console and export it locally as `LAMBDA_API_KEY`, or enter it during interactive setup. The one hidden shared credential prompt accepts either the key or a quoted/unquoted UTF-8 key-file path, rejects unreadable path-looking input, and strips values when read. Pasted keys are copied to the mode-600 `~/.fwd/credentials/LAMBDA_API_KEY.secret`; external paths are retained in the mode-600 `~/.fwd/credentials/LAMBDA_API_KEY.path` reference so later commands reread the original file. The containing directory is mode 700, and an environment value overrides either saved source. Setup lists and validates registered public-key names through `GET /ssh-keys`. It can also upload an explicitly selected existing `~/.ssh/*.pub` public key through `POST /ssh-keys`, infer the sibling private file as `key_path`, and never sends private key material. When SSH cannot select the matching private key through that path, the agent, or OpenSSH config, set `key_path` manually.
 
 Lambda API keys grant broad account access. Fwd sends the key only as `Authorization: Bearer ...` in HTTPS request
 headers. It never writes the key to TOML, session state, subprocess arguments, logs, or the remote instance. This is
@@ -30,15 +28,24 @@ The smallest useful target is:
 ```toml
 [targets.lambda-gpu]
 backend = "lambda"
-region = "us-west-1"
+region = "auto"
+preferred_regions = ["us-west", "us"]
 instance_type = "gpu_1x_a10"
 ssh_key_name = "my-public-key"
 ```
 
-Use `fwd setup --backend lambda` to query current regions, instance types with capacity in the selected region,
-registered SSH keys, and images. Inventory discovery is best-effort and free text remains accepted because capacity
-and provider catalogs change independently of fwd releases. `fwd doctor --target lambda-gpu` verifies the API key,
-required fields, current regional capacity, and SSH key registration without creating billable resources.
+Use `fwd setup lambda` to query `GET /regions` through a searchable exact-region prompt, then load every offered instance type from `GET /instance-types` into a temporary filtered menu with Tab/Shift-Tab and arrow-key navigation, exact-name validation, pricing, and current regional availability. The prompt stays above the menu and the menu clears after selection. Setup also discovers registered SSH keys and images. The default `region = "auto"` makes fwd select an exact capacity-bearing region at
+launch. `preferred_regions` is an ordered list of exact codes or prefixes: `us-west` can match multiple real regions,
+while `us-south-2` matches only that exact code. Explicit region codes and every prefix are validated against the live
+catalog before setup writes them. `fwd doctor --target lambda-gpu` verifies the API key, region policy, current capacity,
+and SSH key registration without creating billable resources.
+
+Lambda's launch API does not itself accept `auto` or prefixes: `region_name` remains required. Fwd expands its policy
+against `GET /regions` and `/instance-types`, then sends one exact code. Preferences order candidates but do not forbid
+fallback to another catalog region when preferred regions have no capacity. Once a persistent filesystem exists, its
+exact region overrides auto preferences for every replacement instance because Lambda filesystems cannot cross regions.
+A configured custom `image_id` adds the image's catalog region as another hard constraint; setup and launch reject a
+policy, machine, retained filesystem, or image combination that cannot resolve to the same exact region.
 
 Defaults place durable state at:
 
@@ -57,10 +64,11 @@ uses:
 
 | Operation | Endpoint | Purpose |
 |---|---|---|
-| List regions | `GET /regions` | Setup discovery |
-| List instance types | `GET /instance-types` | Setup discovery, capacity, doctor |
+| List regions | `GET /regions` | Searchable setup choices, exact-code/prefix validation, automatic launch selection |
+| List instance types | `GET /instance-types` | Setup completion and validation, capacity, doctor |
 | List images | `GET /images` | Optional image discovery |
-| List SSH keys | `GET /ssh-keys` | Setup discovery and doctor |
+| List SSH keys | `GET /ssh-keys` | Closed setup selection and validation, doctor |
+| Add SSH key | `POST /ssh-keys` | Explicitly confirmed upload of an existing local public key |
 | List instances | `GET /instances` | Idempotent name lookup before launch |
 | Get instance | `GET /instances/{id}` | Status, endpoint resolution, readiness, termination wait |
 | Launch | `POST /instance-operations/launch` | Create one replacement instance |
@@ -82,8 +90,9 @@ and lookup cannot disagree or collide merely because punctuation was removed.
 
 Provision lists existing nonterminal instances by the exact deterministic name before launching. One match is adopted;
 multiple live matches are rejected with their IDs so fwd never guesses which billable instance it owns. Persistent
-filesystems are similarly looked up by exact name and configured region. A same-name filesystem in another region is
-an error rather than an invitation to create a second one that hides the configuration mistake.
+filesystems are similarly looked up by exact name across the account. A single match pins an auto target to that
+filesystem's exact region; duplicates are rejected rather than guessed. An explicitly configured region that conflicts
+with retained storage is also rejected instead of creating a second filesystem or abandoning durable state.
 
 After launch returns an instance ID, fwd polls the instance document until status is `active`, a public `ip` exists,
 and TCP port 22 accepts connections. Only then does the shared launch pipeline perform normal SSH readiness, rsync,

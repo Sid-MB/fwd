@@ -173,14 +173,16 @@ class LambdaTargetConfig:
     and keep the checkout, installed tools, agent state, and task state below that mount. A later launch creates a new
     instance against the same filesystem. ``persistent = false`` is the explicit disposable-storage opt-out.
 
-    The full-access Lambda Cloud API key is read only from ``LAMBDA_API_KEY`` and is never stored in target config,
-    session state, logs, or the remote instance. ``ssh_key_name`` identifies the public key registered with Lambda;
+    The full-access Lambda Cloud API key comes from ``LAMBDA_API_KEY`` or fwd's mode-600 local credential store and is never stored in target config, session state, logs, or the remote instance. ``ssh_key_name`` identifies the public key registered with Lambda;
     ``key_path`` optionally selects the corresponding local private key when the SSH agent/config does not already do so.
+    ``region`` is either one exact provider code or fwd's ``auto`` policy. Under auto, ``preferred_regions`` contains
+    ordered exact codes or prefixes; every launch still resolves and sends one exact API region.
     """
 
     name: str
     backend: Literal["lambda"] = "lambda"
-    region: str = ""
+    region: str = "auto"
+    preferred_regions: list[str] = field(default_factory=list)
     instance_type: str = ""
     ssh_key_name: str = ""
     image_id: str | None = None
@@ -194,7 +196,12 @@ class LambdaTargetConfig:
 
     def __post_init__(self) -> None:
         """Normalize required provider identifiers and reject paths that cannot satisfy the persistence contract."""
-        self.region = str(self.region).strip()
+        self.region = str(self.region).strip().lower() or "auto"
+        if not isinstance(self.preferred_regions, list) or not all(isinstance(value, str) for value in self.preferred_regions):
+            raise ConfigError(f"target {self.name!r}: preferred_regions must be an array of exact region codes or prefixes")
+        self.preferred_regions = [str(value).strip().lower() for value in self.preferred_regions if str(value).strip()]
+        if self.region != "auto" and self.preferred_regions:
+            raise ConfigError(f"target {self.name!r}: preferred_regions is only valid when region = \"auto\"")
         self.instance_type = str(self.instance_type).strip()
         self.ssh_key_name = str(self.ssh_key_name).strip()
         self.filesystem_mount_path = str(self.filesystem_mount_path).strip().rstrip("/") or "/"
@@ -301,7 +308,7 @@ def implicit_target(name: str, *, ssh_config: Path | None = None) -> tuple[Targe
       job that is. ``user`` is left empty on purpose so ssh resolves it from that same block; hardcoding the local
       username here would *override* a ``User`` directive the user explicitly set.
 
-    Lambda and Slurm are excluded by design: Lambda needs an account-specific region, instance type, and SSH key,
+    Lambda and Slurm are excluded by design: Lambda needs an account-specific instance type and SSH key,
     while Slurm needs a login host, scratch path, and allocation spec. Neither has a safe default to guess.
 
     Returns:
@@ -503,8 +510,8 @@ class Config:
         """
         if name == "lambda":
             return (
-                "target 'lambda' cannot be inferred: Lambda Cloud needs an account-specific region, instance type, and "
-                f"SSH key name. Run {ui.command('setup --backend lambda')!r} to define one, or "
+                "target 'lambda' cannot be inferred: Lambda Cloud needs an account-specific instance type and "
+                f"SSH key name. Run {ui.command('setup lambda')!r} to define one, or "
                 f"{ui.command('config --example lambda')!r} for a commented reference to paste into ~/.fwd/config.toml."
             )
         if name == "slurm":

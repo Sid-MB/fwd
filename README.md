@@ -121,12 +121,15 @@ of opening a prompt. The backend can be positional (`fwd setup lambda`) or passe
 fwd setup ssh --host my-box --target-name work
 fwd setup slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
 fwd setup runpod --data-center-id US-GA-1 --target-name pod
-fwd setup lambda --region us-west-1 --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
+fwd setup lambda --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
+# Optional preference prefixes, evaluated in order before automatic fallback:
+fwd setup lambda --preferred-region us-west --preferred-region us --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-west
 ```
 
 Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
 `Set advanced options? (Defaults: …)` gate. Persistent RunPod and Lambda targets create one independent storage
 resource per fwd session; `--no-persistent` is the explicit disposable-storage opt-out.
+Searchable provider fields keep the prompt above a temporary options menu. Typing filters the complete live catalog, Tab/Shift-Tab and up/down move through the matching values, and Enter accepts the highlighted exact value. The menu is cleared once the choice is submitted, and normal line-editing keys—including macOS Option-Backspace—edit the query without leaving terminal escape text or stale prompt fragments.
 
 ## Commands
 
@@ -636,8 +639,8 @@ fwd up --target my-box              # any Host alias in your ~/.ssh/config
 ```
 
 Configured targets always win — declaring `[targets.runpod]` overrides the built-in rather than competing with it.
-Lambda and Slurm are deliberately **not** inferable. Lambda needs an account-specific region, instance type, and SSH
-key name; Slurm needs a site-specific login host, scratch path, and allocation spec. `fwd` asks you to run setup or
+Lambda and Slurm are deliberately **not** inferable. Lambda needs an account-specific instance type and SSH key name
+(its region defaults to automatic capacity selection); Slurm needs a site-specific login host, scratch path, and allocation spec. `fwd` asks you to run setup or
 use the corresponding `fwd config --example BACKEND` reference rather than guessing.
 
 ### SSH — a machine you already have
@@ -708,7 +711,8 @@ files: stale files are deleted while excluded remote environments and caches are
 ```toml
 [targets.lambda-gpu]
 backend = "lambda"
-region = "us-west-1"
+region = "auto"                       # default: choose an exact region with current capacity
+preferred_regions = ["us-west", "us"] # optional ordered exact codes or prefixes
 instance_type = "gpu_1x_a10"
 ssh_key_name = "my-public-key"
 persistent = true
@@ -730,9 +734,11 @@ fwd up lambda-gpu --machines              # exact instance types, regional avail
 fwd up lambda-gpu -m gpu_1x_h100_sxm5    # one-launch override using an available exact name
 ```
 
+If `LAMBDA_API_KEY` is absent during interactive `fwd setup lambda`, one hidden shared credential prompt accepts either the pasted key or a path to a UTF-8 file containing it; there is no separate mode question. Matching single/double quotes are removed from paths, and path-looking input that cannot be read is rejected. Pasted values are stripped and saved to `~/.fwd/credentials/LAMBDA_API_KEY.secret`; entered file paths are saved as reusable references in `~/.fwd/credentials/LAMBDA_API_KEY.path`, and their contents are stripped each time they are read. Both fwd-controlled files use mode 600 and the containing directory uses mode 700. `LAMBDA_API_KEY` remains the highest-precedence source. Setup validates instance types and registered SSH-key names against the live account. It also offers to upload an existing `~/.ssh/*.pub` public key through `POST /ssh-keys` and records the matching local private-key path when one exists; the private key is never uploaded.
+
 The backend calls Lambda's public REST API directly; there is no provider CLI dependency. Interactive setup discovers
-current regions, instance types with regional capacity, registered SSH keys, and optional images from the API. The
-API key is never written to fwd config, session state, subprocess arguments, logs, or the remote machine.
+current regions from `GET /regions`, offers an exact searchable region selection, validates explicit codes and preference prefixes, and uses the complete `GET /instance-types` catalog for a temporary filtered selection menu, exact-name validation, pricing, and current regional availability. Tab/Shift-Tab and arrow keys navigate that menu while the prompt remains above it. Registered SSH keys use the same closed searchable selection, with an explicit local-public-key upload path, and optional images are also discovered. `region = "auto"` is fwd policy—the launch API still receives one exact region code. The
+API key is never written to target config, session state, subprocess arguments, logs, or the remote machine; pasted values live only in fwd's private local credential file.
 
 - **Stopping terminates compute and retains storage.** Lambda has no suspend operation and destroys an instance's local
   disk at termination. Fwd keeps durable state on `fwd-<session>-data`; the next launch creates a fresh instance and
@@ -741,7 +747,8 @@ API key is never written to fwd config, session state, subprocess arguments, log
   session-owned filesystem after the normal consequence-aware confirmation.
 - **Disposable mode is explicit.** `persistent = false` avoids filesystem billing but means `fwd stop` permanently
   erases the checkout, installed tools, credentials, conversations, and agent state on that instance.
-- **Capacity is checked at launch time.** Lambda inventory varies by region. `fwd up TARGET --machines` separates the complete instance-type catalog into available and unavailable lists for the target region and marks the configured default even when it has no capacity. `--machine/-m` accepts only an exact currently available instance-type name; invalid selections fail before resources are created and print that same scoped inventory. `fwd setup` suggests current capacity and launch errors preserve the provider's actionable message rather than silently selecting different hardware.
+- **Regions are selected from live capacity.** The Lambda API requires an exact launch region, but fwd defaults to `auto`. Ordered `preferred_regions` entries may be complete codes such as `us-south-2` or prefixes such as `us-west` and `us`; matching regions are considered in preference order before other catalog regions. A retained session filesystem pins every replacement instance to its original exact region regardless of later preference changes.
+- **Capacity is checked at launch time.** `fwd up TARGET --machines` separates the complete instance-type catalog into available and unavailable lists under the target's region policy and includes matching exact region codes in each machine's details. `--machine/-m` accepts only an exact currently available instance-type name; invalid selections fail before resources are created and print that same scoped inventory.
 - **Remote stop-after is unavailable.** Lambda API keys currently grant broad account access, so fwd will not copy one
   onto the instance merely to let it terminate itself. Local `fwd stop` remains fully supported.
 
