@@ -5,9 +5,29 @@ Cloud providers register only public keys, while fwd must retain the correspondi
 
 from __future__ import annotations
 
+import base64
+import binascii
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+
+class SSHKeySafetyError(ValueError):
+    """Raised without sensitive detail when material is unsafe for public-key handling or network egress."""
+
+
+_PRIVATE_KEY_MARKERS = (
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN DSA PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    "PuTTY-User-Key-File-2:",
+    "PuTTY-User-Key-File-3:",
+    "Private-Lines:",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,12 +41,72 @@ class LocalSSHKey:
     public_path: Path | None = None
 
 
-def public_key_identity(public_key: str) -> str | None:
-    """Return the stable OpenSSH algorithm-and-blob identity, excluding its optional comment."""
-    parts = public_key.strip().split()
+def contains_private_key_material(value: Any) -> bool:
+    """Return whether a nested value contains a recognizable private-key block or private-key payload field."""
+    if isinstance(value, str):
+        return any(marker in value for marker in _PRIVATE_KEY_MARKERS)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        material = bytes(value)
+        return any(marker.encode("ascii") in material for marker in _PRIVATE_KEY_MARKERS)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = str(key).lower().replace("-", "_")
+            if normalized_key in {"private_key", "privatekey", "private_key_material"} and item is not None and item != "":
+                return True
+            if contains_private_key_material(item):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(contains_private_key_material(item) for item in value)
+    return False
+
+
+def assert_no_private_key_material(value: Any) -> None:
+    """Reject private-key material with an intentionally generic error that never repeats the sensitive input."""
+    if contains_private_key_material(value):
+        raise SSHKeySafetyError("refusing operation because private SSH key material must never leave the local machine")
+
+
+def _parsed_public_key(public_key: str) -> tuple[str, str] | None:
+    """Return normalized text and stable identity only for a structurally valid one-line OpenSSH public key."""
+    if not isinstance(public_key, str) or contains_private_key_material(public_key):
+        return None
+    normalized = public_key.strip()
+    if not normalized or "\n" in normalized or "\r" in normalized or len(normalized) > 16384:
+        return None
+    parts = normalized.split()
     if len(parts) < 2 or not (parts[0].startswith("ssh-") or parts[0].startswith("ecdsa-") or parts[0].startswith("sk-")):
         return None
-    return f"{parts[0]} {parts[1]}"
+    encoded = parts[1]
+    try:
+        blob = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(blob) < 4:
+        return None
+    algorithm_length = int.from_bytes(blob[:4], "big")
+    algorithm_end = 4 + algorithm_length
+    try:
+        algorithm = parts[0].encode("ascii")
+    except UnicodeEncodeError:
+        return None
+    if algorithm_end > len(blob) or blob[4:algorithm_end] != algorithm:
+        return None
+    return normalized, f"{parts[0]} {parts[1]}"
+
+
+def validated_public_key(public_key: str) -> str:
+    """Return only a validated public algorithm and blob, discarding comments and rejecting without echoing input."""
+    parsed = _parsed_public_key(public_key)
+    if parsed is None:
+        raise SSHKeySafetyError("refusing SSH-key upload because the value is not one valid OpenSSH public key; private keys are never accepted")
+    return parsed[1]
+
+
+def public_key_identity(public_key: str) -> str | None:
+    """Return the stable OpenSSH algorithm-and-blob identity, excluding its optional comment."""
+    parsed = _parsed_public_key(public_key)
+    return parsed[1] if parsed is not None else None
 
 
 def _read_public_key(public_path: Path) -> str | None:

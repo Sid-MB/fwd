@@ -33,7 +33,7 @@ from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices,
 from fwd.config import Config, LambdaTargetConfig
 from fwd.credentials import CredentialInputError, resolve_secret, secret_source
 from fwd.sshexec import SSHEndpoint
-from fwd.ssh_keys import private_key_matches_public
+from fwd.ssh_keys import SSHKeySafetyError, assert_no_private_key_material, private_key_matches_public, validated_public_key
 from fwd.state import SessionState
 
 API_BASE_URL = "https://cloud.lambda.ai/api/v1"
@@ -130,6 +130,10 @@ class LambdaCloudClient:
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: float = REQUEST_TIMEOUT) -> Any:
         """Send one authenticated request and unwrap Lambda's ``data`` envelope into Python values."""
+        try:
+            assert_no_private_key_material(payload)
+        except SSHKeySafetyError as exc:
+            raise LambdaCloudError(str(exc)) from exc
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = urllib.request.Request(
             f"{API_BASE_URL}{path}",
@@ -212,7 +216,11 @@ class LambdaCloudClient:
 
     def add_ssh_key(self, name: str, public_key: str) -> dict[str, Any]:
         """Register an existing local public key and return Lambda's key document without generating private material."""
-        data = self.request("POST", "/ssh-keys", {"name": name, "public_key": public_key})
+        try:
+            safe_public_key = validated_public_key(public_key)
+        except SSHKeySafetyError as exc:
+            raise LambdaCloudError(str(exc)) from exc
+        data = self.request("POST", "/ssh-keys", {"name": name, "public_key": safe_public_key})
         if not isinstance(data, dict) or str(data.get("name") or "") != name:
             raise LambdaCloudError("Lambda Cloud SSH-key upload returned an invalid key document")
         return data
