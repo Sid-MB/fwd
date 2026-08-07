@@ -354,31 +354,53 @@ def _run_up(
         launch_new = has_project_session
 
     stream_command = managed_command
-    try:
-        state = launch_ops.launch(
-            target=selector.target.launch_name if selector.target else None,
-            machine=machine,
-            gpu=gpu,
-            name=launch_name,
-            new=launch_new,
-            initial_command=() if stream_command else initial_command,
-            run_command_as_task=stream_command,
-            session=session,
-            handoff=handoff,
-            user_config=user_config,
-            creds=creds,
-            attach=effective_attach,
-            forward_ports=ports,
-            **github_override,
-        )
-    except Exception as exc:
-        from fwd.backends import MachineSelectionError
+    def perform_launch(*, attach_after_launch: bool):
+        """Invoke launch with scoped machine-error rendering in either the foreground or detached worker."""
+        try:
+            return launch_ops.launch(
+                target=selector.target.launch_name if selector.target else None,
+                machine=machine,
+                gpu=gpu,
+                name=launch_name,
+                new=launch_new,
+                initial_command=() if stream_command else initial_command,
+                run_command_as_task=stream_command,
+                session=session,
+                handoff=handoff,
+                user_config=user_config,
+                creds=creds,
+                attach=attach_after_launch,
+                forward_ports=ports,
+                **github_override,
+            )
+        except Exception as exc:
+            from fwd.backends import MachineSelectionError
 
-        if not isinstance(exc, MachineSelectionError):
-            raise
-        ui.error(str(exc))
-        machines_ops.render_target(exc.target, exc.inventory)
-        raise typer.Exit(1) from None
+            if not isinstance(exc, MachineSelectionError):
+                raise
+            ui.error(str(exc))
+            machines_ops.render_target(exc.target, exc.inventory)
+            raise typer.Exit(1) from None
+
+    from fwd import launch_stream
+
+    if not stream_command and launch_stream.available():
+        result = launch_stream.run(lambda: perform_launch(attach_after_launch=False))
+        if result.disposition == "backgrounded":
+            ui.ok(f"Backgrounded launch; it will keep running locally. Logs: {result.log_path}")
+            ui.info(f"Check progress with `tail -f {shlex.quote(str(result.log_path))}`; when ready, inspect with {ui.command('ls')!r} and attach with {ui.command('attach')!r}")
+            return None
+        if result.exit_code != 0:
+            raise typer.Exit(result.exit_code)
+        state = launch_ops.store().get(result.session_name or "")
+        if state is None:
+            ui.die(f"launch worker completed without a saved session; logs: {result.log_path}")
+        if effective_attach:
+            state.touch_attached()
+            launch_ops.store().upsert(state)
+            launch_ops.exec_attach(state.ssh_endpoint(), state.tmux_session, state.name)
+    else:
+        state = perform_launch(attach_after_launch=effective_attach)
     if stream_command:
         from fwd.ops import send as send_ops
 

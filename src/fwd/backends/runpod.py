@@ -398,6 +398,26 @@ def _safe_provider_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-") or "session"
 
 
+def _gpu_catalog_entry(item: Any, cloud_type: str) -> tuple[str, str, bool] | None:
+    """Normalize one ``runpodctl gpu list`` entry for both setup choices and launch-time machine inventory."""
+    if isinstance(item, str):
+        value = item.strip()
+        return (value, "", True) if value else None
+    if not isinstance(item, dict):
+        return None
+    value = str(item.get("gpuId") or item.get("id") or item.get("gpuTypeId") or item.get("displayName") or item.get("name") or "").strip()
+    if not value:
+        return None
+    display_name = str(item.get("displayName") or item.get("name") or "").strip()
+    memory = item.get("memoryInGb")
+    stock = str(item.get("stockStatus") or "").strip()
+    cloud_field = "secureCloud" if cloud_type == "secure" else "communityCloud"
+    selectable = bool(item.get("available")) and bool(item.get(cloud_field, True))
+    availability = f"capacity: {stock}" if selectable and stock else f"available in {cloud_type} cloud" if selectable else f"currently unavailable in {cloud_type} cloud"
+    detail = " · ".join(part for part in (display_name if display_name and display_name != value else "", f"{memory} GB" if memory else "", availability) if part)
+    return value, detail, selectable
+
+
 class RunpodBackend(Backend):
     """Provisioner over RunPod pods (see :class:`fwd.backends.base.Provisioner`)."""
 
@@ -413,7 +433,7 @@ class RunpodBackend(Backend):
         cfg = self.target
         default = "cpu" if cfg.compute_type == "cpu" else cfg.gpu
         try:
-            payload = _first_json(self._run_ctl(["gpu", "list"], timeout=30.0))
+            payload = _first_json(self._run_ctl(["gpu", "list", "--include-unavailable"], timeout=30.0))
         except RunpodError as exc:
             unavailable = () if default == "cpu" else (MachineType(default, "configured default; availability could not be checked"),)
             return MachineInventory(default=default, selectable=True, available=(MachineType("cpu", "CPU pod"),), unavailable=unavailable, error=str(exc))
@@ -423,19 +443,14 @@ class RunpodBackend(Backend):
         available: list[MachineType] = [MachineType("cpu", "CPU pod")]
         unavailable: list[MachineType] = []
         seen = {"cpu"}
-        cloud_field = "secureCloud" if cfg.cloud_type == "secure" else "communityCloud"
         for item in payload:
-            if not isinstance(item, dict):
+            entry = _gpu_catalog_entry(item, cfg.cloud_type)
+            if entry is None:
                 continue
-            value = str(item.get("gpuId") or item.get("id") or item.get("gpuTypeId") or item.get("displayName") or item.get("name") or "").strip()
-            if not value or value in seen:
+            value, detail, selectable = entry
+            if value in seen:
                 continue
             seen.add(value)
-            label = str(item.get("displayName") or item.get("name") or value)
-            memory = item.get("memoryInGb")
-            stock = str(item.get("stockStatus") or "").strip()
-            detail = " · ".join(part for part in (label if label != value else "", f"{memory} GB" if memory else "", f"capacity: {stock}" if stock else "") if part)
-            selectable = bool(item.get("available")) and bool(item.get(cloud_field, True))
             (available if selectable else unavailable).append(MachineType(value, detail))
         if default not in seen:
             unavailable.append(MachineType(default, "configured default was not returned by RunPod"))
@@ -457,11 +472,11 @@ class RunpodBackend(Backend):
         """Describe RunPod setup, with provider enums closed and resource identifiers extensible."""
         return (
             ConfigParameter("compute_type", "--compute-type", "compute kind; CPU-only is the default", choices=(ConfigChoice("cpu", "CPU only"), ConfigChoice("gpu", "GPU")), allow_free_text=False),
-            ConfigParameter("gpu", "--gpu", "GPU identifier; used only for GPU compute", prompt_when=(("compute_type", "gpu"),)),
+            ConfigParameter("gpu", "--gpu", "RunPod GPU type", prompt_when=(("compute_type", "gpu"),), searchable=True, search_labels=True),
             ConfigParameter("image", "--image", "container image", choices=(ConfigChoice(DEFAULT_RUNPOD_CPU_IMAGE, "CPU base"), ConfigChoice(DEFAULT_RUNPOD_GPU_IMAGE, "GPU/PyTorch")), allow_free_text=True),
             ConfigParameter("cloud_type", "--cloud-type", "RunPod cloud pool", advanced=True, choices=(ConfigChoice("secure"), ConfigChoice("community")), allow_free_text=False),
             ConfigParameter("persistent", "--persistent", "create independent storage that survives pod termination", choices=(ConfigChoice("true"), ConfigChoice("false")), allow_free_text=False),
-            ConfigParameter("data_center_id", "--data-center-id", "RunPod datacenter for persistent storage", required=True, prompt_when=(("persistent", "true"),)),
+            ConfigParameter("data_center_id", "--data-center-id", "RunPod datacenter for persistent storage", required=True, prompt_when=(("persistent", "true"),), searchable=True, search_labels=True),
             ConfigParameter("volume_gb", "--volume-gb", "persistent network-volume size in GB", advanced=True, prompt_when=(("persistent", "true"),)),
             ConfigParameter("volume_mount_path", "--volume-mount-path", "persistent volume mount path", prompt=False),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts", advanced=True),
@@ -474,7 +489,7 @@ class RunpodBackend(Backend):
 
     @classmethod
     def config_choices(cls, parameter: ConfigParameter, values: dict[str, Any]) -> ConfigChoices:
-        """Discover GPU identifiers from runpodctl; failures retain the configured/default value and free text."""
+        """Discover closed searchable RunPod catalogs, retaining free text only when provider discovery fails."""
         if parameter.name == "data_center_id":
             choices: list[ConfigChoice] = []
             try:
@@ -486,27 +501,30 @@ class RunpodBackend(Backend):
                             choices.append(ConfigChoice(str(item["id"]), str(item.get("location") or item.get("name") or "") or None))
             except (OSError, subprocess.SubprocessError, ValueError):
                 pass
-            return ConfigChoices(tuple(choices), allow_free_text=True)
+            return ConfigChoices(tuple(choices), allow_free_text=not choices)
         if parameter.name != "gpu" or str(values.get("compute_type", "cpu")).lower() != "gpu":
             return super().config_choices(parameter, values)
-        choices: list[ConfigChoice] = [ConfigChoice("NVIDIA GeForce RTX 4090")]
+        choices: list[ConfigChoice] = []
+        seen: set[str] = set()
         try:
-            process = subprocess.run([RUNPODCTL, "gpu", "list"], capture_output=True, text=True, timeout=20)
+            process = subprocess.run([RUNPODCTL, "gpu", "list", "--include-unavailable"], capture_output=True, text=True, timeout=20)
             payload = _first_json(process.stdout) if process.returncode == 0 else None
             if isinstance(payload, list):
                 for item in payload:
-                    if isinstance(item, str):
-                        value, label = item, None
-                    elif isinstance(item, dict):
-                        value = str(item.get("id") or item.get("gpuTypeId") or item.get("displayName") or item.get("name") or "")
-                        label = str(item.get("displayName") or item.get("name") or "") or None
-                    else:
+                    entry = _gpu_catalog_entry(item, str(values.get("cloud_type") or "secure").lower())
+                    if entry is None:
                         continue
-                    if value and value not in {choice.value for choice in choices}:
-                        choices.append(ConfigChoice(value, label))
+                    value, detail, _ = entry
+                    if value not in seen:
+                        choices.append(ConfigChoice(value, detail or None))
+                        seen.add(value)
         except (OSError, RunpodError, subprocess.SubprocessError, ValueError):
             pass
-        return ConfigChoices(tuple(choices), allow_free_text=True)
+        if choices:
+            choices.sort(key=lambda choice: ("currently unavailable" in (choice.label or ""), choice.value.lower()))
+            return ConfigChoices(tuple(choices), allow_free_text=False)
+        default = str(values.get("gpu") or "NVIDIA GeForce RTX 4090")
+        return ConfigChoices((ConfigChoice(default, "provider catalog unavailable; enter a RunPod GPU id"),), allow_free_text=True)
 
     def _run_ctl(self, args: list[str], *, check: bool = True, timeout: float = 120.0) -> str:
         """Run ``runpodctl <args>`` and return stdout.

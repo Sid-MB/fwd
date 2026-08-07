@@ -21,6 +21,7 @@ def test_runpod_setup_prompts_for_compute_type_first_and_skips_gpu_for_cpu(monke
         return current
 
     monkeypatch.setattr(wizard, "_prompt_value", accept_default)
+    monkeypatch.setattr(wizard, "_prompt_searchable_choice", accept_default)
     monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: False)
     answers = wizard._prompt_target_values("runpod")
 
@@ -40,6 +41,7 @@ def test_runpod_setup_switches_to_gpu_defaults_when_gpu_compute_is_selected(monk
         return current
 
     monkeypatch.setattr(wizard, "_prompt_value", accept_default)
+    monkeypatch.setattr(wizard, "_prompt_searchable_choice", accept_default)
     monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: True)
     answers = wizard._prompt_target_values("runpod", {"compute_type": "gpu"})
 
@@ -53,6 +55,7 @@ def test_runpod_advanced_gate_lists_cpu_defaults_without_gpu_volume(monkeypatch:
     """The reusable gate is shown once and omits conditionally irrelevant fields when declined."""
     confirmations: list[str] = []
     monkeypatch.setattr(wizard, "_prompt_value", lambda field_name, current, **kwargs: current)
+    monkeypatch.setattr(wizard, "_prompt_searchable_choice", lambda field_name, current, **kwargs: current)
     monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: confirmations.append(message) or False)
 
     wizard._prompt_target_values("runpod")
@@ -64,6 +67,7 @@ def test_runpod_advanced_gate_lists_gpu_volume_and_skips_fields_when_declined(mo
     prompted: list[str] = []
     confirmations: list[str] = []
     monkeypatch.setattr(wizard, "_prompt_value", lambda field_name, current, **kwargs: prompted.append(field_name) or current)
+    monkeypatch.setattr(wizard, "_prompt_searchable_choice", lambda field_name, current, **kwargs: prompted.append(field_name) or current)
     monkeypatch.setattr(wizard.ui, "confirm", lambda message, default=False: confirmations.append(message) or False)
 
     wizard._prompt_target_values("runpod", {"compute_type": "gpu"})

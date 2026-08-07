@@ -421,6 +421,8 @@ fwd up -- python train.py --epochs 10  # stream a durable task; '--' protects it
 fwd up --stop-after -- pytest -q    # stream tests, then stop remotely even if this laptop disconnects
 ```
 
+During an interactive local provisioning pipeline, fwd prints `(Press Ctrl-C to cancel, Ctrl-B to background)` after two seconds. Ctrl-B returns the terminal while a detached local worker continues provider polling, SSH readiness, synchronization, bootstrap, and remote-session startup; it prints the private `~/.fwd/logs/launch-*.log` path for `tail -f`, and `fwd ls` exposes the session as soon as provider state has been persisted. Ctrl-C is forwarded to that worker so the normal interruption cleanup still deprovisions invocation-created resources. When launch finishes in the foreground, an auto-attach proceeds normally. Explicit streamed commands retain their existing durable-task Ctrl-B behavior once their remote task starts.
+
 By default, an explicit arbitrary command runs as a durable task after selecting or provisioning the session: fwd
 uses the same task manager as `fwd send -- COMMAND`, streams its output, returns its exit status, and shows Ctrl-C to
 cancel or Ctrl-B to background after two seconds. The task receives an ID and remains visible in `fwd send --ls`.
@@ -660,7 +662,7 @@ remote_base = "~/fwd"                # projects land in <remote_base>/<project>
 
 ### RunPod — provision CPU or GPU compute per session
 
-Run `fwd up runpod --machines` to query `runpodctl gpu list`, see the target's explicit default, and view available and unavailable GPU ids separately. The literal `cpu` selector is always present. Select one exact listed value for an individual launch with `fwd up runpod --machine/-m MACHINE`; switching between `cpu` and a GPU also selects the corresponding built-in image unless the target has a custom image. An unknown or currently unavailable value fails before storage or a pod is created and reprints the scoped inventory. The older `--gpu` flag remains for compatibility with explicitly GPU-configured targets and Slurm allocation specs.
+Run `fwd up runpod --machines` to query `runpodctl gpu list --include-unavailable`, see the target's explicit default, and view available and unavailable GPU ids separately. The literal `cpu` selector is always present. Select one exact listed value for an individual launch with `fwd up runpod --machine/-m MACHINE`; switching between `cpu` and a GPU also selects the corresponding built-in image unless the target has a custom image. During `fwd setup runpod`, GPU types and persistent-storage datacenters returned by `runpodctl` use the same temporary searchable menu as Lambda catalogs, including display names, memory or location metadata, and current GPU availability. If provider discovery fails, those setup fields retain a free-text fallback rather than blocking configuration. An unknown or currently unavailable launch value fails before storage or a pod is created and reprints the scoped inventory. The older `--gpu` flag remains for compatibility with explicitly GPU-configured targets and Slurm allocation specs.
 
 ```toml
 [targets.pod]

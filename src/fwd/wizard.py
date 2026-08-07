@@ -390,11 +390,14 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
             if inferred_private_key and provided.get("key_path") is None:
                 answers["key_path"] = inferred_private_key
         elif parameter.searchable and choice_set.values and not choice_set.allow_free_text:
-            value = _prompt_searchable_choice(field_name, str(defaults[field_name]), help_text=parameter.help, choices=choice_set, search_labels=parameter.search_labels)
+            current = "" if defaults[field_name] is None else str(defaults[field_name])
+            value = _prompt_searchable_choice(field_name, current, help_text=parameter.help, choices=choice_set, search_labels=parameter.search_labels)
         elif parameter.searchable and not choice_set.allow_free_text:
             ui.die(f"Lambda Cloud returned no valid values for required setup field {field_name!r}")
         else:
             value = _prompt_value(field_name, defaults[field_name], required=parameter.required, help_text=parameter.help, choices=choice_set)
+        if defaults[field_name] is None and value == "":
+            value = None
         if value != defaults[field_name]:
             answers[field_name] = value
     return answers
