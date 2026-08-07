@@ -877,7 +877,8 @@ def default_cmd(
 
 @app.command("setup")
 def setup_cmd(
-    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: lambda, ssh, runpod, or slurm. Required in non-interactive mode.", autocompletion=complete_backend)] = None,
+    backend_name: Annotated[str | None, typer.Argument(help="Backend to configure; positional alias for --backend.", metavar="BACKEND", autocompletion=complete_backend)] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: lambda, ssh, runpod, or slurm. Equivalent to positional BACKEND.", autocompletion=complete_backend)] = None,
     target_name: Annotated[str | None, typer.Option("--target-name", help=f"Local {ui.command()} label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
     host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.", autocompletion=complete_ssh_host)] = None,
     login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.", autocompletion=complete_ssh_host)] = None,
@@ -914,13 +915,17 @@ def setup_cmd(
     """Create or update ~/.fwd/config.toml interactively or entirely from flags.
 
     Setup automatically becomes non-interactive when stdout is not a TTY or CLAUDECODE/CODEX_AGENT is set. Missing
-    required flags produce an exact invocation; pass --interactive to force prompts.
+    required flags produce an exact invocation; pass --interactive to force prompts. A positional backend such as
+    ``fwd setup lambda`` is equivalent to ``fwd setup --backend lambda``.
     """
     from fwd import wizard
 
+    if backend_name is not None and backend is not None and backend_name != backend:
+        ui.die(f"backend specified twice with different values: {backend_name!r} and {backend!r}")
+    selected_backend = backend or backend_name
     wizard.run_wizard(
         force_interactive=interactive,
-        backend=backend,
+        backend=selected_backend,
         target_name=target_name,
         values={
             "host": host,

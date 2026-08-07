@@ -115,13 +115,13 @@ Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every
 
 `fwd setup` automatically switches to flag-only mode when stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
 present. This makes setup safe for agents and scripts: missing required values produce the exact flags needed instead
-of opening a prompt. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
+of opening a prompt. The backend can be positional (`fwd setup lambda`) or passed with the equivalent `--backend lambda` flag. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
 
 ```sh
-fwd setup --backend ssh --host my-box --target-name work
-fwd setup --backend slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
-fwd setup --backend runpod --data-center-id US-GA-1 --target-name pod
-fwd setup --backend lambda --region us-west-1 --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
+fwd setup ssh --host my-box --target-name work
+fwd setup slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
+fwd setup runpod --data-center-id US-GA-1 --target-name pod
+fwd setup lambda --region us-west-1 --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
 ```
 
 Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
@@ -170,6 +170,7 @@ fwd up --machines            # current provider strings for every target, with d
 fwd rm <TAB>
 fwd stop <TAB>
 fwd send --name <TAB>
+fwd setup <TAB>              # backends (positional alias for --backend)
 fwd push --name <TAB>
 fwd setup --backend <TAB>    # backends and backend-specific choices
 ```
@@ -212,7 +213,7 @@ automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd buil
 | `fwd stop [session/target/backend...]` | Kill remote tmux and suspend one or more targets; CPU RunPod container-disk data does not survive | `fwd stop work experiment` |
 | `fwd rm [session/target/backend...]` / `fwd rm --all` | Destroy one, several, or every target and forget the session state; confirms only when running work or remote data may be lost | `fwd rm work experiment` |
 | `fwd uninstall` | Remove local data, skills, completions, and temporary logs, then print the package-manager removal command | `fwd uninstall` |
-| `fwd setup` | Create/update a saved target without provisioning or launching; prompts in terminals and accepts every field as a flag | `fwd setup --backend ssh` |
+| `fwd setup [BACKEND]` | Create/update a saved target without provisioning or launching; the positional backend aliases `--backend` | `fwd setup ssh` |
 | `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
 | `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
 | `fwd config` | Print the effective merged config, annotated with where each value came from | `fwd config` |
