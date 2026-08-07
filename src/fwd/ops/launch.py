@@ -627,11 +627,12 @@ def _launch(
 
     # 2. Wait for sshd, then multiplex every later stage over a single connection.
     with ui.step(f"Waiting for SSH on {endpoint.host}:{endpoint.port}"):
-        if not sshexec.wait_for_ssh(endpoint):
-            ui.die(
-                f"{endpoint.ssh_target()} did not become reachable; check the target is running and that your key is "
-                f"authorized, then run {ui.command('doctor')!r}"
-            )
+        try:
+            reachable = sshexec.wait_for_ssh(endpoint, fail_fast_auth=True)
+        except sshexec.SSHError as exc:
+            ui.die(f"{exc}; run {ui.command('doctor')!r} for the configured target")
+        if not reachable:
+            ui.die(f"{endpoint.ssh_target()} did not become reachable; check the target is running and that your key is authorized, then run {ui.command('doctor')!r}")
     try:
         endpoint.open_control_master()
     except sshexec.SSHError as exc:

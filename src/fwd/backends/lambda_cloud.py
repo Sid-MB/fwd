@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import socket
 import threading
 import time
@@ -32,6 +33,7 @@ from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices,
 from fwd.config import Config, LambdaTargetConfig
 from fwd.credentials import CredentialInputError, resolve_secret, secret_source
 from fwd.sshexec import SSHEndpoint
+from fwd.ssh_keys import private_key_matches_public
 from fwd.state import SessionState
 
 API_BASE_URL = "https://cloud.lambda.ai/api/v1"
@@ -375,10 +377,18 @@ class LambdaCloudBackend(Backend):
         if self.target.instance_type not in offered_names:
             offered = ", ".join(sorted(name for name in offered_names if name)) or "<none returned>"
             raise LambdaCloudError(f"unknown Lambda instance type {self.target.instance_type!r}; choose one returned by GET /instance-types: {offered}")
-        ssh_key_names = {str(item.get("name") or "").strip() for item in self.client.list_ssh_keys()}
+        ssh_keys = self.client.list_ssh_keys()
+        ssh_key_names = {str(item.get("name") or "").strip() for item in ssh_keys}
         if self.target.ssh_key_name not in ssh_key_names:
             offered = ", ".join(sorted(name for name in ssh_key_names if name)) or "<none registered>"
             raise LambdaCloudError(f"unknown Lambda SSH key {self.target.ssh_key_name!r}; choose or upload a key returned by GET /ssh-keys: {offered}")
+        selected_key = next(item for item in ssh_keys if str(item.get("name") or "").strip() == self.target.ssh_key_name)
+        provider_public_key = str(selected_key.get("public_key") or selected_key.get("publicKey") or "")
+        repair_command = shlex.join((ui.COMMAND_NAME, "setup", "lambda", "--target-name", self.target.name, "--force"))
+        if not self.target.key_path:
+            raise LambdaCloudError(f"Lambda SSH key {self.target.ssh_key_name!r} has no configured local private key; rerun `{repair_command}` and choose or upload a key with a local private-key match")
+        if not private_key_matches_public(self.target.key_path, provider_public_key):
+            raise LambdaCloudError(f"Lambda SSH key {self.target.ssh_key_name!r} does not match the adjacent or derived public key for {self.target.key_path!r}; rerun `{repair_command}` and select a usable key pair")
         if self.target.image_id:
             self._resolve_region()
 
@@ -771,9 +781,16 @@ class LambdaCloudBackend(Backend):
             return checks
         try:
             data = self.client.request("GET", "/ssh-keys")
-            names = {str(item.get("name")) for item in data if isinstance(item, dict) and item.get("name")} if isinstance(data, list) else set()
-            found = bool(self.target.ssh_key_name and self.target.ssh_key_name in names)
+            keys = [item for item in data if isinstance(item, dict) and item.get("name")] if isinstance(data, list) else []
+            selected = next((item for item in keys if str(item.get("name")) == self.target.ssh_key_name), None)
+            found = selected is not None
             checks.append(CheckResult("lambda ssh key", found, f"found {self.target.ssh_key_name!r}" if found else f"key {self.target.ssh_key_name or '<unset>'!r} not found", None if found else "add the public key in Lambda Cloud or update ssh_key_name"))
+            if selected is not None:
+                provider_public_key = str(selected.get("public_key") or selected.get("publicKey") or "")
+                private_matches = bool(self.target.key_path and private_key_matches_public(self.target.key_path, provider_public_key))
+                private_detail = f"{self.target.key_path} matches the registered public key" if private_matches else f"no matching local private key configured for {self.target.ssh_key_name!r}"
+                repair_command = shlex.join((ui.COMMAND_NAME, "setup", "lambda", "--target-name", self.target.name, "--force"))
+                checks.append(CheckResult("lambda ssh private key", private_matches, private_detail, None if private_matches else f"rerun {repair_command} and choose or upload a usable local key pair"))
         except LambdaCloudError as exc:
             checks.append(CheckResult("lambda ssh key", False, str(exc), "check Lambda Cloud API access"))
         return checks

@@ -431,6 +431,7 @@ def wait_for_ssh(
     interval: float = 3.0,
     attempt_timeout: float = PROBE_CONNECT_TIMEOUT,
     on_attempt: Callable[[int], None] | None = None,
+    fail_fast_auth: bool = False,
 ) -> bool:
     """Poll until an endpoint accepts ssh connections and can run a trivial command.
 
@@ -444,6 +445,7 @@ def wait_for_ssh(
         attempt_timeout: SSH connection and subprocess budget for one attempt. Listing uses a short value while
             provisioning retains the more patient default.
         on_attempt: Called with the 1-based attempt number, for spinner/progress updates.
+        fail_fast_auth: Raise immediately when the server permanently rejects all offered public keys instead of retrying the same unusable credentials until timeout.
 
     Returns:
         ``True`` once reachable, ``False`` if the timeout expires.
@@ -465,6 +467,9 @@ def wait_for_ssh(
             completed = None
         if completed is not None and completed.returncode == 0:
             return True
+        if fail_fast_auth and completed is not None and b"permission denied (publickey" in completed.stderr.lower():
+            identity = f"configured identity {endpoint.key_path!r}" if endpoint.key_path else "no explicit identity file and no accepted SSH-agent/default identity"
+            raise SSHError(f"SSH authentication failed for {endpoint.ssh_target()} ({identity}); verify the target's registered public key and local key_path")
         if time.monotonic() + interval >= deadline:
             return False
         time.sleep(interval)

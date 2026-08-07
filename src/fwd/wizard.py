@@ -44,6 +44,7 @@ from prompt_toolkit.validation import ValidationError, Validator
 from fwd import ui
 from fwd.backends import ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, get_backend, make_backend
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, ConfigError, TargetConfig, load_config
+from fwd.ssh_keys import LocalSSHKey, local_key_pairs, matching_private_key
 
 _TERMINAL_KEY_SEQUENCE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)")
 _LINE_EDITING_INITIALIZED = False
@@ -271,48 +272,55 @@ def _prepare_lambda_setup() -> None:
             ui.die(f"could not authenticate to Lambda Cloud or load its instance catalog: {exc}")
 
 
-def _local_ssh_public_keys() -> tuple[tuple[Path, str], ...]:
-    """Return readable OpenSSH public keys from ``~/.ssh`` with compact labels for the upload selector."""
-    candidates: list[tuple[Path, str]] = []
-    for path in sorted((Path.home() / ".ssh").glob("*.pub")):
-        try:
-            public_key = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        parts = public_key.split()
-        if len(parts) >= 2 and (parts[0].startswith("ssh-") or parts[0].startswith("ecdsa-") or parts[0].startswith("sk-")) and len(public_key) <= 4096:
-            candidates.append((path, " ".join((parts[0], parts[2] if len(parts) > 2 else "")).strip()))
-    return tuple(candidates)
+def _upload_lambda_ssh_key(local_keys: tuple[LocalSSHKey, ...]) -> tuple[str, str]:
+    """Upload one usable local public key and return its provider name plus matching private-key path."""
+    from fwd.backends.lambda_cloud import LambdaCloudClient, LambdaCloudError
+
+    local_choices = ConfigChoices(tuple(ConfigChoice(str(key.private_path), key.label) for key in local_keys), allow_free_text=False)
+    selected_path = Path(_prompt_searchable_choice("local SSH key", str(local_keys[0].private_path), help_text="private key whose public half will be registered", choices=local_choices, search_labels=True))
+    selected = next(key for key in local_keys if key.private_path == selected_path)
+    default_name = selected.private_path.name.removesuffix(".pem")[:64]
+    while True:
+        name = _ask("Lambda Cloud SSH key name", default=default_name).strip()
+        if 1 <= len(name) <= 64:
+            break
+        ui.warn("Lambda Cloud SSH key names must contain 1 to 64 characters")
+    try:
+        LambdaCloudClient().add_ssh_key(name, selected.public_key)
+    except LambdaCloudError as exc:
+        ui.die(f"could not upload the public key for {selected.private_path}: {exc}")
+    ui.ok(f"uploaded the public key for {selected.private_path} as Lambda Cloud SSH key {name!r}")
+    return name, str(selected.private_path)
 
 
 def _prompt_lambda_ssh_key(current: str, choices: ConfigChoices) -> tuple[str, str | None]:
-    """Select a registered Lambda SSH key or explicitly upload one discovered local public key."""
-    from fwd.backends.lambda_cloud import LambdaCloudClient, LambdaCloudError
+    """Select only a registered key with a local private match, or upload a usable local pair."""
+    from fwd.backends.lambda_cloud import LambdaCloudClient
 
-    local_keys = _local_ssh_public_keys()
-    if local_keys and ui.confirm("Upload a local SSH public key to Lambda Cloud?", default=not choices.values):
-        local_choices = ConfigChoices(tuple(ConfigChoice(str(path), label) for path, label in local_keys), allow_free_text=False)
-        selected_path = Path(_prompt_searchable_choice("local SSH public key", str(local_keys[0][0]), help_text="public half to register with Lambda Cloud", choices=local_choices, search_labels=True))
-        public_key = selected_path.read_text(encoding="utf-8").strip()
-        default_name = selected_path.name.removesuffix(".pub")[:64]
-        while True:
-            name = _ask("Lambda Cloud SSH key name", default=default_name).strip()
-            if 1 <= len(name) <= 64:
-                break
-            ui.warn("Lambda Cloud SSH key names must contain 1 to 64 characters")
-        try:
-            LambdaCloudClient().add_ssh_key(name, public_key)
-        except LambdaCloudError as exc:
-            ui.die(f"could not upload SSH public key {selected_path}: {exc}")
-        private_path = selected_path.with_suffix("")
-        ui.ok(f"uploaded {selected_path} as Lambda Cloud SSH key {name!r}")
-        return name, str(private_path) if private_path.is_file() else None
+    local_keys = local_key_pairs()
+    provider_keys = LambdaCloudClient().list_ssh_keys()
+    private_paths = {
+        str(item.get("name") or ""): matching_private_key(str(item.get("public_key") or item.get("publicKey") or ""), local_keys)
+        for item in provider_keys
+        if item.get("name")
+    }
+    usable = {name: path for name, path in private_paths.items() if path is not None}
+    if local_keys and ui.confirm("Register a local SSH key with Lambda Cloud?", default=not usable):
+        return _upload_lambda_ssh_key(local_keys)
     if not choices.values:
         if not local_keys:
-            ui.die("Lambda Cloud has no registered SSH keys and no ~/.ssh/*.pub keys were found to upload; create a local SSH key pair or register one in the Lambda console")
+            ui.die("Lambda Cloud has no registered SSH keys and no usable ~/.ssh private/public key pairs were found; create a local SSH key pair first")
         ui.die("Lambda Cloud has no registered SSH keys; rerun setup and accept the local public-key upload")
-    default = current or (choices.values[0].value if len(choices.values) == 1 else "")
-    return _prompt_searchable_choice("ssh_key_name", default, help_text="exact registered Lambda Cloud SSH key name", choices=choices), None
+    annotated = ConfigChoices(tuple(ConfigChoice(choice.value, f"local private key: {usable[choice.value]}" if choice.value in usable else "no matching local private key") for choice in choices.values), allow_free_text=False)
+    default = current if current in usable else next(iter(usable)) if len(usable) == 1 else ""
+    selected = _prompt_searchable_choice("ssh_key_name", default, help_text="registered key with a local private match", choices=annotated, search_labels=True)
+    private_path = usable.get(selected)
+    if private_path is not None:
+        return selected, str(private_path)
+    ui.warn(f"Lambda Cloud key {selected!r} has no matching local private key, so fwd cannot authenticate with it")
+    if local_keys and ui.confirm("Register a usable local SSH key instead?", default=True):
+        return _upload_lambda_ssh_key(local_keys)
+    ui.die("choose or upload a Lambda SSH key whose matching private key exists under ~/.ssh")
 
 
 def _advanced_options_enabled(parameters: list[ConfigParameter], values: dict[str, Any], provider_summary: tuple[str, ...]) -> bool:
