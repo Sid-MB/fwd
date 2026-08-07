@@ -61,7 +61,7 @@ A backend implements one kind of remote compute: `runpod` provisions RunPod pods
 
 ### Targets
 
-A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, Lambda region and instance type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect current machine strings and defaults with `fwd up --machines` or `fwd up TARGET --machines`; inspect all valid configuration fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or non-interactively with `fwd setup BACKEND` (equivalent to `--backend BACKEND`) plus the required flags shown by `fwd setup --help`.
+A target is a named, reusable backend configuration—not a running machine or session. It describes how to provision or reach compute, including values such as an SSH alias, RunPod compute type, Lambda region and instance type, or Slurm allocation. Inspect configured targets and their source files with `fwd config`; inspect current machine strings and defaults with `fwd up --machines` or `fwd up TARGET --machines`; inspect all valid configuration fields with `fwd config --schema` or `fwd config --example BACKEND`. Add a target interactively with `fwd setup`, or select its form directly with `fwd setup BACKEND` (equivalent to `--backend BACKEND`, and neither form repeats the backend question) plus the required flags shown by `fwd setup --help`.
 
 Built-in `runpod` defaults and direct SSH forms such as `user@host` or an OpenSSH host alias can work without a saved target. Prefer CPU compute unless the user explicitly requests a GPU.
 

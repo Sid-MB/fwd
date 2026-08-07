@@ -115,7 +115,7 @@ Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every
 
 `fwd setup` automatically switches to flag-only mode when stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
 present. This makes setup safe for agents and scripts: missing required values produce the exact flags needed instead
-of opening a prompt. The backend can be positional (`fwd setup lambda`) or passed with the equivalent `--backend lambda` flag. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
+of opening a prompt. The backend can be positional (`fwd setup lambda`) or passed with the equivalent `--backend lambda` flag; either explicit form skips the backend question and enters that backend's setup fields directly. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
 
 ```sh
 fwd setup ssh --host my-box --target-name work

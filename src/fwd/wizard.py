@@ -268,7 +268,7 @@ def run_wizard(
 
     Args:
         force_interactive: Prompt even under redirected output or a known agent environment.
-        backend: Provider identifier supplied by ``--backend``.
+        backend: Provider identifier supplied positionally or by ``--backend``; explicit values skip backend prompting.
         target_name: Optional local fwd label; defaults to the backend name, with a numeric suffix on collision.
         values: Target field values supplied through CLI flags; ``None`` entries mean unspecified.
         make_default: Make this target the saved default even when another default already exists.
@@ -285,10 +285,15 @@ def run_wizard(
     interactive = reason is None
     backends_list = sorted(TARGET_TYPES)
     if interactive:
-        # ssh is the default because it is the one backend that needs no account, no spend and no cluster access, so it
-        # is where a first-time user should land if they just press Enter.
-        default_backend = (backend or ("ssh" if "ssh" in TARGET_TYPES else backends_list[0])).strip().lower()
-        resolved_backend = _ask(f"backend ({'/'.join(backends_list)})", default=default_backend).strip().lower()
+        if backend is not None:
+            # A positional backend and --backend are explicit answers, not merely defaults for the same question. This
+            # lets `fwd setup lambda` enter the Lambda form immediately while bare `fwd setup` remains discoverable.
+            resolved_backend = backend.strip().lower()
+        else:
+            # ssh is the default because it is the one backend that needs no account, no spend and no cluster access,
+            # so it is where a first-time user should land if they just press Enter.
+            default_backend = "ssh" if "ssh" in TARGET_TYPES else backends_list[0]
+            resolved_backend = _ask(f"backend ({'/'.join(backends_list)})", default=default_backend).strip().lower()
         if resolved_backend not in TARGET_TYPES:
             ui.die(f"unknown backend {resolved_backend!r}; expected one of: {', '.join(backends_list)}")
     else:
