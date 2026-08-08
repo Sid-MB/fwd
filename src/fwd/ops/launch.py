@@ -269,7 +269,7 @@ def exec_attach(
     Refuses up front without a tty. ``tmux attach`` cannot work on a pipe, so this is guaranteed to fail either way —
     but exec'ing into ssh to find out leaks two confusing lines from other tools (``Pseudo-terminal will not be
     allocated...`` / ``open terminal failed: not a terminal``) that say nothing about what the user should do
-    instead. See docs/live-e2e-report.md, R2-2.
+    instead. See dev-docs/live-e2e-report.md, R2-2.
     """
     if not sys.stdin.isatty():
         ui.die(f"attach needs an interactive terminal; in scripts use {ui.command('up')!r} without --attach")
@@ -798,7 +798,7 @@ def status_of(backend: Provisioner, session: SessionState) -> TargetStatus:
     something sensible. ``NotImplementedError`` is distinguished on purpose: during development that means "this
     backend cannot answer yet", and assuming anything worse would make fwd nag about healthy sessions.
 
-    An unexpected exception maps to ``UNKNOWN``, never ``GONE`` (docs/live-e2e-report.md, R2-1). Only a backend that
+    An unexpected exception maps to ``UNKNOWN``, never ``GONE`` (dev-docs/live-e2e-report.md, R2-1). Only a backend that
     *affirmatively* confirms the resource is missing may return ``GONE``, because that is the value which unlocks the
     offer to delete the user's session entry.
     """

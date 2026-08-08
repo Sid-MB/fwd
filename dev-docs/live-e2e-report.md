@@ -118,7 +118,7 @@ otherwise ~10 s repair.
 - `fwd attach` against the stopped pod: the STOPPED branch is reached and it *restarts* the pod. Note for scripted use:
   `ui.confirm` (src/fwd/ui.py:121) returns the **default** when stdin is not a tty, and the restart prompt defaults to
   `True`, so a non-interactive `fwd attach` silently provisions the pod again. Defensible, but worth knowing.
-- Port churn confirmed exactly as docs/runpod-notes.md predicts: `20660 → 20663` (IP unchanged). `fwd up` re-resolved
+- Port churn confirmed exactly as `dev-docs/runpod-notes.md` predicts: `20660 → 20663` (IP unchanged). `fwd up` re-resolved
   it, `wait_for_ssh` succeeded on the new port, and `~/.fwd/state.json` was rewritten with `"port": 20663`. **PASS.**
 - Re-sync + dep audit after the wipe: **PASS** (`/workspace` survived, `uv sync` audited 1 package).
 - tmux relaunch: `fwd up` reported `✓ Starting remote session 'fwd-test-live'` and exited 0, but the session was
@@ -163,7 +163,7 @@ exercised here (RunPod uses a passphrase-less key).
 - **Where:** `src/fwd/sync.py:31` (`RSYNC_BASE = ("rsync", "-az")`) and `src/fwd/sync.py:64-68` (`_run` treats every
   nonzero exit as fatal). Surfaces through `ops/launch.py:424` (`_sync_project`) and `ops/transfer.py`.
 - **Repro:** any `fwd up` onto a RunPod pod whose `/workspace` is a MooseFS network volume (observed on this A4000
-  pod; docs/runpod-notes.md records the same volume type on the earlier community A4000).
+  pod; `dev-docs/runpod-notes.md` records the same volume type on the earlier community A4000).
 - **Actual:**
 
 ```
@@ -238,7 +238,7 @@ SSHError: rsync push failed (exit 23)
 
 - **No CPU / community-cloud RunPod targets.** `RunpodTargetConfig` has no `compute_type`/`cloud_type`/
   `container_disk_gb`, and `_create_pod` never emits `--compute-type` or `--cloud-type`. The cheapest thing a user can
-  launch through fwd today is a secure-cloud GPU pod. Since docs/runpod-notes.md already documents that CPU pods get
+  launch through fwd today is a secure-cloud GPU pod. Since `dev-docs/runpod-notes.md` already documents that CPU pods get
   no volume, a `compute_type = "cpu"` option would need to pair with a container-disk `remote_base`; a
   `cloud_type = "COMMUNITY"` option is a pure win for cost and is one flag.
 - `fwd up --handoff` regenerates HANDOFF.md (a full `claude -p` round trip, ~60–70 s) on every repair run.

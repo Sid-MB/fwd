@@ -2,7 +2,7 @@
 
 These pin the two things that silently corrupt a transfer when wrong: the ``~/.claude/projects`` path encoding, and
 the transcript path rewrite. Both are reverse-engineered from a real Claude Code install (see the S1 spike writeup in
-``docs/session-transfer-notes.md``), so the encoding cases below are copied verbatim from observed directory names on
+``dev-docs/session-transfer-notes.md``), so the encoding cases below are copied verbatim from observed directory names on
 the spike machine — they are regression evidence, not invented examples.
 
 Everything filesystem-touching runs against a synthetic ``~/.claude`` in ``tmp_path`` via the ``FWD_CLAUDE_HOME``

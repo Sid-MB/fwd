@@ -32,7 +32,7 @@ Shape of the rendered script::
         srun --pty bash -lc '<env_setup joined with &&>; cd <remote_dir>; <claude_cmd>'
 
 ``fwd-env.sh`` is written by ``bootstrap.sh`` (owned by the bootstrap teammate) and exports the cache redirections that
-keep inode-hungry caches off ``$HOME``; see ``docs/slurm-notes.md`` for the exact variable contract. It is sourced on
+keep inode-hungry caches off ``$HOME``; see ``dev-docs/slurm-notes.md`` for the exact variable contract. It is sourced on
 the login node *before* ``salloc`` because Slurm propagates the submitting environment into the allocation, and it is
 sourced again inside the payload for clusters configured with ``--export=NONE``.
 """
@@ -52,7 +52,7 @@ JOB_NAME_PREFIX = "fwd-"
 # compute node can read, and so `fwd rm` removes it along with everything else.
 JOB_SCRIPT_RELPATH = ".fwd/job.sh"
 
-# Written by bootstrap.sh under tool_prefix; see docs/slurm-notes.md "fwd-env.sh contract".
+# Written by bootstrap.sh under tool_prefix; see dev-docs/slurm-notes.md "fwd-env.sh contract".
 ENV_FILE_NAME = "fwd-env.sh"
 
 

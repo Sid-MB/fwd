@@ -5,7 +5,7 @@ module in this directory and one class inheriting `Backend` from `base.py`. Laun
 operate only through that class; provider details must not leak into those callers.
 
 Project languages and coding-agent installers are a separate extension axis. They conform to the shared contracts in
-`fwd.tooling` and `fwd.toolchains`; see `docs/adding-toolchains.md`. A backend supplies persistent `tool_prefix` and
+`fwd.tooling` and `fwd.toolchains`; see `dev-docs/adding-toolchains.md`. A backend supplies persistent `tool_prefix` and
 optional `scratch` paths but must not select, install, or special-case a language runtime.
 
 ## Required interface
@@ -64,7 +64,7 @@ generated examples, and JSON Schema agree.
 3. Register the module/class strings in `backends/__init__.py`.
 4. Implement lifecycle methods and `config_parameters`; add dynamic `config_choices` where useful.
 5. Add backend-specific parsing and lifecycle tests using captured provider output rather than live billable resources.
-6. Add the backend to `docs/adding-target-backends.md`, CLI setup flags, generated config docs, and the user guide.
+6. Add the backend to `dev-docs/adding-target-backends.md`, CLI setup flags, generated config docs, and the user guide.
 
 Keep helpers that belong only to that provider beside its backend. A separate helper module such as `slurm_job.py` is
 appropriate for a substantial independently testable subsystem, but there must be exactly one registered backend

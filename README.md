@@ -1,31 +1,15 @@
 # fwd
 
-**Forward your coding session to a remote machine.**
+**Move your coding project and agent session to remote compute.**
 
-You are working on your laptop and want another machine: a clean CPU VM for development, a GPU, 200 GB of RAM, or
-access to your cluster's data. `fwd` moves the working environment there. It provisions (or reuses) a remote target,
-mirrors your working directory, installs the requested toolchain, and starts a persistent command in remote `tmux`.
-It can carry a Claude transcript across, sync Codex settings and skills, start an ordinary shell or command, and run
-durable command and agent tasks whose logs can be reattached later. Close the laptop, return tomorrow, and the remote session is waiting.
+`fwd` provisions or connects to a remote target, synchronizes the current project, prepares its toolchain, and starts a persistent shell, command, Claude Code, or Codex session in tmux. Disconnect your laptop and return later: the session, durable tasks, and logs remain available.
 
-When the remote CLI and account support it, agent launches also enable cross-device control. Claude starts the same
-interactive conversation with Remote Control enabled for claude.ai and the Claude mobile app. Codex starts its
-persistent Remote Control app-server daemon beside the terminal TUI, making the remote machine discoverable to
-supported signed-in Codex clients. Missing support, authentication, or enrollment never blocks the tmux session.
-Missing agent CLIs are installed from their native vendor installers: Claude uses Anthropic's native distribution,
-and Codex uses OpenAI's managed standalone distribution because npm/Bun Codex installations cannot host app-server.
-
-Existing tools either remote-*view* a session that stays pinned to your laptop, or provision machines with no session
-story at all. `fwd` does the handoff itself.
-
-```
-laptop                                    remote (ssh / RunPod / Lambda / Slurm)
-──────                                    ────────────────────────────
-your project dir  ──── rsync ──────────▶  ~/fwd/project
-Claude transcript ──── optional ───────▶  ~/.claude/projects/<re-encoded>/
-Codex settings    ──── optional ───────▶  ~/.codex/ + ~/.agents/skills/
-                                          tmux fwd-<name> → shell / command / agent
-    fwd  ◀────────── ssh -t attach ─────  (survives disconnects)
+```text
+laptop                                  remote SSH / RunPod / Lambda / Slurm
+project  ───────────── sync ──────────▶  project checkout
+agent context ──────── optional ──────▶  Claude or Codex state
+                                         tmux session + durable task manager
+terminal ◀────────── attach / stream ──  persistent work
 ```
 
 ## Install
@@ -40,883 +24,121 @@ Or try it without installing:
 uvx --from git+https://github.com/Sid-MB/fwd fwd --help
 ```
 
-Requires Python 3.12+, plus `ssh` and `rsync` locally. On first launch, fwd installs or verifies remote `tmux` plus only the tools required by the detected Python, JavaScript, or Swift project and requested coding agent. Existing tools always win; for example, Node/npm is used when present, Codex can fall back to Bun, and Swift packages can fall back to Swiftly.
+Requires Python 3.12+, `ssh`, and `rsync` locally. Run `fwd doctor` to check target-specific requirements.
 
-## Install as a coding-agent skill
+## Quick start
 
-`fwd` ships an Agent Skills-compatible workflow for Claude Code, Codex, and other supporting agents. Ask it to
-"Continue this project on a remote CPU machine" and it will launch, sync, and hand the session back:
+Run fwd from the project you want to move:
 
 ```sh
-fwd
-# Accept: Install the fwd skill for Codex and Claude from this local fwd package?
+fwd                              # attach to this project's session, or create one interactively
+fwd up runpod codex              # launch Codex on RunPod; auto-attach in a human terminal
+fwd up --detach runpod codex     # launch Codex but stay in the local terminal
+fwd up --target work             # use a configured SSH/cloud/HPC target
+fwd up -- python train.py        # launch and stream a durable command
+fwd ls                           # inspect sessions and live status
+fwd attach SESSION               # reconnect from a human terminal
 ```
 
-The first human terminal invocation offers this after the shell-completion prompt. fwd copies only the bundled
-`SKILL.md`, references, and agent metadata from its installed wheel or editable checkout into
-`~/.fwd/skill-source/fwd`, then runs `npx skills add` against that local directory for global Codex and Claude use.
-No GitHub checkout is involved. Declining is remembered independently in `~/.fwd/skill-prompted`.
+Bare `fwd` is the interactive reuse workflow. Agent launches auto-attach in a human terminal; pass `--detach` to stay local. Scripts and coding-agent environments remain non-attaching. Detach from tmux with `Ctrl-B D`.
 
-After an accepted install, the first interactive invocation of each updated fwd build re-materializes and re-adds
-that same local source non-interactively, so both copied and linked skill installations stay current. Missing `npx`
-or an unavailable `skills` package only produces a warning and never blocks the requested fwd command; failed
-operations remain retryable. Agent, redirected, help/version, and shell-completion invocations never show onboarding
-prompts.
-
-Invoke it explicitly as `/fwd natural-language instructions` in Claude Code, `$fwd natural-language instructions` in
-Codex, or select it from Codex's `/skills` menu. Matching natural-language requests can invoke it implicitly. The
-skill teaches agents the machine-readable, non-attaching CLI workflow and hands `fwd attach` back to you only when an
-interactive terminal is needed. `npx skills` is the only supported skill distribution mechanism: people who have not
-installed the Python package can install directly from the repository with
-`npx skills add Sid-MB/fwd --skill fwd -g -a codex -a claude-code`.
-
-## Quickstart
+Need a saved target first?
 
 ```sh
-cd ~/code/my-project
-fwd                       # connect to this project's session; create and attach if none exists
-fwd runpod                # connect to this project's RunPod session; otherwise create one interactively
-fwd runpod yes            # run a durable task on that session, provisioning it interactively if needed
-fwd codex                 # connect to this project's Codex session; otherwise launch Codex interactively
-fwd --name demo           # connect to the exact session; otherwise create that name interactively
-```
-
-Bare `fwd` is exactly `fwd up --reuse`; root selectors such as `fwd runpod` and `fwd codex` are the corresponding
-`fwd up --reuse …` forms. Without an explicit command, they are intended for a human terminal: when all selectors
-match an existing session they attach, and when none matches they create and attach. With an arbitrary command, the
-selectors choose or provision the session and the command uses the same durable task runner as `fwd send -- COMMAND`;
-it therefore appears in `fwd send --ls` and supports the same streaming, backgrounding, cancellation, and
-`--stop-after` behavior. Inside an attached session, detach with `ctrl-b d` (tmux); the primary process keeps running.
-
-Every launch installs a remote tmux configuration at `~/.config/fwd/tmux.conf`. Fwd copies the first local config found
-at `~/.tmux.conf` or `~/.config/tmux/tmux.conf`; when neither exists, it uses a dependency-free fallback with clickable
-window tabs, mouse pane selection, five-line wheel scrolling through copy mode, 100,000 lines of history, vi copy
-mode, fast escape handling, clipboard integration, focus events, and selection bindings. The separate fwd path preserves any remote `~/.tmux.conf`. New tmux servers load the file
-at startup, while an already-running server reloads it during `fwd up`.
-
-`--reuse` is intentionally conservative in non-interactive mode: it neither provisions nor takes over the terminal.
-Instead it prints the exact `fwd up` command without `--reuse` that an agent or script can use to create the session.
-Agents should launch explicitly, for example `fwd up runpod codex` or `fwd up --target work --agent codex`, then hand
-an exact `fwd attach NAME` command back to the human.
-
-You do **not** need to run `fwd setup` before `fwd`. Setup only creates or updates saved target configuration; it never
-provisions, syncs, launches, or attaches. Bare `fwd` is the complete reuse workflow: it finds a matching session or
-launches the layered default command, and runs first-time setup automatically when no target exists. Use `fwd setup`
-by itself when you want to add or edit a target without launching it yet.
-
-```sh
-fwd ls                    # what is running, and what it is costing you
-fwd pull outputs/         # bring results back down
-fwd stop                  # suspend compute; refuses if the remote Git worktree is dirty
-fwd rm                    # destroy it
-```
-
-Run `fwd doctor` if anything misbehaves; it checks local prerequisites and every configured target.
-
-`fwd setup` automatically switches to flag-only mode when stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
-present. This makes setup safe for agents and scripts: missing required values produce the exact flags needed instead
-of opening a prompt. The backend can be positional (`fwd setup lambda`) or passed with the equivalent `--backend lambda` flag; either explicit form skips the backend question and enters that backend's setup fields directly. Run `fwd setup --help` for every field, or pass `--interactive` to force prompts. For example:
-
-```sh
+fwd setup                        # interactive target setup
 fwd setup ssh --host my-box --target-name work
-fwd setup slurm --login-host login.example.edu --user myusername --remote-base /scratch/myusername/fwd
-fwd setup runpod --data-center-id US-GA-1 --target-name pod
-fwd setup lambda --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
-# Optional preference prefixes, evaluated in order before automatic fallback:
-fwd setup lambda --preferred-region us-west --preferred-region us --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-west
+fwd config --example runpod      # current generated config reference
 ```
 
-Interactive setup asks only for essential fields first. Backends place uncommon fields behind one reusable
-`Set advanced options? (Defaults: …)` gate. Persistent RunPod and Lambda targets create one independent storage
-resource per fwd session; `--no-persistent` is the explicit disposable-storage opt-out.
-Searchable provider fields keep the prompt above a temporary options menu. Typing filters the complete live catalog, Tab/Shift-Tab and up/down move through the matching values, and Enter accepts the highlighted exact value. The menu is cleared once the choice is submitted, and normal line-editing keys—including macOS Option-Backspace—edit the query without leaving terminal escape text or stale prompt fragments.
+Read [Getting started](docs/getting-started.md) for the full first-session walkthrough.
 
-## Commands
+## Choose a target
 
-### Structured output
+- **SSH:** an existing host, direct address, or OpenSSH alias.
+- **RunPod:** CPU or GPU Pods with per-session persistent network volumes by default.
+- **Lambda Cloud:** GPU instances with persistent filesystems and local-only API credentials.
+- **Slurm:** allocations launched through persistent login-node tmux on shared scratch.
 
-Read-oriented commands decouple their data from presentation. `fwd ls`, `fwd doctor`, and `fwd info` build structured
-tables or records, then select a renderer:
+See [Configuration and backends](docs/configuration.md#target-setup) for setup, storage, and lifecycle differences.
 
-```sh
-fwd ls                         # Rich table in a terminal; Markdown when piped or run by an agent
-fwd ls --all-projects          # include sessions belonging to every local project
-fwd ls --json                  # structured JSON shortcut
-fwd ls --format markdown       # stable GitHub-flavored Markdown table
-fwd ls --format json           # JSON object with title, columns, and named row objects
-fwd doctor --format json
-fwd info --format json
-```
+## Common workflows
 
-`--format auto` is the default. It uses Markdown whenever stdout is not a terminal or `CLAUDECODE`/`CODEX_AGENT` is
-set, even if an agent runner allocated a pseudo-terminal. Progress and errors remain on stderr; outside an interactive
-terminal they use stable `info:`, `ok:`, `warning:`, and `error:` prefixes instead of terminal glyphs and styling.
-`--json` is shorthand for `--format json` on `fwd ls`, `fwd doctor`, `fwd info`, and `fwd send --ls`.
-Configuration output remains TOML (`fwd config` / `--example`) or JSON Schema (`fwd config --schema`) because those
-formats are already directly machine-readable.
-
-Live session checks run concurrently with short list-only deadlines, so `fwd ls --all-projects` pays roughly one
-bounded provider/SSH window rather than adding every unreachable target's timeout together. Authoritative operations
-such as attach, stop, and remove retain their more patient probes.
-
-### Session completion
-
-Shell completion for every session-selecting command is state-aware:
+### Run durable work
 
 ```sh
-fwd attach <TAB>
-fwd up <TAB>                 # sessions, targets/backends, and coding agents
-fwd up --target <TAB>        # configured targets, RunPod, and SSH aliases
-fwd up --agent <TAB>         # registered coding agents
-fwd up --gpu <TAB>           # locally configured GPU identifiers
-fwd up --machines            # current provider strings for every target, with defaults and availability
-fwd rm <TAB>
-fwd stop <TAB>
-fwd send --name <TAB>
-fwd setup <TAB>              # backends (positional alias for --backend)
-fwd push --name <TAB>
-fwd setup --backend <TAB>    # backends and backend-specific choices
-```
-
-Suggestions come from `~/.fwd/state.json` and include help text with the backend, target, local project directory, and
-last-attached time. Target and setup completion also reads local fwd configuration and `~/.ssh/config`; magic agent,
-output-format, backend, compute, cloud, and image choices carry short descriptions. Completion never contacts a
-provider, so pressing Tab remains fast and cannot start compute.
-Shells with descriptive completion support (including Fish and appropriately configured Zsh) display that help as a
-tooltip/menu description; other shells still complete the session name. Install scripts with
-`fwd --install-completion` or print one for manual setup with `fwd --show-completion`.
-
-On the first interactive invocation, fwd offers to install completion for the detected shell using Typer's standard
-installer. Accepting may update the Bash/Zsh startup file; declining is remembered in
-`~/.fwd/completion-prompted`. Agents, redirected commands, help/version output, and shell-completion subprocesses
-never prompt. It then independently offers to install the bundled coding-agent skill with
-the local installed-package payload, remembering that decision in `~/.fwd/skill-prompted`. The explicit
-`fwd --install-completion` command remains available after a completion decline. Accepted skill installs are
-automatically refreshed from `~/.fwd/skill-source/fwd` once per updated fwd build, without fetching fwd from GitHub.
-
-| Command | What it does | Example |
-| --- | --- | --- |
-| `fwd [selector flags]` | Alias for `fwd up --reuse`: attach to a match, or create interactively | `fwd --agent codex` |
-| `fwd TARGET/BACKEND/AGENT [COMMAND...]` | Connect by positional selector, or run a managed command on that session | `fwd runpod yes` |
-| `fwd up [TARGET] [AGENT\|COMMAND...]` (alias `launch`) | Provision/reuse, sync, bootstrap, then start the selected or configured default command | `fwd up runpod codex` |
-| `fwd up -r [selectors...]` | Reuse a match; attach without a command, or run a supplied command as a managed task | `fwd up -r work yes` |
-| `fwd attach` / `fwd a [selectors...]` | Attach to the unambiguous session matching every selector; `-CC` enables native iTerm2 control mode and `--raw` recovers failed launch preparation | `fwd a -CC work codex` |
-| `fwd send` / `fwd s -- COMMAND...` | Start a durable remote command task and stream it | `fwd s -- pytest -q` |
-| `fwd send agent MESSAGE...` | Send a turn to the Claude/Codex conversation running for this session | `fwd send agent "fix tests"` |
-| `fwd send TASK_ID` | Reattach to a background command or agent task | `fwd send cmd-a81f` |
-| `fwd send TASK_ID --stop` | Cancel one task without stopping its fwd session or machine | `fwd send cmd-a81f --stop` |
-| `fwd send --ls` | List active command and agent tasks with attach/cancel instructions | `fwd send --ls --json` |
-| `fwd ls [--all-projects] [column flags]` | List sessions with live status and exposed ports; column flags narrow the table while retaining names | `fwd ls --ports` |
-| `fwd ports [SELECTOR] PORT...` | Open persistent loopback-only SSH forwards; `PORT` maps equally and `LOCAL:REMOTE` remaps | `fwd ports runpod 3000 8080:3000` |
-| `fwd ports --ls` | Alias for `fwd ls --ports`; one selector or `--all-projects` narrows or expands the view | `fwd ports --ls --all-projects` |
-| `fwd ports --close [SELECTOR] [PORT...]` | Close selected forwards, every forward for one session, or every tracked project | `fwd ports --close --all-projects` |
-| `fwd push` | Re-sync local changes up | `fwd push --name work` |
-| `fwd pull [paths...]` | Bring remote changes down (additive; never deletes local files) | `fwd pull --name work outputs/` |
-| `fwd diff [target] [path]` | Compare local and remote synced content; exit 0 same, 1 different, 2 error | `fwd diff pod src/` |
-| `fwd stop [session/target/backend...]` | Kill remote tmux and suspend one or more targets; CPU RunPod container-disk data does not survive | `fwd stop work experiment` |
-| `fwd rm [session/target/backend...]` / `fwd rm --all` | Destroy one, several, or every target and forget the session state; confirms only when running work or remote data may be lost | `fwd rm work experiment` |
-| `fwd uninstall` | Remove local data, skills, completions, and temporary logs, then print the package-manager removal command | `fwd uninstall` |
-| `fwd setup [BACKEND]` | Create/update a saved target without provisioning or launching; the positional backend aliases `--backend` | `fwd setup ssh` |
-| `fwd doctor` | Check local prerequisites and target reachability | `fwd doctor --json` |
-| `fwd default COMMAND...` | Set what bare `fwd` launches; user scope by default, with project/target overrides | `fwd default codex` |
-| `fwd config` | Print the effective merged config, annotated with where each value came from | `fwd config` |
-| `fwd config set KEY VALUE...` | Set any config key; the general form underlying `fwd default` | `fwd config set sync.delete false` |
-| `fwd config rm KEY` | Remove one value at user, project, or target scope, revealing the next-higher default | `fwd config rm default_command` |
-| `fwd config --example [backend]` | Print a commented reference config generated from the schema | `fwd config --example runpod` |
-| `fwd config --schema` | Print the complete machine-readable JSON Schema for editor and agent tooling | `fwd config --schema` |
-| `fwd -V` | Print the installed version | `fwd -V` |
-| `fwd info` | Print version plus config and state paths | `fwd info --json` |
-
-### Durable remote tasks
-
-`fwd send` (alias `fwd s`) executes from the running session's remote project directory. Every command runs in a
-dedicated window inside a hidden per-session tmux task manager, writes a persistent log, and receives a task ID:
-
-```sh
-fwd send -- pwd
-fwd s -- python train.py --epochs 10
-fwd send --name my-session --timeout 30 -- cat results.json
+fwd send -- pytest -q
 fwd send --detach -- python train.py
-fwd send --stop-after -- pytest -q
+fwd send --ls --json
+fwd send TASK_ID                 # reattach to its log
+fwd send TASK_ID --stop          # cancel the task, not the session
 ```
 
-By default, output streams until the task finishes and `fwd send` returns the remote exit code. If a task lasts two
-seconds in an interactive terminal, fwd prints `(Press Ctrl-C to cancel, Ctrl-B to background)`. Ctrl-C cancels only
-that remote task; Ctrl-B closes the local viewer while the task continues. `--detach` backgrounds immediately.
+Every command runs in remote tmux with a durable ID and log. Streaming returns the remote exit code; `Ctrl-C` cancels and `Ctrl-B` backgrounds the viewer.
 
-List, reattach, or cancel tasks from any later terminal:
+### Synchronize results
 
 ```sh
-fwd send --ls                         # active tasks; add --all for task history
-fwd send --ls --format json           # stable machine-readable task inventory
-fwd send cmd-a81f                     # replay its log and continue following
-fwd send cmd-a81f --stop              # cancel it; the fwd session remains alive
-fwd send stopafter                    # stop remotely after every active task
-fwd send cancel                       # cancel every queued (not running) task
-fwd send cancel cmd-a81f              # cancel any exact queued/running task
-fwd send cancel stopafter             # disarm queued remote shutdown
-fwd send cancel all                   # cancel every active task
+fwd diff                         # compare without changing either side
+fwd push                         # mirror local synchronized files to remote
+fwd pull outputs/                # additive download; never deletes local files
 ```
 
-`--stop-after` creates a second durable lifecycle task before new work starts. It waits for that command or agent turn
-to finish, then stops the session from the remote host, so closing or shutting down the local computer cannot defeat
-it. `fwd send stopafter` queues the same action after all current work. The stop action and its dependencies appear
-in `fwd send --ls`; `fwd ls` has a `stop after` column. RunPod uses its preinstalled pod-scoped `runpodctl`, Slurm
-uses `scancel`, and SSH closes fwd's tmux sessions without powering off a machine fwd does not own. Lambda rejects
-remote stop-after because its full-account API key deliberately remains on the local machine; use local `fwd stop`.
+Sync honors `.gitignore`, `.fwdignore`, and configured exclusions. Upload includes `.git/` for remote agent continuity; pull and diff exclude Git metadata.
 
-It never provisions or restarts compute, so stopped, pending, ended, missing, and unknown targets fail with an
-actionable message. Arguments are executed literally. To use shell syntax such as pipes, redirects, or globs, request
-a shell explicitly:
+### Forward a service
 
 ```sh
-fwd send -- bash -lc 'cat outputs/*.json | jq .'
+fwd ports 3000                   # localhost:3000 to remote localhost:3000
+fwd ports work 8080:3000
+fwd ports --ls
+fwd ports --close 3000
 ```
 
-For Slurm targets, command tasks run on the SSH login node, just like sync and bootstrap. Use `srun` explicitly
-when a command must run inside an allocation.
+Forwards are loopback-only and persist through a managed SSH control connection.
 
-### Local port forwarding
-
-`fwd ports` exposes a remote loopback service only on this computer's `127.0.0.1`; it does not publish a RunPod or
-cluster port to the internet. A bare port maps the same number on both ends, while `LOCAL:REMOTE` selects a different
-local port. One optional session, target, backend, agent, or displayed tmux-session selector uses the same matching
-rules as attach; `--name` is the unambiguous exact-session form. When no mapping is present, `fwd ports [selector]`
-lists the selected session's forwarding.
+### Stop or destroy compute
 
 ```sh
-fwd ports 3000 3210                    # current project's remote ports on the same local ports
-fwd ports runpod 8080:3000             # local 8080 -> remote 127.0.0.1:3000
-fwd ports fwd-desktop-4c24e0 3000      # a displayed tmux name is accepted as a session alias
-fwd ports --ls --all-projects          # alias for fwd ls --all-projects --ports
-fwd ports --close 3000                 # close one local port in the current project
-fwd ports runpod --close               # close every forward for the matching session
-fwd ports --close --all-projects       # close all locally managed forwards
-fwd up --ports 3000 --ports 8080:3000  # override configured launch mappings for this invocation
+fwd stop SESSION                 # stop compute and retain configured persistent storage
+fwd rm SESSION                   # permanently destroy remote resources
 ```
 
-The command probes every requested local bind before contacting SSH. If any local port is occupied or repeated, the
-whole request fails and opens nothing. Successful forwards run through a dedicated background SSH control connection,
-survive after the command returns, appear in the normal `fwd ls` ports column, and close automatically with `fwd stop`
-or `fwd rm`. An SSH connection lost underneath a tunnel is shown as `(inactive)` instead of being reported as exposed.
-When a provider changes SSH endpoints, the old forwarding master is closed and the tracked mappings are recreated
-against the current machine. A failed close retains its mappings in local state instead of hiding a potentially live
-tunnel. In JSON output, `ports` is an array of `{local, remote, active}` records rather than formatted display text.
+Both commands protect a reachable dirty remote Git worktree. `rm` is irreversible; force flags explicitly accept possible loss. See [Lifecycle safety](docs/commands.md#stop-remove-and-uninstall) before automating cleanup.
 
-Set project defaults in `.fwd/config.toml`; the project list replaces any user-level forwarding list. Repeated
-`fwd up --ports/-p` values replace the configured defaults for that invocation while preserving unrelated forwards
-already opened manually:
+## Coding-agent skill
 
-```toml
-[forwarding]
-ports = ["3000", "8080:3000"]
-```
-
-Use `fwd ls --columns backend,status,ports` for a focused view. The existing `--names`, `--backends`, `--statuses`,
-`--stop-after`, `--running`, `--tmux`, `--local-dirs`, `--last-attached`, `--ids`, and `--ports` flags remain shortcuts
-and can be combined with `--columns`; session names remain present as row identity.
-
-### Sending agent turns
-
-When the session was launched with `fwd up claude` or `fwd up codex`, `agent` resolves to that exact agent:
+fwd ships an Agent Skills-compatible workflow for Codex, Claude Code, and other supporting agents. The first interactive invocation offers to install the bundled skill. It can also be installed directly:
 
 ```sh
-fwd send agent "Run the tests and fix failures"       # stream the turn
-fwd send agent --detach "Run the long benchmark"      # return after it is queued
-fwd send agent --stop                                 # cancel the active turn only
-fwd send agent --stop "Try the smaller implementation"
-fwd send agent --immediate "Try the smaller implementation"  # same cancel-and-send behavior
-fwd send agent --stop-after "Finish the task, then stop compute"
+npx skills add Sid-MB/fwd --skill fwd -g -a codex -a claude-code
 ```
 
-Normal follow-ups serialize behind an active managed agent turn. `--stop MESSAGE` and `--immediate MESSAGE` interrupt
-the active turn and start the replacement in the same remote conversation. Before any managed send exists,
-`--stop` sends Ctrl-C to the original Claude/Codex pane created by `fwd up`; it does not kill the agent, tmux session,
-pod, VM, or Slurm allocation. Explicit `claude` and `codex` selectors are also accepted and fail clearly if they do
-not match the agent running in the selected fwd session.
+Invoke it as `$fwd ...` in Codex or `/fwd ...` in Claude Code. See [Coding agents](docs/agents.md#install-the-fwd-skill) for behavior and credential guidance.
 
-Interactive terminals render agent text and tool activity concisely. Pipes, scripts, and recognized agent
-environments receive the agents' original JSONL event stream.
+## Documentation
 
-Codex sends address the exact long-lived TUI pane created by `fwd up codex`, then follow that pane's persisted rollout
-events. They do not start a second `codex exec resume --last` process, so a fresh conversation responds normally,
-concurrent Codex histories cannot steal the message, and each turn avoids a second CLI/model startup.
+### User guide
 
-Remote Claude Code and Codex sessions also receive a small managed user-instruction block explaining the literal
-`stopafter` command. An agent can run it as its final tool action to schedule remote shutdown; `stopafter --cancel`
-disarms the delay before shutdown begins. fwd installs the helper under its existing tool prefix and adds the managed
-guidance to the agents' documented user-level instruction files, not to the synchronized project, so `fwd diff`
-remains clean.
+- [Getting started](docs/getting-started.md): installation, first launch, target setup, and the everyday workflow.
+- [Commands and lifecycle](docs/commands.md): durable tasks, synchronization, inspection, port forwarding, stopping, and removal.
+- [Configuration and backends](docs/configuration.md): config layers, SSH, RunPod, Lambda Cloud, Slurm, toolchains, and defaults.
+- [Coding agents](docs/agents.md): Claude/Codex transfer, follow-up turns, credentials, runtime policy, and skill installation.
+- [Troubleshooting](docs/troubleshooting.md): diagnostics, launch recovery, dirty worktrees, sync limits, and destructive operations.
+- [User documentation index](docs/README.md): the complete end-user map.
 
-### Comparing local and remote content
-
-`fwd diff` is a read-only synchronization check with the same exit contract as the standard `diff` command:
+The installed CLI is the authoritative option reference:
 
 ```sh
-fwd diff                      # current directory's session; compare the entire synced project
-fwd diff pod                  # exact session, target label, or backend selector
-fwd diff pod src/model.py     # compare one project-relative file
-fwd diff pod outputs/         # compare one directory recursively
-fwd diff -q pod               # no diff text; inspect only the exit status
-fwd diff --include-gitignored # include Git-ignored files, but retain explicit sync exclusions
-fwd diff --include-unsynced   # include all ordinary unsynced files
+fwd --help
+fwd COMMAND --help
+fwd config --example
+fwd config --schema
 ```
 
-Exit `0` means identical, `1` means differences were found, and `2` means resolution, transfer, or comparison failed.
-Differences use familiar Git unified formatting and retain color in a human terminal; redirected output is plain text, and progress and errors stay on stderr. Exact session names,
-target labels, and backend names use the same safe existing-session resolver as lifecycle and transfer commands. The comparison applies
-`.gitignore`, `.fwdignore`, and configured sync exclusions, so intentionally unsynced environments and
-build caches do not produce false differences; for diagnostic safety, even a tracked path matching `.gitignore` stays
-hidden by default. `--include-gitignored` restores only Git-ignored content, while
-`--include-unsynced` restores every ordinary sync exclusion. `.git/`, `.DS_Store`, AppleDouble `._*`, Windows
-metadata, and similar permanent junk remain excluded in every mode. Both sides are copied into temporary snapshots;
-neither the checkout nor the remote project is modified.
-
-### `fwd up` flags
-
-| Flag | Effect | Example |
-| --- | --- | --- |
-| `[TARGET] [AGENT\|COMMAND...]` | Optional target/backend, then a registered agent or streamed durable command; omit the command to use layered `default_command` | `fwd up pod codex` |
-| `--target/-t NAME` | Which configured target to use (default: `default_target`) | `fwd up -t pod` |
-| `--agent NAME` | Select a registered coding agent without positional ambiguity | `fwd up --agent codex` |
-| `--machine/-m MACHINE` | Select an exact provider machine string for this launch; retained for session reuse/restart | `fwd up lambda -m gpu_1x_h100_sxm5` |
-| `--machines` | List each target's default and currently available/unavailable machine strings; fixed targets remain listed without sub-machines | `fwd up lambda --machines` |
-| `--gpu SPEC` | Override the GPU for this launch (RunPod GPU id, Slurm `--gres`) | `fwd up --gpu A100` |
-| `--name/-n NAME` | Session name (default: derived from the directory) | `fwd up -n demo` |
-| `--new` | Force a fresh session instead of reusing this directory's existing session | `fwd up --new codex` |
-| `--reuse/-r` | Reuse a conjunctive match; attach when no task command is supplied, or create only interactively | `fwd up -r pod codex` |
-| `--restart/-y` | With `--reuse`, authorize restarting stopped billable compute | `fwd up -r -y demo` |
-| `--session` / `--handoff` | How to carry conversation context — see below | `fwd up --handoff claude` |
-| `--user-config` | Upload your `~/.claude` bundle (CLAUDE.md, skills, agents, commands) | `fwd up --user-config claude` |
-| `--creds` | Copy Claude credentials to the remote machine | `fwd up --creds claude` |
-| `--setup-github` / `--no-setup-github` | Require or skip GitHub credential setup for this launch | `fwd up --no-setup-github codex` |
-| `--attach/-a` | Attach directly after startup instead of streaming an explicit command | `fwd up -a -- bash` |
-| `--no-attach`, `--detach` | Stay local even when an interactive agent launch would normally auto-attach | `fwd up --detach codex` |
-| `--stop-after` | Stop the remote session server-side after an explicit streamed command completes | `fwd up --stop-after -- pytest -q` |
-
-`fwd up` is also the **repair** command. Every stage is idempotent, so if a launch dies halfway through bootstrap, run
-it again and it picks up where it left off rather than starting over or duplicating anything. Pass `--new` when the
-duplication is intentional: fwd adds a unique suffix, provisions a separate provider resource, and keeps the existing
-session available. `--new` inherits the current directory session's target unless `--target` chooses another one.
-
-The startup forms are:
-
-```sh
-fwd                               # equivalent to: fwd up --reuse
-fwd runpod                        # equivalent to: fwd up --reuse runpod
-fwd runpod yes                    # reuse/provision RunPod, then stream yes as a managed task
-fwd --agent codex                 # connect to this project's Codex session, or create it interactively
-fwd --name demo                   # connect to exact name, or create it interactively
-fwd up                            # launch layered default_command and use default_target
-fwd up runpod                     # launch layered default_command on RunPod
-fwd up runpod --machines          # discover exact RunPod strings and the configured default
-fwd up runpod -m "NVIDIA H100 80GB HBM3"  # choose an exact currently available GPU
-fwd up runpod codex               # launch Codex on RunPod
-fwd up --target work --agent codex  # the fully explicit spelling
-fwd up claude                       # transfer this conversation and auto-attach in a human terminal
-fwd up codex                        # sync Codex settings/skills and auto-attach in a human terminal
-fwd up --no-attach codex            # start Codex persistently but stay in the local terminal
-fwd up -a work python train.py      # run the command in the primary pane and attach directly
-fwd up -- python train.py --epochs 10  # stream a durable task; '--' protects its flags
-fwd up --stop-after -- pytest -q    # stream tests, then stop remotely even if this laptop disconnects
-```
-
-During an interactive local provisioning pipeline, fwd prints `(Press Ctrl-C to cancel, Ctrl-B to background)` after two seconds. Ctrl-B returns the terminal while a detached local worker continues provider polling, SSH readiness, synchronization, bootstrap, and remote-session startup; it prints the private `~/.fwd/logs/launch-*.log` path for `tail -f`, and `fwd ls` exposes the session as soon as provider state has been persisted. Ctrl-C is forwarded to that worker so the normal interruption cleanup still deprovisions invocation-created resources. When launch finishes in the foreground, an auto-attach proceeds normally. Explicit streamed commands retain their existing durable-task Ctrl-B behavior once their remote task starts.
-
-By default, an explicit arbitrary command runs as a durable task after selecting or provisioning the session: fwd
-uses the same task manager as `fwd send -- COMMAND`, streams its output, returns its exit status, and shows Ctrl-C to
-cancel or Ctrl-B to background after two seconds. The task receives an ID and remains visible in `fwd send --ls`.
-The session's primary pane remains a login shell, so the session stays attachable after a finite command completes.
-Pass `--attach/-a` to run the command in the primary pane and enter tmux directly; after a successful finite attached
-command, that pane falls through to a login shell, while a nonzero exit remains visible as a launch failure.
-
-`--stop-after` is valid only for an explicit streamed command, because bare shells, direct attachments, and
-interactive agents have no objective completion point. For agent work, use `fwd send agent --stop-after "MESSAGE"`,
-queue `fwd send stopafter`, or tell the remote agent to run `stopafter` as its final action.
-
-Selectors are conjunctive: `fwd up -r --name demo --target work --agent codex` attaches only when one session matches
-all three values. Without an exact name, matching is scoped to the current project. A sole saved match is
-unambiguous; if several match, the sole session whose target is running or pending wins only when every other status
-is known. Otherwise fwd asks for an exact session name. `fwd attach` and `fwd a` use this identical parser and
-precedence.
-
-An exact stored session name is recognized first. Otherwise a configured target or backend consumes the first
-positional, followed by an agent or arbitrary command. If a target and agent have the same name, the target wins and
-fwd warns with `--agent NAME` plus the config location needed to rename the target. Registered top-level commands
-always have higher priority, so a target called `stop` cannot shadow `fwd stop`. Unknown root words remain errors.
-
-Backend selectors such as `ssh`, `runpod`, `lambda`, and `slurm` use the most recently used configured target of that type; a
-sole target is unambiguous before it has history. If several targets share a backend and history cannot choose, fwd
-asks for an exact target. In non-interactive mode, `--reuse` always errors with either an exact attach instruction or
-the corresponding creation command without `--reuse`.
-
-Commands that operate on an existing session accept the same target-label and backend aliases wherever they accept a
-session selector: `attach`, `stop`, `rm`, and `diff` positionally, and `send`, `push`, and `pull` through `--name`.
-`stop` and `rm` accept multiple positional selectors in one invocation, resolve the full batch before changing remote state, and attempt every resolved session even if an individual operation fails.
-Exact session names always win. Aliases search all saved projects outside the project-scoped reuse/attach grammar and
-use the same sole-active-session disambiguation rule described above.
-
-`fwd up codex` copies portable Codex configuration before starting the remote CLI: `~/.codex/config.toml`, named
-profiles, `AGENTS.md`, rules, and skills from both `~/.agents/skills` and the legacy `~/.codex/skills` location.
-Authentication is deliberately not copied: `~/.codex/auth.json` contains credentials, so run `codex login` remotely
-when needed. Agent launches auto-attach only when stdin and stdout are terminals and neither `CLAUDECODE` nor
-`CODEX_AGENT` marks an agent environment; scripts and agents remain non-attaching automatically.
-
-## Carrying your Claude session across
-
-`fwd up claude` and bare `fwd` move the **actual transcript** by default, so the remote session resumes with real
-context — it remembers what you asked an hour ago, not a summary of it. This was verified empirically against claude 2.1.220
-(`docs/session-transfer-notes.md`): a relocated transcript resumes in place, keeps its session id, and does not fork.
-
-The transfer degrades gracefully rather than failing a launch. The chain is:
-
-1. **`--session`** (default) — export the local transcript, rewrite the embedded paths for the remote cwd and home,
-   install it remotely, and start `claude --resume <id>`.
-2. **`--handoff`** — ask your local `claude -p` to write `HANDOFF.md`, sync it up, and start
-   `claude "Read HANDOFF.md, then continue the work it describes"`. Use this when the conversation is long and you
-   only need the conclusions. Passing `--handoff` explicitly *replaces* the transcript transfer.
-
-   Generating a handoff takes ~65 seconds, so an existing `HANDOFF.md` less than 15 minutes old is **reused** rather
-   than regenerated — otherwise every repair rerun of `fwd up` would pay that minute again to re-summarize a
-   conversation that has not changed. Delete the file to force a fresh one.
-3. **plain `claude`** — if there is no transcript for this directory, or the remote import cannot be validated, the
-   session starts clean with a warning. A launch is never aborted over context transfer.
-
-Two extras, both opt-in because they touch files you may not want leaving your laptop:
-
-- **`--user-config`** uploads `~/.claude/CLAUDE.md`, `skills/`, `agents/`, `commands/` and `settings.json`. There is a
-  hard exclusion list: `settings.local.json`, `.credentials.json` and history are never included, even if you ask.
-- **`--creds`** ⚠️ lifts your Claude OAuth token out of the macOS Keychain and writes it to
-  `~/.claude/.credentials.json` on the remote machine (mode 600). **This places a live credential on a machine you may
-  not control** — a shared cluster login node, or a provisioned pod whose disk you do not own. Prefer logging in inside the
-  remote session. `fwd` warns every time this flag is used.
-
-Set defaults for any of these under `[claude]` in your config.
-
-### GitHub authentication
-
-Remote repositories include `.git`, so agents can create commits. Development VMs set up GitHub authentication by
-default so those commits can be pushed without stopping to repair credentials:
-
-```toml
-[github]
-auth = true
-```
-
-Set `auth = false` for an untrusted target or project. The command form writes either project-local preference:
-
-```sh
-fwd config set --project github.auth true
-fwd config set --project github.auth false
-```
-
-For a one-off override, use `fwd up --setup-github`, `fwd up --no-setup-github`, `fwd attach --setup-github`, or
-`fwd attach --no-setup-github`. An explicit `--setup-github` requires successful setup; the default-on behavior is
-best effort in unattended launches so a missing credential does not prevent provisioning.
-
-Fwd checks standard local sources in order: `GH_TOKEN`, `GITHUB_TOKEN`, the active `gh` account, Git's configured
-credential helper (including Git Credential Manager and the macOS Keychain), and `~/.netrc`. If none works in an
-interactive terminal, fwd offers a hidden PAT prompt. During launch it installs the official GitHub CLI release if needed and streams the
-credential over standard input. The token is never placed in argv, logs, fwd config, project files, or session state.
-`gh auth setup-git` configures HTTPS pushes; fine-grained PATs that GitHub CLI cannot store use a private persistent
-credential-helper file instead. Repository-local URL rewriting transparently carries GitHub SSH remotes over HTTPS
-inside the VM, while the effective local `user.name` and `user.email` fill only missing repository-local values.
-On RunPod GPU targets, credentials live under the persistent tool prefix and survive `/root` resets.
-
-Launch applies authentication before starting Codex or Claude. A direct `fwd send git push`, an agent message, or
-`fwd attach` also repairs an older running session in place, preserving remote-only work without launch-time
-resynchronization. Once prepared, the session records only a non-secret readiness flag so later agent messages remain
-fast. Because `fwd push` uploads local `.git` metadata, it reapplies the remote-only credential and URL configuration
-after the transfer.
-
-`fwd pull && git push` is not an equivalent fallback for a commit created remotely. Pull deliberately excludes
-`.git/`, so it retrieves working-tree content but not remote commits, refs, or objects. For uncommitted remote changes,
-pull the files, commit locally, and push locally. For an already-created remote commit, enable GitHub authentication
-and push it from the remote session, or explicitly export and apply a patch or Git bundle before pushing locally.
-An authenticated `fetch first` or non-fast-forward rejection means GitHub was reached successfully but the remote
-branch advanced; fetch and rebase or merge normally. Fwd never rewrites history or starts an automatic rebase during
-credential setup.
-
-## Project toolchains
-
-fwd detects Python, JavaScript, and Swift Package Manager projects from their manifests and lockfiles, then prepares only the tools required by
-that project and the selected coding agent. Every requirement first probes the remote command and version, so an
-existing `uv`, Bun, nvm, npm, pnpm, Yarn, Swift, Claude Code, or Codex installation is reused when it is visible to non-interactive
-SSH commands. Missing tools use ordered user-space fallbacks under the target's persistent fwd tool directory; fwd
-recursively prepares only the selected fallback's prerequisites, deduplicates them across agents and project
-toolchains, and verifies every resulting command before running dependency setup. A JavaScript project with `.nvmrc`
-gets a persistent nvm installation and its selected Node version even when Bun owns `node_modules`; fwd exposes nvm in
-attached shells without depending on a machine-specific `~/.nvm` path. When npm is otherwise required but Node is
-missing, the same nvm fallback selects the project's `.nvmrc` version or the latest Node LTS; pnpm and Yarn can then
-install through that npm fallback.
-
-Repositories can commit `.fwd/setup.sh` for an unsupported language, private build system, or extra setup. It runs
-after detected toolchain dependency commands. Swift packages use their top-level `Package.swift`, reuse an existing Linux Swift installation, or install the latest stable toolchain through the official Swiftly installer before running `swift package resolve`; when Swiftly reports missing distro packages, fwd installs its generated prerequisites on root-owned disposable machines such as RunPod and gives non-root targets the exact administrator script. Contributors adding first-class Haskell, Rust, or another
-ecosystem should read [Adding a project toolchain](docs/adding-toolchains.md): integrations conform to one
-`Toolchain` class, return shared `ToolRequirement` values, and add one explicit registry entry. Coding agents use the
-same resolver, so agent and project requirements are deduplicated.
-
-## Configuration
-
-**Run `fwd config --example` for an always-up-to-date commented reference** — it is generated from `fwd`'s own
-dataclasses, so it lists every field with its real default and cannot drift from the code. `fwd config --example slurm`
-narrows it to one backend, and the output is valid TOML you can redirect straight into a config file. To see what your
-own files currently resolve to, and which file set each value, run `fwd config`. For agents, editors, and validators,
-`fwd config --schema` emits the same contract as JSON Schema Draft 2020-12.
-
-Provider authors should read [Adding a target backend](docs/adding-target-backends.md), which covers the SSH compatibility boundary, backend contract, config/schema registration, lifecycle safety, state, documentation, and verification. Language and build-system contributors should read [Adding a project toolchain](docs/adding-toolchains.md).
-
-`~/.fwd/config.toml` is the global config; a project-local `.fwd/config.toml` **deep-merges over it**, so a repo can
-override a single field of a globally-declared target without restating the rest.
-
-### Default command
-
-Bare `fwd` attaches to the current directory's existing session. When there is no session yet, it launches the
-configured default command; Claude is the built-in default. Set it without editing TOML:
-
-```sh
-fwd default codex                              # user-wide default
-fwd default --project claude                   # only this project
-fwd default --target runpod -- python -m agent # whenever the selected target is runpod
-```
-
-The equivalent general command is `fwd config set default_command ...`:
-
-```sh
-fwd config set default_command codex
-fwd config set --project default_command -- python -m agent
-fwd config set sync.delete false
-fwd config set --project forwarding.ports 3000 8080:3000
-fwd config rm --project default_command       # confirms in a terminal
-fwd config rm --target runpod default_command # removes only the target override
-```
-
-Precedence is **target > project > user > built-in `claude`**. Commands are stored as argv arrays rather than shell
-strings, preserving argument boundaries:
-
-```toml
-default_command = ["codex"]
-
-[target_defaults.runpod]
-default_command = ["python", "-m", "agent"]
-```
-
-`fwd up` without an explicit agent or command uses this layered default. `fwd up claude`, `fwd up codex`, and
-`fwd up -- <command>` override it for one launch. Use `--user`, `--project`, or `--target NAME` with `fwd default` /
-`fwd config set`; omitting all three means `--user`.
-
-`fwd config rm` uses the same scope flags. It reports when the selected scope has no such value and leaves the file
-unchanged. Existing values require confirmation in an interactive terminal; scripts and agents must pass `--force`.
-Removing an override reveals the next value in the precedence chain rather than copying that value into the file.
-
-### Uninstall
-
-Run `fwd uninstall` to remove `~/.fwd`, the installed Codex/Claude skill, fwd-specific shell completion, and fwd
-temporary directories. When `npx` is available, fwd first uses `npx skills remove` so the skills CLI can clean up its
-own links and metadata, then removes any known paths it left behind. It then prints the appropriate `uv tool
-uninstall`, `pipx uninstall`, or `python -m pip uninstall` command because a running process cannot portably remove
-its own environment. It also prints the matching GitHub reinstall command, an `uvx`/`pipx run` one-off command when
-available, and the project issues URL.
-
-Uninstall never destroys remote resources. When sessions remain tracked it asks you to run `fwd rm --all` first;
-`fwd uninstall --force` removes local state anyway and may leave remote resources running and billing.
-
-### Target shortcuts and zero-config launches
-
-For a human who wants to connect to a saved target and coding environment, use a root selector:
-
-```sh
-fwd runpod                          # attach to a matching RunPod session, or create one interactively
-fwd runpod yes                      # run a managed task there; it appears in fwd send --ls
-fwd ssh                             # attach through the recent SSH target, or create/setup interactively
-fwd pod                             # exact configured target; attach a match or create interactively
-```
-
-For a background launch without writing config, omit `--reuse` and pass an inferable target:
-
-```sh
-fwd up runpod                       # unsaved CPU pod using built-in defaults; run default_command
-fwd up --target sid@vm.example.com  # a machine you already have
-fwd up --target my-box              # any Host alias in your ~/.ssh/config
-```
-
-Configured targets always win — declaring `[targets.runpod]` overrides the built-in rather than competing with it.
-Lambda and Slurm are deliberately **not** inferable. Lambda needs an account-specific instance type and SSH key name
-(its region defaults to automatic capacity selection); Slurm needs a site-specific login host, scratch path, and allocation spec. `fwd` asks you to run setup or
-use the corresponding `fwd config --example BACKEND` reference rather than guessing.
-
-### SSH — a machine you already have
-
-```toml
-default_target = "box"
-default_command = ["claude"]
-
-[targets.box]
-backend = "ssh"
-host = "gpu.example.com"
-user = "sid"
-key_path = "~/.ssh/id_ed25519"       # optional; defaults to your ssh config/agent
-proxy_jump = "sid@external.example"  # optional; publicly accessible host used to reach a private target
-remote_base = "~/fwd"                # projects land in <remote_base>/<project>
-```
-
-### RunPod — provision CPU or GPU compute per session
-
-Run `fwd up runpod --machines` to query `runpodctl gpu list --include-unavailable`, see the target's explicit default, and view available and unavailable GPU ids separately. The literal `cpu` selector is always present. Select one exact listed value for an individual launch with `fwd up runpod --machine/-m MACHINE`; switching between `cpu` and a GPU also selects the corresponding built-in image unless the target has a custom image. During `fwd setup runpod`, GPU types and persistent-storage datacenters returned by `runpodctl` use the same temporary searchable menu as Lambda catalogs, including display names, memory or location metadata, and current GPU availability. If provider discovery fails, those setup fields retain a free-text fallback rather than blocking configuration. An unknown or currently unavailable launch value fails before storage or a pod is created and reprints the scoped inventory. The older `--gpu` flag remains for compatibility with explicitly GPU-configured targets and Slurm allocation specs.
-
-```toml
-[targets.pod]
-backend = "runpod"
-compute_type = "cpu"                 # cpu (default) | gpu
-cloud_type = "secure"                # network volumes require secure
-image = "runpod/base:0.6.2-cpu"
-persistent = true                     # default; survives Pod termination
-data_center_id = "US-GA-1"           # required when persistent = true
-volume_gb = 50
-remote_base = "/workspace"           # project lives on the network volume
-tool_prefix = "/workspace/.fwd-tools" # agent state and tools persist too
-allow_proxy = true                   # fall back to ssh.runpod.io if no direct IP
-
-# GPU targets may additionally set:
-# compute_type = "gpu"
-# gpu = "NVIDIA GeForce RTX 4090"
-# image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-# volume_mount_path = "/workspace"
-```
-
-Needs `runpodctl` installed and configured (>= 2.6.0). Four things worth knowing
-(`docs/runpod-notes.md`):
-
-- **Persistent storage is the default for CPU and GPU sessions.** Fwd creates or reuses `fwd-<session>-data`, mounts
-  it at `/workspace`, and keeps the checkout, agent homes, native installs, credentials, conversations, app-server
-  payload, and caches there.
-- **Stopping retains the volume; removing deletes it.** RunPod cannot stop a network-volume Pod, so `fwd stop` and
-  stop-after terminate only the disposable Pod and restart creates another against the same volume. Confirmed
-  `fwd rm` deletes both resources.
-- **Community Cloud is an explicit disposable mode.** Network volumes are Secure Cloud only. Set
-  `cloud_type = "community"` with `persistent = false` when lower cost matters more than restart survival.
-- **Container storage is never trusted for durable state.** Older or opted-out Pods without a volume relocate to
-  `/root/fwd/...` and warn that their files will be wiped.
-
-CPU-only compute is the default. Persistent setup also requires choosing a datacenter because a network volume is a
-location-bound, separately billed resource. To request a GPU target, set `compute_type = "gpu"`, choose a `gpu`, and use an appropriate CUDA image such as
-`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`. The interactive wizard keeps cloud, volume, remote paths,
-and user behind its advanced-options gate.
-
-Pods are reused by name while running. Persistent sessions recreate the Pod against the retained volume after stop,
-and their IP/port are re-resolved on every attach. If only the `ssh.runpod.io` proxy is reachable, `fwd` falls back to tar-over-ssh
-because that transport cannot run rsync — it warns, and pushes get slower. Tar pushes still mirror synchronized
-files: stale files are deleted while excluded remote environments and caches are preserved.
-
-### Lambda Cloud — provision GPU instances through the Cloud API
-
-```toml
-[targets.lambda-gpu]
-backend = "lambda"
-region = "auto"                       # default: choose an exact region with current capacity
-preferred_regions = ["us-west", "us"] # optional ordered exact codes or prefixes
-instance_type = "gpu_1x_a10"
-ssh_key_name = "my-public-key"
-persistent = true
-filesystem_mount_path = "/home/ubuntu/fwd-data"
-remote_base = "/home/ubuntu/fwd-data/projects"
-tool_prefix = "/home/ubuntu/fwd-data/.fwd-tools"
-user = "ubuntu"
-key_path = "~/.ssh/id_ed25519"       # optional when ssh-agent/config already selects the matching key
-# image_id = "..."                    # optional; unset uses Lambda's default image
-```
-
-Create an API key in Lambda Cloud and export it only on the local machine:
-
-```sh
-export LAMBDA_API_KEY="..."
-fwd doctor --target lambda-gpu
-fwd up --target lambda-gpu
-fwd up lambda-gpu --machines              # exact instance types, regional availability, and configured default
-fwd up lambda-gpu -m gpu_1x_h100_sxm5    # one-launch override using an available exact name
-```
-
-If `LAMBDA_API_KEY` is absent during interactive `fwd setup lambda`, one hidden shared credential prompt accepts either the pasted key or a path to a UTF-8 file containing it; there is no separate mode question. Matching single/double quotes are removed from paths, and path-looking input that cannot be read is rejected. Pasted values are stripped and saved to `~/.fwd/credentials/LAMBDA_API_KEY.secret`; entered file paths are saved as reusable references in `~/.fwd/credentials/LAMBDA_API_KEY.path`, and their contents are stripped each time they are read. Both fwd-controlled files use mode 600 and the containing directory uses mode 700. `LAMBDA_API_KEY` remains the highest-precedence source. Setup validates instance types and registered SSH-key names against the live account, then matches each provider public key to a usable local public/private pair and persists the private `key_path`. Setup discovers every valid private-key file directly under `~/.ssh`, regardless of filename or extension, and uses `ssh-keygen -y` to derive missing public halves locally. It also uses `ssh-add -L` to label loaded keys and accepts an agent key's comment as an external private-key path only after cryptographically verifying the file. Agent-only keys cannot be saved because OpenSSH intentionally does not export their private paths; encrypted keys require an adjacent readable `.pub` because setup never prompts for a private-key passphrase. An unmatched registered key is labeled as unusable and cannot complete setup; fwd instead offers to upload a usable local or derived public key through `POST /ssh-keys`. Before upload, fwd validates the base64 SSH wire structure, requires its embedded algorithm to match the public prefix, and strips the optional local comment so only the public algorithm and blob leave the machine. A second API-wide egress guard rejects PEM, OpenSSH, and PuTTY private-key markers or private-key payload fields before request construction, and rejection errors never reproduce the input. Private key material is never uploaded. `fwd doctor` verifies both provider registration and the local public/private match, and launch fails immediately on permanent public-key rejection rather than retrying identical credentials for five minutes.
-
-The backend calls Lambda's public REST API directly; there is no provider CLI dependency. Interactive setup discovers
-current regions from `GET /regions`, offers an exact searchable region selection, validates explicit codes and preference prefixes, and uses the complete `GET /instance-types` catalog for a temporary filtered selection menu, exact-name validation, pricing, and current regional availability. Tab/Shift-Tab and arrow keys navigate that menu while the prompt remains above it. Registered SSH keys use the same closed searchable selection, with an explicit local-public-key upload path, and optional images are also discovered. `region = "auto"` is fwd policy—the launch API still receives one exact region code. The
-API key is never written to target config, session state, subprocess arguments, logs, or the remote machine; pasted values live only in fwd's private local credential file.
-
-- **Stopping terminates compute and retains storage.** Lambda has no suspend operation and destroys an instance's local
-  disk at termination. Fwd keeps durable state on `fwd-<session>-data`; the next launch creates a fresh instance and
-  reattaches that filesystem at `filesystem_mount_path`.
-- **Removing deletes both resources.** `fwd rm` terminates compute, waits for the filesystem to detach, and deletes the
-  session-owned filesystem after the normal consequence-aware confirmation.
-- **Disposable mode is explicit.** `persistent = false` avoids filesystem billing but means `fwd stop` permanently
-  erases the checkout, installed tools, credentials, conversations, and agent state on that instance.
-- **Regions are selected from live capacity.** The Lambda API requires an exact launch region, but fwd defaults to `auto`. Ordered `preferred_regions` entries may be complete codes such as `us-south-2` or prefixes such as `us-west` and `us`; matching regions are considered in preference order before other catalog regions. A retained session filesystem pins every replacement instance to its original exact region regardless of later preference changes.
-- **Capacity is checked at launch time.** `fwd up TARGET --machines` separates the complete instance-type catalog into available and unavailable lists under the target's region policy and includes matching exact region codes in each machine's details. `--machine/-m` accepts only an exact currently available instance-type name; invalid selections fail before resources are created and print that same scoped inventory.
-- **Remote stop-after is unavailable.** Lambda API keys currently grant broad account access, so fwd will not copy one
-  onto the instance merely to let it terminate itself. Local `fwd stop` remains fully supported.
-
-See [Lambda Cloud backend notes](docs/lambda-notes.md) for exact API, lifecycle, storage, and recovery semantics.
-
-### Slurm — your university or lab cluster
-
-```toml
-[targets.hpc]
-backend = "slurm"
-login_host = "login.hpc.example.edu"
-user = "me"
-proxy_jump = "me@ext.example.edu"            # omit if the login node is directly reachable
-key_path = "~/.ssh/id_ed25519_hpc"
-remote_base = "/scratch/me/fwd"              # MUST be scratch, never $HOME
-alloc = "--time=04:00:00 --cpus-per-task=8 --mem=32G"
-partition = "gpu"
-account = "cs-research"
-env_setup = [
-  "module purge",
-  "module load cuda/12.4",
-  "module load python/3.12",
-]
-```
-
-Per-project override in `.fwd/config.toml` — inherits everything above, changes only the allocation:
-
-```toml
-[targets.hpc]
-alloc = "--time=48:00:00 --cpus-per-task=16 --mem=64G --gres=gpu:a100:1"
-```
-
-Notes specific to Slurm (`docs/slurm-notes.md`):
-
-- Sync, bootstrap and dependency installs run on the **login node** — compute nodes usually have no internet, and the
-  filesystem is shared with them anyway. tmux also lives on the login node, wrapping `salloc ... srun --pty`, so your
-  allocation survives a dropped connection.
-- The login hostname is **pinned** on first connect. Round-robin aliases (`login.hpc` → `login1..4`) would otherwise
-  land a later `fwd attach` on a node where your tmux session does not exist.
-- `remote_base` must be scratch. Caches and venvs are redirected there too, because HPC home directories have inode
-  quotas a single `node_modules` can exhaust.
-- When your allocation ends, `fwd attach` offers a **new allocation in place** — it does not re-sync or re-bootstrap,
-  since the shared filesystem still has everything.
-
-### [your tool here]: Contribute a target!
-[Open an issue](https://github.com/Sid-MB/fwd/issues/new) and tag me or write a PR!
-
-### Global options
-
-```toml
-default_target = "box"
-
-[claude]
-session = true        # move the real transcript (default)
-handoff = false       # generate HANDOFF.md instead
-user_config = false   # upload ~/.claude bundle
-creds = false         # copy credentials to the remote machine
-
-[github]
-auth = true           # default; set false to keep GitHub credentials off the remote
-
-[agents.claude]
-full_access = true    # VM is the isolation boundary; launch with bypassPermissions
-args = []             # extra Claude CLI arguments
-environment = {}      # defaults only: an existing remote shell value wins
-
-[agents.codex]
-full_access = true    # VM is the isolation boundary; bypass approvals and the Codex sandbox
-args = []             # extra Codex CLI arguments
-environment = {}      # e.g. { MY_AGENT_TUNING = "1" }
-
-[sync]
-exclude = [".venv", "node_modules", "dist"]   # replaces the defaults; see below
-use_gitignore = true                          # honour the repo's own .gitignore
-delete = true                                 # push mirrors local (removes remote-only files)
-max_size_gb = 1.0                             # stop unexpectedly broad uploads while streaming
-```
-
-Registered agents run in full-access mode by default because fwd's remote VM or allocation is already the security
-boundary. Set `agents.<name>.full_access = false` for a less trusted target. An explicit permission/sandbox option in
-`args` takes precedence over the built-in full-access option, and `environment` entries are exported only when the
-remote shell has not already defined that name. The same settings are recorded with the session and apply to the
-interactive TUI, restarts, and `fwd send agent` turns.
-
-Claude Code's current background-agent and agent-team features are enabled by default; fwd therefore does not set the
-obsolete, undocumented `ENABLE_BACKGROUND_TASKS` switch. Likewise, current Codex enables multi-agent support by
-default. Use per-agent `args` or `environment` only for a real override rather than pinning defaults that the installed
-agent already supplies.
-
-`exclude` is **seeded** with sensible configurable defaults (`.venv`, `node_modules`, `.pnpm-store`, `__pycache__`,
-`.next`, `dist`, `build`, `.turbo`, and the various caches) and setting it *replaces* that list rather than adding to
-it — so a project that genuinely ships a checked-in `dist/` can shrink the list, not just grow it. Platform metadata
-such as `.DS_Store`, AppleDouble `._*`, `Thumbs.db`, and `Desktop.ini` is always excluded and cannot be re-enabled by
-configuration. Push includes `.git` because the remote agent needs history, branches, and an index; pull never imports
-remote `.git` state into the local checkout. Run `fwd` from a standalone checkout; linked Git worktrees whose `.git`
-file points outside the project directory are not currently supported.
-
-For standalone Git repositories, Git itself enumerates tracked files plus untracked, non-ignored WIP with
-`git ls-files --cached --others --exclude-standard`; this avoids implementation-specific nested `.gitignore` bugs in
-macOS openrsync. Fwd also applies repository ignore rules to tracked paths, so an accidentally committed credential or
-generated artifact that still matches `.gitignore` is not synchronized. It then applies `sync.exclude` and
-`.fwdignore`, and explicitly retains `.git/` on upload. A self-ignored nested `.gitignore` is retained as a narrow
-exception so the remote mirror can preserve ignored remote-only state. Non-Git directories fall back to
-transport-native filtering.
-
-During `fwd up` and `fwd push`, `sync.max_size_gb` (1 GB by default) acts as a streaming circuit breaker instead of a
-serial full-tree preflight. Both rsync and tar-over-SSH count their compressed outbound wire bytes. Uploads land in a
-sibling staging directory, and fwd only applies that stage to the live remote project after
-the stream completes under budget. Crossing the limit stops the stream, removes the incomplete stage, prints the exact
-project `.fwdignore` path for excluding unintended entries, and provides a project-scoped command such as
-`fwd config set --project sync.max_size_gb 4` plus the project/user config paths.
-
-Push, pull, and launch-time upload show the five most recently selected project-relative paths beneath the progress
-bar in an interactive terminal. This rolling window is transient and disappears when the transfer finishes, leaving
-only the compact completion line in scrollback. Redirected, CI, and agent stderr retains the complete path listing
-because no live terminal is available and durable logs are preferable there. Paths never contaminate structured stdout.
-Only after a limit failure, fwd reuses the transport filters to list up to ten included files or aggregate folders
-larger than 200 MB, making accidental dataset, checkpoint, or build-tree uploads visible without slowing successful
-uploads.
-In an interactive terminal, the sync step shows an indeterminate progress bar with cumulative MB/GB and live upload
-speed; the final line records the transferred amount, average speed, and elapsed time.
-
-## Notes
-
-- **Ctrl-C cleans up what this invocation owns.** If a launch creates a new provider resource and is interrupted before
-  startup finishes, fwd removes that new resource, deletes its state entry, and reports how many sessions remain.
-  Reused targets are never destroyed by cancellation. If `fwd stop` is interrupted while closing tmux, fwd still
-  completes the provider stop before exiting so compute is not left billing.
-- **Push mirrors, pull does not.** `fwd push` uses `--delete` so the remote matches local exactly. `fwd pull` is
-  additive and path-scoped, because a mirroring pull could delete local work you had not pushed yet. Uploads that
-  cross `sync.max_size_gb` are stopped and their remote stage is discarded; downloads are not capped.
-- **Destructive and billable actions never happen on a default.** `fwd rm`, including `fwd rm --all`, describes each
-  running target and remote data location at risk, then defaults its prompt to `no`; non-interactive removal needs
-  `--force` whenever those consequences may remain. A provider-confirmed-gone target has no remote consequence, so
-  fwd clears only its stale local state without prompting. Likewise `fwd attach` will **refuse to restart
-  stopped compute** without a terminal — otherwise a cron job attaching to a stopped pod would silently start provisioning
-  hardware again. Pass `--restart` (`-y`) to authorize it explicitly:
-
-  ```sh
-  fwd attach my-session --restart    # required in CI/scripts; prompts interactively without it
-  ```
-- **VM-local Git changes block shutdown.** Before stopping or removing a reachable target, fwd checks
-  `git status --porcelain` in the remote project, including untracked files. Server-owned stop-after repeats the
-  check after its dependencies finish. Commit, stash, or `fwd pull` first; `fwd stop --force`, `fwd rm --force`,
-  `fwd send --force stopafter`, and `stopafter --force` are explicit data-loss overrides.
-- **Attach never proxies your terminal.** `fwd` `exec`s into `ssh -t`, replacing itself, so resize, mouse reporting
-  and ctrl-C behave exactly as a hand-typed ssh would. In iTerm2, `fwd a -CC` passes tmux's double control-mode flag
-  through the same native path so remote tmux windows appear as native iTerm2 windows and tabs.
-- **Failed launch preparation is recoverable from inside the target.** If tool or dependency preparation fails after
-  provisioning and sync but before the primary tmux session starts, run `fwd attach --raw` (or `fwd a --raw`). On a
-  running target this creates a plain login-shell tmux in the synced project without rerunning sync, tool resolution,
-  dependency installation, project setup, or agent startup. Install or repair what is missing, exit the recovery
-  shell so its temporary tmux session closes, then rerun the normal `fwd` launch. `--raw` does not bypass restart
-  confirmation for stopped billable compute.
-- **State lives in `~/.fwd/state.json`**, locked with `flock` and written atomically. If it is ever lost or corrupted,
-  `fwd` degrades to an empty session list rather than failing — your pods and jobs still exist, and `fwd up` will find
-  and reuse them by name.
-
-## Development
-
-Measure local command timing without provisioning or SSH using the in-process benchmark suite:
-
-```console
-UV_CACHE_DIR=.uv-cache uv run python benchmarks/benchmark_commands.py
-```
-
-It covers every public command's parsing and dispatch plus representative local workloads, and it can save and compare JSON baselines for regression checks. See [docs/benchmarking.md](docs/benchmarking.md).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+### Developer guide
+
+- [Developer documentation index](dev-docs/README.md): architecture, provider notes, validation evidence, and repository map.
+- [Adding a target backend](dev-docs/adding-target-backends.md)
+- [Adding a project toolchain](dev-docs/adding-toolchains.md)
+- [Performance benchmarking](dev-docs/benchmarking.md)
+- [Contributing](CONTRIBUTING.md)

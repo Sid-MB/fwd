@@ -29,12 +29,12 @@ sync/bootstrap/deps against ``TargetInfo.endpoint`` — all on the login node �
 Reattach contract: if ``status(session)`` is ``JOB_ENDED``, the login node and possibly the tmux session are still
 alive but the allocation is gone. ``attach`` should offer a relaunch — kill the stale tmux session, call
 ``claude_launch_wrapper`` again and ``tmux_new`` again — rather than attaching to a dead pane. See
-``docs/slurm-notes.md``.
+``dev-docs/slurm-notes.md``.
 
 Cache/inode guardrails: ``TargetInfo.tool_prefix`` and ``TargetInfo.scratch`` are both under ``remote_base`` (scratch),
 never ``$HOME``. ``bootstrap.sh`` turns ``FWD_SCRATCH`` into ``fwd-env.sh`` exports (``UV_CACHE_DIR``,
 ``UV_PROJECT_ENVIRONMENT``, ``XDG_CACHE_HOME``, ``BUN_INSTALL_CACHE_DIR``, ``npm_config_cache``), and the generated
-``job.sh`` sources that file; the exact contract is documented in ``docs/slurm-notes.md``.
+``job.sh`` sources that file; the exact contract is documented in ``dev-docs/slurm-notes.md``.
 """
 
 from __future__ import annotations

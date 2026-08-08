@@ -115,7 +115,7 @@ out of `~/.runpod/config.toml` into its own memory, where it could reach a log l
 
 ## `compute_type` and `cloud_type`
 
-Added after the full-stack live e2e (`docs/live-e2e-report.md`) found that neither was exposed, which made CPU pods
+Added after the full-stack live e2e (`dev-docs/live-e2e-report.md`) found that neither was exposed, which made CPU pods
 and community-cloud pods unreachable from the CLI and left a **secure-cloud GPU as the cheapest launchable target** —
 the most expensive of the three options.
 

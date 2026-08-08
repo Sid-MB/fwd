@@ -217,7 +217,7 @@ fwd rm --force SESSION_OR_TARGET
 fwd rm --all --force
 ```
 
-Stopping kills tmux and suspends supported compute. A CPU RunPod's container-disk data is wiped. Destroying is irreversible and requires explicit user authorization; `fwd rm --all` applies the same cleanup to every tracked session after one bulk confirmation. Restarting stopped billable compute requires `--restart` and explicit user authorization.
+Stopping kills tmux and suspends supported compute. RunPod's disposable container disk is wiped when its Pod terminates, while the default per-session network volume is retained; sessions configured with `persistent = false` lose all remote state. Destroying is irreversible and requires explicit user authorization; `fwd rm --all` applies the same cleanup to every tracked session after one bulk confirmation. Restarting stopped billable compute requires `--restart` and explicit user authorization.
 
 ## Uninstall
 

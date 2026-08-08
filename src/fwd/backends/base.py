@@ -39,7 +39,7 @@ class TargetStatus(StrEnum):
         GONE: No longer exists upstream; the local state entry is stale and should be pruned.
         JOB_ENDED: Slurm-specific — login node fine, allocation finished/cancelled; needs relaunch.
         UNKNOWN: The provider could not be reached or gave an unusable answer. Deliberately distinct from ``GONE``:
-            the live e2e run (docs/live-e2e-report.md, R2-1) caught a transient ``runpodctl`` failure right after a
+            the live e2e run (dev-docs/live-e2e-report.md, R2-1) caught a transient ``runpodctl`` failure right after a
             stop being reported as ``GONE``, which invites the user to prune the state entry of a pod that is still
             running and still billing. "Cannot ask" must never be collapsed into "does not exist", so callers treat
             this as retry-able and never destructive.

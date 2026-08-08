@@ -115,6 +115,6 @@ uv build --wheel
 
 Confirm the wheel contains the new module. For installer shell fragments, also run them through `bash -n` in a test.
 
-The longer architecture and installer-policy guide is in [`docs/adding-toolchains.md`](../../../docs/adding-toolchains.md).
+The longer architecture and installer-policy guide is in [`dev-docs/adding-toolchains.md`](../../../dev-docs/adding-toolchains.md).
 Projects with private or highly specialized setup can instead commit `.fwd/setup.sh`; `fwd` runs it after all detected
 toolchain dependency commands.

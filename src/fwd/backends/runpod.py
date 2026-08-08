@@ -2,7 +2,7 @@
 
 Design intent
 -------------
-Everything here is driven by what the real CLI does (see ``docs/runpod-notes.md`` for the captured spike). Three
+Everything here is driven by what the real CLI does (see ``dev-docs/runpod-notes.md`` for the captured spike). Three
 observations shape the whole module:
 
 1. **runpodctl >= 2.6 speaks JSON by default.** ``-o json`` is the default output format for every ``pod``/``ssh``
@@ -286,7 +286,7 @@ def create_summary(cfg: RunpodTargetConfig, gpu: str | None = None, *, machine: 
     """Describe the pod about to be created, mentioning only values actually sent to ``runpodctl``.
 
     Derived from :func:`create_pod_args` rather than from the config so the progress line cannot drift from the real
-    request. The live e2e run (docs/live-e2e-report.md, R2-4) saw a CPU pod announce itself as
+    request. The live e2e run (dev-docs/live-e2e-report.md, R2-4) saw a CPU pod announce itself as
     ``(NVIDIA GeForce RTX 4090, 20 GB volume)`` — a GPU that was never requested and a volume RunPod ignores — which
     is exactly the sort of label that sends someone debugging in the wrong direction.
     """
@@ -325,7 +325,7 @@ def resolve_paths(cfg: RunpodTargetConfig, project_name: str, *, has_volume: boo
         fallback = f"{CONTAINER_DISK_BASE}/{Path(mount).name or 'fwd'}"
         # Wording matters here: on a CPU pod ``mount`` usually *does* exist as an ordinary writable directory on the
         # container-disk overlay. What is missing is the persistent volume behind it, and a user who checks and finds
-        # the directory sitting there would reasonably conclude fwd is confused (docs/live-e2e-report.md, R2-3).
+        # the directory sitting there would reasonably conclude fwd is confused (dev-docs/live-e2e-report.md, R2-3).
         notes.append(
             f"pod has no persistent volume — {mount} is not backed by one on this pod, so anything written there "
             f"would be WIPED on stop; using the container disk at {fallback} instead "
@@ -815,7 +815,7 @@ class RunpodBackend(Backend):
         Never raises — ``fwd ls`` renders one row per session and a single provider hiccup must not blank the table.
 
         Only a **confirmed** 404 yields ``GONE``; every other failure yields ``UNKNOWN``. The live e2e run
-        (docs/live-e2e-report.md, R2-1) hit exactly this: RunPod's API is briefly flaky right after ``pod stop``, the
+        (dev-docs/live-e2e-report.md, R2-1) hit exactly this: RunPod's API is briefly flaky right after ``pod stop``, the
         transient error was reported as ``GONE``, and ``fwd attach`` then offered to delete the state entry of a pod
         that still existed. Since ``GONE`` is what unlocks that destructive prompt, "cannot ask" must stay distinct
         from "does not exist" — a wrong ``GONE`` is how a paid-for pod gets orphaned.

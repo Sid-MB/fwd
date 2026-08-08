@@ -18,7 +18,7 @@ Three escalating levels of transfer, matching the plan's flags:
   ``.credentials.json`` must never travel as part of a config bundle, only through the explicit ``--creds`` path which
   writes chmod 600 and warns the user.
 
-S1 spike findings that shaped this module (full writeup: ``docs/session-transfer-notes.md``, claude 2.1.220)
+S1 spike findings that shaped this module (full writeup: ``dev-docs/session-transfer-notes.md``, claude 2.1.220)
 -----------------------------------------------------------------------------------------------------------
 1. The encoding is ``re.sub(r"[^A-Za-z0-9]", "-", abspath)`` — verified against 34 real project directories with zero
    mismatches. ``/``, ``.``, ``_``, spaces and ``-`` all collapse to ``-``; the transform is lossy and has no inverse,

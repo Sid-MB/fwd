@@ -78,7 +78,7 @@ The user is optional. Let OpenSSH resolve aliases, users, ports, identities, and
 
 ### RunPod
 
-CPU is the default. CPU pods have no persistent volume; fwd relocates work to the ephemeral container disk, which is wiped on stop. GPU targets may configure a persistent volume and CUDA image.
+CPU is the default. Fwd creates a dedicated Secure Cloud network volume per session by default for both CPU and GPU compute. `fwd stop` terminates the disposable Pod while retaining the volume; `fwd rm` deletes both. Set `persistent = false` only when disposable storage is intentional.
 
 GPU selection requires an explicitly GPU-enabled target:
 
@@ -89,6 +89,7 @@ compute_type = "gpu"
 gpu = "NVIDIA A100 80GB PCIe"
 volume_gb = 50
 image = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+data_center_id = "US-GA-1"
 ```
 
 ### Slurm

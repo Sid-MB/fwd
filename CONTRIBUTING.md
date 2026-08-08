@@ -1,7 +1,7 @@
 
 ## Things we are looking for
 - [ ] New targets (cloud service, HPC, etc.) you want to see
-- [ ] Clearer [documentation](./docs), [README.md](./README.md), [SKILL.md](./SKILL.md), and examples
+- [ ] Clearer [user documentation](./docs/README.md), [developer documentation](./dev-docs/README.md), [README.md](./README.md), [SKILL.md](./SKILL.md), and examples
 - [ ] Support other server-running coding agents (beyond Claude Code and Codex)
 - [ ] New features
 - [ ] Bug reports and fixes
@@ -17,9 +17,7 @@ uv run pytest
 uv run fwd --help
 ```
 
-Design notes for the trickier subsystems live in `docs/`: `session-transfer-notes.md` (how transcript relocation was
-verified), `runpod-notes.md` (runpodctl behaviour and the volume trap), `slurm-notes.md` (job.sh, login pinning, the
-`fwd-env.sh` contract).
+Design notes for the trickier subsystems live in [`dev-docs/`](./dev-docs/README.md), including transcript relocation, provider behavior, lifecycle contracts, and live validation evidence. End-user workflows live in [`docs/`](./docs/README.md).
 
 CI runs `uv sync --frozen` + `pytest` on 3.12 and 3.13 for every push and PR to `main`
 (`.github/workflows/ci.yml`). `--frozen` means a dependency bump must land with its `uv.lock` update.

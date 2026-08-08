@@ -338,7 +338,7 @@ class ClaudeConfig:
     out of the macOS Keychain onto a remote disk.
 
     ``session`` defaults **on** and ``handoff`` defaults **off**. The plan originally assumed the reverse, because of
-    a suspected foreign-session validation regression; the S1 spike (docs/session-transfer-notes.md) disproved it on
+    a suspected foreign-session validation regression; the S1 spike (dev-docs/session-transfer-notes.md) disproved it on
     claude 2.1.220 — a relocated transcript resumes with full context. Moving the real conversation is strictly better
     than moving a summary of it, and every failure mode in the transfer is soft (the functions return ``None`` and
     warn), so the ambitious default costs nothing when it does not work.

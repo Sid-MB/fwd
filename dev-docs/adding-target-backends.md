@@ -290,7 +290,7 @@ Be careful when configuration can change after launch. An existing session recor
 
 ## 8. Document provider semantics
 
-Add `docs/<provider>-notes.md` when behavior is not obvious from the config reference. At minimum document:
+Add `dev-docs/<provider>-notes.md` when behavior is not obvious from the generated config reference. Add user-facing setup and lifecycle guidance to `docs/configuration.md`. At minimum document:
 
 - prerequisites and authentication;
 - what is billable in each normalized status;

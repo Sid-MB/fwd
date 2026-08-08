@@ -136,7 +136,7 @@ def _start_raw_shell(endpoint: SSHEndpoint, session: SessionState) -> None:
 def _confirm_restart(prompt: str, *, restart: bool, action: str) -> None:
     """Gate any action that starts billable compute, or abort with an actionable message.
 
-    The live e2e run (docs/live-e2e-report.md) caught the hazard this exists to close: :func:`fwd.ui.confirm` returns
+    The live e2e run (dev-docs/live-e2e-report.md) caught the hazard this exists to close: :func:`fwd.ui.confirm` returns
     its *default* when there is no tty, and these prompts default to yes, so a scripted ``fwd attach`` against a
     stopped pod silently reprovisioned hardware at $0.25/hr with nobody watching. Spending money is the one decision that
     must never be made by a default.
@@ -194,7 +194,7 @@ def attach(
 
     if status is TargetStatus.UNKNOWN:
         # Deliberately before the GONE branch and deliberately non-destructive: an inconclusive answer must never
-        # reach the offer-to-prune path below (docs/live-e2e-report.md, R2-1).
+        # reach the offer-to-prune path below (dev-docs/live-e2e-report.md, R2-1).
         ui.die(
             f"could not determine the status of session {session.name!r} — the {session.backend} provider did not "
             f"answer. This is usually transient; try again in a moment. Run {ui.command('ls')!r} to see what {ui.command()} knows."

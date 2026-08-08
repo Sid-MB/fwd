@@ -3,7 +3,7 @@
 Design intent
 -------------
 Every fixture in ``tests/fixtures/runpod/`` is verbatim output from ``runpodctl 2.6.0`` captured during the Phase 0
-S2 spike (see ``docs/runpod-notes.md``), with ssh public keys redacted. The point is regression detection: when
+S2 spike (see ``dev-docs/runpod-notes.md``), with ssh public keys redacted. The point is regression detection: when
 RunPod changes a field name, these tests fail loudly and locally instead of the failure surfacing as a mysterious
 hang during a live provision.
 
