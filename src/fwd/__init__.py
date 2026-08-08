@@ -11,4 +11,12 @@ The package is layered deliberately so that each layer can be developed and test
 - ``cli``          : thin Typer surface that only parses flags and delegates to ``ops``.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+
+try:
+    # The distribution is named fwdit because the fwd name is owned by an unrelated PyPI project; the import package and command intentionally remain fwd.
+    __version__ = version("fwdit")
+except PackageNotFoundError:
+    # Keep source-tree imports useful before the project has been installed, while installed builds always report their tag-derived package metadata.
+    __version__ = "0.0.0"

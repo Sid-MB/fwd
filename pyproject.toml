@@ -1,6 +1,6 @@
 [project]
-name = "fwd"
-version = "0.1.0"
+name = "fwdit"
+dynamic = ["version"]
 description = "Move coding work and agent sessions to remote compute"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,8 +18,16 @@ fwd = "fwd.cli:entrypoint"
 dev = ["pytest>=8"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# The shared release workflow creates the next vX.Y.Z tag before building, so the wheel, sdist, Git tag, and GitHub Release all receive the same immutable version.
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Source archives without Git metadata still expose a valid diagnostic version instead of failing to build.
+fallback_version = "0.0.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fwd"]

@@ -22,10 +22,10 @@ jobs:
     with:
       # fwd does not currently carry Interlens's .licenserc.yaml/header-hook setup.
       license: false
-      # The reusable workflow builds, attests, tags, uploads `python-package-distributions`, and creates the GitHub
-      # Release. Publishing is disabled there so the repository-local trusted-publisher job below is always last.
+      # The reusable workflow builds, attests, tags, and uploads `python-package-distributions`. Publishing and the
+      # GitHub Release remain local so a failed PyPI upload cannot leave behind a release for unpublished artifacts.
       publish: false
-      release: true
+      release: false
 
   publish:
     needs: build-and-release
@@ -53,3 +53,26 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           attestations: true
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      # The shared workflow has already pushed the matching tag. Creating the release only after PyPI accepts the
+      # immutable distributions keeps the public GitHub and PyPI release states aligned.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wheel=$(find dist -maxdepth 1 -name 'fwdit-*.whl' -print -quit)
+          test -n "$wheel" || { echo "::error::No fwdit wheel found in the shared workflow artifact"; exit 1; }
+          version=${wheel#dist/fwdit-}
+          version=${version%%-*}
+          gh release create "v$version" dist/*.whl dist/*.tar.gz --generate-notes

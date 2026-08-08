@@ -15,13 +15,13 @@ terminal ◀────────── attach / stream ──  persistent wo
 ## Install
 
 ```sh
-uv tool install git+https://github.com/Sid-MB/fwd
+uv tool install fwdit
 ```
 
 Or try it without installing:
 
 ```sh
-uvx --from git+https://github.com/Sid-MB/fwd fwd --help
+uvx --from fwdit fwd --help
 ```
 
 Requires Python 3.12+, `ssh`, and `rsync` locally. Run `fwd doctor` to check target-specific requirements.

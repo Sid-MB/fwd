@@ -21,7 +21,7 @@ If setup is required, follow the exact flags printed by fwd. Do not open an inte
 
 For a requested shell command instead of agent work, use `fwd send --name SESSION -- COMMAND...`. Reattach with `fwd send --name SESSION TASK_ID`; cancel only that task with `fwd send --name SESSION TASK_ID --stop`.
 
-If `fwd` is unavailable, install the supported GitHub build with `uv tool install git+https://github.com/Sid-MB/fwd`. If `uv` is unavailable, report that Python 3.12+, `uv`, `ssh`, and `rsync` are required instead of improvising another installer.
+If `fwd` is unavailable, install the published distribution with `uv tool install fwdit`. If `uv` is unavailable, report that Python 3.12+, `uv`, `ssh`, and `rsync` are required instead of improvising another installer.
 
 ## Safe automation
 

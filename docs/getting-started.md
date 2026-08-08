@@ -9,13 +9,13 @@ The remote session survives a dropped SSH connection or closed laptop. You can r
 ## Install
 
 ```sh
-uv tool install git+https://github.com/Sid-MB/fwd
+uv tool install fwdit
 ```
 
 To try fwd without installing it:
 
 ```sh
-uvx --from git+https://github.com/Sid-MB/fwd fwd --help
+uvx --from fwdit fwd --help
 ```
 
 Local requirements are Python 3.12+, `ssh`, and `rsync`. Provider targets may require their own authentication or CLI; `fwd doctor` reports what is missing.

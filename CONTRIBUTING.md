@@ -25,23 +25,23 @@ CI runs `uv sync --frozen` + `pytest` on 3.12 and 3.13 for every push and PR to 
 ### Publishing
 
 `.github/workflows/publish.yml` publishes to PyPI over **OIDC trusted publishing** — there is no API token in this
-repo and none should be added. It runs when a GitHub release is *published*, or manually via `workflow_dispatch`. The
-`build` job runs `uv build` (sdist + wheel, checked to contain `bootstrap.sh`) and uploads the artifact; a separate
-`publish` job holds `id-token: write` and the `pypi` environment, and does nothing but download that artifact and
-upload it. Splitting them keeps the job that can mint a PyPI credential away from any project code.
+repo and none should be added. A push to `main` that changes `src/**` or `pyproject.toml`, or a manual
+`workflow_dispatch`, calls the shared Interlens workflow to compute the next patch tag, build and attest the sdist and
+wheel, and push the tag. The repository-local `publish` job verifies the wheel and uploads it through the protected
+`pypi` environment; a separate least-privilege job creates the GitHub Release only after PyPI accepts the distributions.
 
 One-time setup on pypi.org, under *Publishing* → *Add a new pending publisher*:
 
 | Field | Value |
 | --- | --- |
-| PyPI project name | must match `project.name` in `pyproject.toml` (currently `fwd`) |
+| PyPI project name | `fwdit` |
 | Owner / repository | `Sid-MB` / `fwd` |
 | Workflow name | `publish.yml` |
 | Environment name | `pypi` |
 
 Then create a matching `pypi` environment in the repo settings (a required-reviewer rule there gates every upload).
+The PyPI distribution is named `fwdit` because the unrelated `fwd` project is already owned on PyPI; users still run
+the `fwd` command and import the `fwd` package.
 
-**The published version comes from `version` in `pyproject.toml`, not from the git tag.** PyPI will not overwrite an
-existing version, so bump `pyproject.toml` in the same commit you tag — otherwise the `publish` job fails at the upload
-step. None of this is wired into the install instructions above: until a release actually happens, the git install is
-the real one.
+The published version comes from the `vX.Y.Z` tag created by the shared workflow through `hatch-vcs`. Do not restore a
+static `project.version`: doing so would let the Git tag and immutable PyPI artifact version diverge again.
