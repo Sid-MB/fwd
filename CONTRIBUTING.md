@@ -15,12 +15,15 @@ git clone https://github.com/Sid-MB/fwd.git && cd fwd
 uv sync
 uv run pytest
 uv run fwd --help
+uv run python tools/generate_man_pages.py --check
 ```
 
 Design notes for the trickier subsystems live in [`dev-docs/`](./dev-docs/README.md), including transcript relocation, provider behavior, lifecycle contracts, and live validation evidence. End-user workflows live in [`docs/`](./docs/README.md).
 
 CI runs `uv sync --frozen` + `pytest` on 3.12 and 3.13 for every push and PR to `main`
 (`.github/workflows/ci.yml`). `--frozen` means a dependency bump must land with its `uv.lock` update.
+
+The checked-in section-1 manuals are generated from the CLI with `click-man`. After changing commands, options, or their help text, run `uv run python tools/generate_man_pages.py`; see [`dev-docs/man-pages.md`](./dev-docs/man-pages.md) for the authored-section, rendering, validation, and packaging contract. CI and publishing both reject stale or invalid pages.
 
 ### Publishing
 

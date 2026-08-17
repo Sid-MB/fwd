@@ -12,6 +12,14 @@ The remote session survives a dropped SSH connection or closed laptop. You can r
 uv tool install fwdit
 ```
 
+On the first `fwd` invocation, the bundled `fwd(1)` and command manuals are silently installed under the user-local XDG man directory, normally `~/.local/share/man/man1`. Later package upgrades update changed pages and remove obsolete fwd pages automatically, without `sudo` or a global post-install hook:
+
+```sh
+fwd --version
+man fwd
+man fwd-up
+```
+
 To try fwd without installing it:
 
 ```sh

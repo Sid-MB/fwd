@@ -18,6 +18,7 @@ This folder contains architecture, extension, validation, and implementation not
 - [Live end-to-end report](live-e2e-report.md): dated RunPod validation evidence and discovered regressions.
 - [Session transfer notes](session-transfer-notes.md): Claude transcript relocation experiment and encoding rules.
 - [Performance benchmarking](benchmarking.md): in-process command benchmarks and baseline comparison.
+- [Manual pages](man-pages.md): click-man generation, conventional authored sections, validation, and packaging.
 
 ## Repository map
 
@@ -34,6 +35,7 @@ This folder contains architecture, extension, validation, and implementation not
 uv sync
 uv run pytest
 uv run fwd --help
+uv run python tools/generate_man_pages.py --check
 ```
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution and publishing policy. User-facing behavior belongs in [docs](../docs/README.md), and concise project orientation belongs in the [top-level README](../README.md).

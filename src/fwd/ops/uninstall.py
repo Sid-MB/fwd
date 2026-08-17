@@ -21,7 +21,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from fwd import port_forwarding, ui
+from fwd import man_pages, port_forwarding, ui
 from fwd.skill_setup import skills_environment
 from fwd.state import STATE_PATH, StateStore
 
@@ -243,6 +243,10 @@ def uninstall(*, force: bool = False) -> int:
     paths = (*_skill_paths(home), *_completion_paths(home), *_temporary_paths(), home / ".fwd")
     removed = 0
     failures: list[tuple[Path, str]] = []
+    try:
+        removed += man_pages.remove_installed()
+    except OSError as exc:
+        failures.append((man_pages.install_directory(), str(exc)))
     for path in paths:
         try:
             removed += int(_remove_path(path))

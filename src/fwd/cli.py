@@ -1033,7 +1033,12 @@ def entrypoint() -> None:
 
     Console-script wrappers otherwise pass their on-disk filename as Click's ``prog_name``, which would leave Usage
     lines hard-coded to the installed executable even after every other UI string adopted :func:`fwd.ui.command`.
+    Synchronizing bundled manuals here makes wheel, uv-tool, pipx, and direct installations behave identically without
+    relying on unsupported package-manager post-install hooks; failures remain silent and never block the command.
     """
+    from fwd.man_pages import install_silently
+
+    install_silently()
     app(prog_name=ui.COMMAND_NAME)
 
 

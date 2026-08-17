@@ -1,0 +1,20 @@
+.TH "FWD PULL" "1" "2026-08-12" "fwdit" "fwd pull Manual"
+.SH NAME
+fwd\-pull \- Bring remote changes back down to the local directory,
+additively — a pull never deletes local files.
+.SH SYNOPSIS
+.B fwd pull
+[OPTIONS] [paths]...
+.SH DESCRIPTION
+Bring remote changes back down to the local directory, additively — a
+pull never deletes local files.
+.SH OPTIONS
+.TP
+\fB\-n,\fP \-\-name <str>
+Session name, target, or backend; defaults to this directory's session.
+.SH EXIT STATUS
+\fB0\fP indicates success. Any nonzero value indicates an error.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

@@ -35,3 +35,25 @@ jobs:
           UV_PYTHON: ${{ matrix.python-version }}
 
       - run: uv run pytest -q
+
+  manual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --all-extras --dev
+        env:
+          UV_PYTHON: "3.12"
+
+      # Generation drift needs one Python run, not one run per test-matrix interpreter.
+      - run: uv run python tools/generate_man_pages.py --check
+
+      - name: Lint manual pages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes mandoc
+          mandoc -T lint man/*.1

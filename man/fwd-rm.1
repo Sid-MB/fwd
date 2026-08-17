@@ -1,0 +1,30 @@
+.TH "FWD RM" "1" "2026-08-12" "fwdit" "fwd rm Manual"
+.SH NAME
+fwd\-rm \- Destroy one or more session targets, or every tracked target
+with --all, and forget their state; confirmation identifies running work
+and remote data at risk. Irreversible — remote data is gone.
+.SH SYNOPSIS
+.B fwd rm
+[OPTIONS] [names]...
+.SH DESCRIPTION
+Destroy one or more session targets, or every tracked target with --all,
+and forget their state; confirmation identifies running work and remote
+data at risk. Irreversible — remote data is gone.
+.PP
+Removal confirms with the running work and remote data at risk;
+already-gone targets need no confirmation.
+.SH OPTIONS
+.TP
+\fB\-\-all\fP
+Destroy every tracked session and its remote data. Cannot be combined
+with session selectors.
+.TP
+\fB\-f,\fP \-\-force
+Skip consequence confirmation and remote Git safety checks; required
+non-interactively when a target or its data may remain.
+.SH EXIT STATUS
+\fB0\fP indicates success. Any nonzero value indicates an error.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

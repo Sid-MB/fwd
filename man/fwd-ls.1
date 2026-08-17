@@ -1,0 +1,60 @@
+.TH "FWD LS" "1" "2026-08-12" "fwdit" "fwd ls Manual"
+.SH NAME
+fwd\-ls \- List managed sessions with live backend status.
+.SH SYNOPSIS
+.B fwd ls
+[OPTIONS]
+.SH DESCRIPTION
+List managed sessions with live backend status.
+.SH OPTIONS
+.TP
+\fB\-\-all\-projects\fP
+Show sessions from every locally tracked project instead of only the
+current project.
+.TP
+\fB\-c,\fP \-\-columns <str>
+Show selected columns by comma-separated name; repeat to combine.
+Session names remain as row identity.
+.TP
+\fB\-\-names\fP
+Show only session names.
+.TP
+\fB\-\-backends,\fP \-\-backend
+Show session names and backends.
+.TP
+\fB\-\-statuses,\fP \-\-status
+Show session names and live statuses.
+.TP
+\fB\-\-stop\-after\fP
+Show session names and queued stop-after state.
+.TP
+\fB\-\-running\fP
+Show session names and current run durations.
+.TP
+\fB\-\-tmux\fP
+Show session names and remote tmux names.
+.TP
+\fB\-\-local\-dirs,\fP \-\-local\-dir
+Show session names and local project directories.
+.TP
+\fB\-\-last\-attached\fP
+Show session names and last-attachment times.
+.TP
+\fB\-\-ids\fP
+Show session names and provider identifiers.
+.TP
+\fB\-\-ports\fP
+Show session names and local port forwarding.
+.TP
+\fB\-\-format\fP <auto|rich|markdown|json>
+Output format: auto uses Rich in a terminal and Markdown otherwise.
+[default: auto]
+.TP
+\fB\-\-json\fP
+Render structured output as JSON; shorthand for --format json.
+.SH EXIT STATUS
+\fB0\fP indicates success. Any nonzero value indicates an error.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

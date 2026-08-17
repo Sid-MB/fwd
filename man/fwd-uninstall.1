@@ -1,0 +1,25 @@
+.TH "FWD UNINSTALL" "1" "2026-08-12" "fwdit" "fwd uninstall Manual"
+.SH NAME
+fwd\-uninstall \- Remove local fwd data, coding-agent skills,
+completions, and temporary logs.
+.SH SYNOPSIS
+.B fwd uninstall
+[OPTIONS]
+.SH DESCRIPTION
+Remove local fwd data, coding-agent skills, completions, and temporary logs.
+.PP
+Refuses to discard state for tracked remote resources unless --force
+explicitly accepts orphaning them. The
+running CLI cannot remove its own environment portably, so the final
+package-manager command is printed for you.
+.SH OPTIONS
+.TP
+\fB\-\-force\fP
+Skip confirmation; if sessions remain tracked, forget them without
+stopping or destroying their remote resources.
+.SH EXIT STATUS
+\fB0\fP indicates success. Any nonzero value indicates an error.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

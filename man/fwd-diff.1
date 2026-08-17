@@ -1,0 +1,29 @@
+.TH "FWD DIFF" "1" "2026-08-12" "fwdit" "fwd diff Manual"
+.SH NAME
+fwd\-diff \- Compare local and remote content with Git-style output:
+exit 0 if identical, 1 if different, and 2 on errors.
+.SH SYNOPSIS
+.B fwd diff
+[OPTIONS] [target] [path]
+.SH DESCRIPTION
+Compare local and remote content with Git-style output: exit 0 if
+identical, 1 if different, and 2 on errors.
+.SH OPTIONS
+.TP
+\fB\-q,\fP \-\-quiet
+Print no diff; communicate identical/different/error through exit status only.
+.TP
+\fB\-\-include\-gitignored\fP
+Also compare Git-ignored content, while retaining .fwdignore and
+configured sync exclusions.
+.TP
+\fB\-\-include\-unsynced\fP
+Compare all ordinarily unsynced content; .git and permanent OS metadata
+exclusions still apply.
+.SH EXIT STATUS
+\fB0\fP means the synchronized trees match, \fB1\fP means they differ,
+and \fB2\fP means comparison failed.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

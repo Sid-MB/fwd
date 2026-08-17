@@ -1,0 +1,31 @@
+.TH "FWD CONFIG" "1" "2026-08-12" "fwdit" "fwd config Manual"
+.SH NAME
+fwd\-config \- Inspect or update fwd's layered configuration.
+.SH SYNOPSIS
+.B fwd config
+[OPTIONS] COMMAND [ARGS]...
+.SH DESCRIPTION
+Inspect or update fwd's layered configuration.
+.SH COMMANDS
+\fBset\fP
+  Set a configuration value without opening an editor.
+  See \fBfwd config-set(1)\fP for full documentation on the \fBset\fP command.
+.PP
+\fBrm\fP
+  Remove a configuration value at one scope, revealing the
+next-higher-precedence value.
+  See \fBfwd config-rm(1)\fP for full documentation on the \fBrm\fP command.
+.SH OPTIONS
+.TP
+\fB\-\-example\fP
+Print a commented reference config generated from fwd's own schema
+instead of your effective one.
+.TP
+\fB\-\-schema\fP
+Print the complete machine-readable JSON Schema for config files.
+.SH EXIT STATUS
+\fB0\fP indicates success. Any nonzero value indicates an error.
+.SH REPORTING BUGS
+Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.
+.SH SEE ALSO
+\fBfwd\fP(1)

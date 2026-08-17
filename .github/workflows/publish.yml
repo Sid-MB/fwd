@@ -8,11 +8,41 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "man/**"
       - "pyproject.toml"
+      - "README.md"
+      - "SKILL.md"
+      - "agents/**"
+      - "references/**"
+      - "tools/generate_man_pages.py"
+      - ".github/workflows/publish.yml"
   workflow_dispatch:
 
 jobs:
+  validate-manual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --all-extras --dev
+        env:
+          UV_PYTHON: "3.12"
+
+      # Publishing is independently gated because a push can start CI and publishing concurrently.
+      - run: uv run python tools/generate_man_pages.py --check
+
+      - name: Lint manual pages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes mandoc
+          mandoc -T lint man/*.1
+
   build-and-release:
+    needs: validate-manual
     # Pinning to main is intentional: this is the centrally maintained release workflow requested for Sid-MB projects.
     uses: Sid-MB/interlens/.github/workflows/publish.yml@main
     permissions:
@@ -45,7 +75,20 @@ jobs:
         run: |
           wheel=$(find dist -maxdepth 1 -name '*.whl' -print -quit)
           test -n "$wheel" || { echo "::error::No wheel found in the shared workflow artifact"; exit 1; }
-          unzip -l "$wheel" | grep -q 'fwd/scripts/bootstrap.sh' || { echo "::error::bootstrap.sh missing from $wheel"; exit 1; }
+          unzip -l "$wheel" > wheel-contents.txt
+          grep -q 'fwd/scripts/bootstrap.sh' wheel-contents.txt || { echo "::error::bootstrap.sh missing from $wheel"; exit 1; }
+          grep -q 'fwd/man/fwd.1' wheel-contents.txt || { echo "::error::fwd.1 missing from $wheel"; exit 1; }
+          grep -q 'fwd/man/fwd-up.1' wheel-contents.txt || { echo "::error::fwd-up.1 missing from $wheel"; exit 1; }
+
+      # The wheel carries runtime copies; the sdist also carries packager-ready pages and their reproducible generator.
+      - name: Verify the source distribution ships manual pages
+        run: |
+          sdist=$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)
+          test -n "$sdist" || { echo "::error::No source distribution found in the shared workflow artifact"; exit 1; }
+          tar -tzf "$sdist" > sdist-contents.txt
+          grep -Eq '/man/fwd\.1$' sdist-contents.txt || { echo "::error::fwd.1 missing from $sdist"; exit 1; }
+          grep -Eq '/man/fwd-up\.1$' sdist-contents.txt || { echo "::error::fwd-up.1 missing from $sdist"; exit 1; }
+          grep -Eq '/tools/generate_man_pages\.py$' sdist-contents.txt || { echo "::error::manual generator missing from $sdist"; exit 1; }
 
       # No username or password is supplied: the action exchanges GitHub's OIDC identity for a short-lived PyPI
       # credential scoped to this repository, publish.yml, and the pypi environment.

@@ -17,4 +17,6 @@ fwd config --example
 fwd config --schema
 ```
 
+The first invocation of an installed `fwd` silently synchronizes its bundled manuals to the user-local XDG man directory; package upgrades update them on the next use. Run `man fwd` or `man fwd-up` afterward. In a source checkout, preview a page directly with `man ./man/fwd.1`.
+
 Contributing to fwd? See the [developer documentation](../dev-docs/README.md).

@@ -1,0 +1,298 @@
+"""Generate fwd's checked-in section-1 manual pages from the Typer command tree.
+
+click-man supplies the command, synopsis, option, and subcommand extraction. The small adapter in this module is
+necessary because Typer 0.27 vendors Click, while click-man performs runtime type checks against the separately
+installed Click package. Authored additions supply the conventional sections that no CLI introspector can infer:
+exit semantics, files, environment variables, examples, bug reporting, and cross-references.
+
+Generated pages are committed under ``man/`` so Unix package maintainers can install them without importing fwd during
+their package build. Run with ``--check`` in CI to detect pages that no longer match the CLI declarations or additions.
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Iterable
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import difflib
+import os
+from pathlib import Path
+import re
+import tempfile
+import textwrap
+from types import SimpleNamespace
+
+from click_man import core as click_man_core
+import typer._click as typer_click
+from typer.core import TyperOption
+from typer.main import get_command
+
+from fwd.cli import app
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "man"
+MANUAL_DATE = "2026-08-12"
+MANUAL_SOURCE = "fwdit"
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+SECTION_ORDER = (
+    "NAME",
+    "SYNOPSIS",
+    "DESCRIPTION",
+    "COMMANDS",
+    "OPTIONS",
+    "EXIT STATUS",
+    "ENVIRONMENT",
+    "FILES",
+    "EXAMPLES",
+    "REPORTING BUGS",
+    "SEE ALSO",
+)
+
+ROOT_DESCRIPTION = r"""fwd provisions or connects to remote compute, synchronizes the current project, prepares its toolchain, and starts a persistent shell, command, Claude Code, or Codex session in tmux.
+.PP
+Bare \fBfwd\fP is the interactive reuse workflow. It attaches to an unambiguous matching session or creates one interactively. Explicit \fBfwd up\fP invocations remain in the local terminal unless attachment is requested or a human terminal launches a registered coding agent without \fB\-\-detach\fP.
+.PP
+Configuration is layered: target settings override project settings, which override user settings and built-in defaults. Run \fBfwd config\fP to inspect effective values and their source files."""
+
+ROOT_SECTIONS = {
+    "EXIT STATUS": r"""\fB0\fP indicates success. Other values indicate invalid input, an unavailable dependency or target, a failed remote operation, or the exit status of an explicitly executed command. Commands with more specific status contracts document them in their own pages.""",
+    "ENVIRONMENT": r""".TP
+\fBRUNPOD_API_KEY\fP
+Authenticates RunPod when it is not already configured through runpodctl.
+.TP
+\fBLAMBDA_API_KEY\fP
+Authenticates Lambda Cloud when no saved local credential source is configured.
+.TP
+\fBGH_TOKEN\fP, \fBGITHUB_TOKEN\fP
+Provide the GitHub credential copied to a remote session when GitHub setup is enabled. GH_TOKEN takes precedence.
+.TP
+\fBFORMATPREF\fP
+Comma-separated automatic output preferences. Supported values are rich, markdown or md, and json. An explicit \fB\-\-format\fP or \fB\-\-json\fP option takes precedence.
+.TP
+\fBXDG_DATA_HOME\fP
+Selects the user data root where fwd installs bundled manual pages on CLI startup. Defaults to ~/.local/share.""",
+    "FILES": r""".TP
+\fI~/.fwd/config.toml\fP
+User configuration.
+.TP
+\fI./.fwd/config.toml\fP
+Project configuration, deep-merged over the user configuration.
+.TP
+\fI~/.fwd/state.json\fP
+Local session inventory and cached connection metadata.
+.TP
+\fI~/.fwd/credentials/\fP
+Private provider credential values or references saved by interactive setup.
+.TP
+\fI./.fwdignore\fP
+Project-specific synchronization exclusions applied in addition to .gitignore.
+.TP
+\fI./.fwd/setup.sh\fP
+Optional idempotent project setup executed after built-in remote toolchain preparation.
+.TP
+\fI~/.ssh/config\fP
+OpenSSH host aliases and connection defaults used by SSH targets.
+.TP
+\fI~/.local/share/man/man1/fwd*.1\fP
+User-local manuals synchronized silently on CLI startup. The root follows XDG_DATA_HOME when set.""",
+    "EXAMPLES": r"""Launch Codex on a configured RunPod target and attach in a human terminal:
+.PP
+.nf
+\fBfwd up runpod codex\fP
+.fi
+.PP
+Launch a durable command without attaching:
+.PP
+.nf
+\fBfwd up \-\- python train.py\fP
+.fi
+.PP
+Inspect sessions as stable machine-readable data:
+.PP
+.nf
+\fBfwd ls \-\-json\fP
+.fi
+.PP
+Retrieve output without deleting local files:
+.PP
+.nf
+\fBfwd pull outputs/\fP
+.fi""",
+    "REPORTING BUGS": r"""Report issues at \fIhttps://github.com/Sid-MB/fwd/issues\fP.""",
+    "SEE ALSO": r"""\fBfwd-up\fP(1), \fBfwd-attach\fP(1), \fBfwd-send\fP(1), \fBfwd-config\fP(1), \fBssh\fP(1), \fBrsync\fP(1), \fBtmux\fP(1)""",
+}
+
+COMMAND_EXIT_STATUS = {
+    "fwd-diff": r"\fB0\fP means the synchronized trees match, \fB1\fP means they differ, and \fB2\fP means comparison failed.",
+    "fwd-doctor": r"\fB0\fP means every requested check passed. A nonzero status means at least one prerequisite or target check failed.",
+    "fwd-send": r"For a foreground command, fwd returns the remote command's exit status. Other nonzero values indicate selection, transport, task-control, or validation failure.",
+    "fwd-up": r"For a foreground explicit command, fwd returns the remote command's exit status. Other nonzero values indicate selection, provisioning, synchronization, preparation, launch, or validation failure.",
+}
+
+
+@contextmanager
+def _click_man_typer_compatibility() -> Iterable[None]:
+    """Temporarily make click-man use Typer's vendored Click classes for contexts and option type checks."""
+    original_click = click_man_core.click
+    click_man_core.click = SimpleNamespace(Context=typer_click.Context, Option=TyperOption, utils=typer_click.utils)
+    try:
+        yield
+    finally:
+        click_man_core.click = original_click
+
+
+@contextmanager
+def _reproducible_manual_date(date: str) -> Iterable[None]:
+    """Set SOURCE_DATE_EPOCH so click-man emits a stable header date without changing the caller's environment."""
+    previous = os.environ.get("SOURCE_DATE_EPOCH")
+    instant = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    os.environ["SOURCE_DATE_EPOCH"] = str(int(instant.timestamp()))
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+        else:
+            os.environ["SOURCE_DATE_EPOCH"] = previous
+
+
+def _split_sections(page: str) -> tuple[str, dict[str, str]]:
+    """Split one click-man page into its header and named section bodies."""
+    header_lines: list[str] = []
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in page.splitlines():
+        if line.startswith(".SH "):
+            name = line[4:]
+            current = sections.setdefault(name, [])
+        elif current is None:
+            header_lines.append(line)
+        else:
+            current.append(line)
+    return "\n".join(header_lines), {name: "\n".join(lines).strip() for name, lines in sections.items()}
+
+
+def _format_roff_body(body: str) -> str:
+    """Escape accidental control lines and wrap prose while preserving intentional roff requests."""
+    formatted: list[str] = []
+    literal = False
+    for line in body.splitlines():
+        if line == ".nf":
+            literal = True
+            formatted.append(line)
+            continue
+        if line == ".fi":
+            literal = False
+            formatted.append(line)
+            continue
+        if line in {".PP", ".TP"} or line.startswith(".B "):
+            formatted.append(line)
+            continue
+        if literal or len(line) <= 79:
+            lines = [line]
+        else:
+            lines = textwrap.wrap(line, width=72, break_long_words=False, break_on_hyphens=False, subsequent_indent="")
+        formatted.extend(rf"\&{wrapped}" if wrapped.startswith((".", "'")) else wrapped for wrapped in lines)
+    return "\n".join(formatted)
+
+
+def _augment_page(path: Path) -> None:
+    """Normalize generated text and add conventional authored sections to one page."""
+    normalized = ANSI_ESCAPE.sub("", path.read_text(encoding="utf-8"))
+    header, sections = _split_sections(normalized)
+    command = path.stem
+    additions = {
+        "EXIT STATUS": COMMAND_EXIT_STATUS.get(command, r"\fB0\fP indicates success. Any nonzero value indicates an error."),
+        "REPORTING BUGS": ROOT_SECTIONS["REPORTING BUGS"],
+        "SEE ALSO": ROOT_SECTIONS["SEE ALSO"] if command == "fwd" else r"\fBfwd\fP(1)",
+    }
+    if command == "fwd":
+        sections["NAME"] = r"fwd \- move coding work and agent sessions to remote compute"
+        sections["DESCRIPTION"] = ROOT_DESCRIPTION
+        additions.update(ROOT_SECTIONS)
+    sections.update(additions)
+    unknown = sorted(set(sections) - set(SECTION_ORDER))
+    if unknown:
+        raise RuntimeError(f"click-man emitted unrecognized section(s) for {command}: {', '.join(unknown)}")
+    rendered = [header]
+    for name in SECTION_ORDER:
+        body = sections.get(name)
+        if body:
+            rendered.extend((f".SH {name}", _format_roff_body(body.removeprefix(".PP\n"))))
+    path.write_text("\n".join(rendered).rstrip() + "\n", encoding="utf-8")
+
+
+def _prepare_command_tree(command) -> None:
+    """Remove hidden commands from click-man's listings and retain readable, non-truncated one-line summaries."""
+    commands = getattr(command, "commands", None)
+    if not commands:
+        return
+    visible = {name: child for name, child in commands.items() if not getattr(child, "hidden", False)}
+    command.commands = visible
+    for child in visible.values():
+        if not child.short_help and child.help:
+            child.short_help = " ".join(child.help.strip().split("\n\n", 1)[0].splitlines())
+        _prepare_command_tree(child)
+
+
+def _generate_into(directory: Path, *, date: str) -> None:
+    """Generate and augment every visible fwd command page in ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    command = get_command(app)
+    _prepare_command_tree(command)
+    with _click_man_typer_compatibility(), _reproducible_manual_date(date):
+        click_man_core.write_man_pages("fwd", command, version=MANUAL_SOURCE, target_dir=str(directory))
+    for path in sorted(directory.glob("*.1")):
+        _augment_page(path)
+
+
+def _differences(expected: Path, actual: Path) -> list[str]:
+    """Return concise file and unified-content differences between two manual directories."""
+    expected_names = {path.name for path in expected.glob("*.1")}
+    actual_names = {path.name for path in actual.glob("*.1")}
+    messages = [f"missing generated page: man/{name}" for name in sorted(expected_names - actual_names)]
+    messages.extend(f"stale generated page: man/{name}" for name in sorted(actual_names - expected_names))
+    for name in sorted(expected_names & actual_names):
+        expected_text = (expected / name).read_text(encoding="utf-8")
+        actual_text = (actual / name).read_text(encoding="utf-8")
+        if expected_text != actual_text:
+            diff = difflib.unified_diff(actual_text.splitlines(), expected_text.splitlines(), fromfile=f"man/{name}", tofile=f"generated/{name}", lineterm="")
+            messages.append("\n".join(diff))
+    return messages
+
+
+def generate(output_dir: Path, *, date: str, check: bool) -> int:
+    """Generate pages or verify that checked-in pages exactly match generated output."""
+    with tempfile.TemporaryDirectory(prefix="fwd-man-") as temporary:
+        generated_dir = Path(temporary)
+        _generate_into(generated_dir, date=date)
+        differences = _differences(generated_dir, output_dir)
+        if check:
+            if differences:
+                print("\n".join(differences))
+                return 1
+            print(f"manual pages are current ({len(list(generated_dir.glob('*.1')))} pages)")
+            return 0
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in output_dir.glob("*.1"):
+            if not (generated_dir / stale.name).exists():
+                stale.unlink()
+        for generated in generated_dir.glob("*.1"):
+            (output_dir / generated.name).write_text(generated.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"generated {len(list(generated_dir.glob('*.1')))} manual pages in {output_dir}")
+        return 0
+
+
+def main() -> int:
+    """Parse generator arguments and return a process exit status."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Fail when the checked-in manual pages differ from generated output.")
+    parser.add_argument("--date", default=MANUAL_DATE, help="Manual source date in YYYY-MM-DD form.")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory containing the generated section-1 pages.")
+    arguments = parser.parse_args()
+    return generate(arguments.output_dir.resolve(), date=arguments.date, check=arguments.check)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
