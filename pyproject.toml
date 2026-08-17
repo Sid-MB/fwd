@@ -35,6 +35,11 @@ fallback_version = "0.0.0"
 [tool.hatch.build.targets.wheel]
 packages = ["src/fwd"]
 
+# Generate the manuals inside every wheel and sdist build so releases never depend on checked-in generated files.
+[tool.hatch.build.hooks.custom]
+require-runtime-dependencies = true
+dependencies = ["click-man>=0.5.1,<0.6"]
+
 # Runtime scripts, skills, references, and manuals must land inside the installed package for importlib.resources.
 [tool.hatch.build.targets.wheel.force-include]
 "src/fwd/scripts/bootstrap.sh" = "fwd/scripts/bootstrap.sh"
@@ -45,7 +50,11 @@ packages = ["src/fwd"]
 "references" = "fwd/references"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/fwd", "tests", "README.md", "/SKILL.md", "/agents", "/man", "/references", "/tools"]
+include = ["src/fwd", "tests", "README.md", "/SKILL.md", "/agents", "/hatch_build.py", "/man", "/references", "/tools"]
+
+# Generated manuals are Git-ignored, so they must override Hatch's VCS exclusion when collecting an sdist.
+[tool.hatch.build.targets.sdist.force-include]
+"man" = "man"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

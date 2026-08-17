@@ -14,6 +14,7 @@ on:
       - "SKILL.md"
       - "agents/**"
       - "references/**"
+      - "hatch_build.py"
       - "tools/generate_man_pages.py"
       - ".github/workflows/publish.yml"
   workflow_dispatch:
@@ -32,8 +33,8 @@ jobs:
         env:
           UV_PYTHON: "3.12"
 
-      # Publishing is independently gated because a push can start CI and publishing concurrently.
-      - run: uv run python tools/generate_man_pages.py --check
+      # Validate fresh output here; the isolated shared build independently invokes the Hatch hook below.
+      - run: uv run python tools/generate_man_pages.py
 
       - name: Lint manual pages
         run: |
@@ -89,6 +90,7 @@ jobs:
           grep -Eq '/man/fwd\.1$' sdist-contents.txt || { echo "::error::fwd.1 missing from $sdist"; exit 1; }
           grep -Eq '/man/fwd-up\.1$' sdist-contents.txt || { echo "::error::fwd-up.1 missing from $sdist"; exit 1; }
           grep -Eq '/tools/generate_man_pages\.py$' sdist-contents.txt || { echo "::error::manual generator missing from $sdist"; exit 1; }
+          grep -Eq '/hatch_build\.py$' sdist-contents.txt || { echo "::error::manual build hook missing from $sdist"; exit 1; }
 
       # No username or password is supplied: the action exchanges GitHub's OIDC identity for a short-lived PyPI
       # credential scoped to this repository, publish.yml, and the pypi environment.

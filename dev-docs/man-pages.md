@@ -8,13 +8,15 @@ Typer 0.27 uses its vendored Click implementation. The generator temporarily poi
 
 ```sh
 uv run python tools/generate_man_pages.py
-uv run python tools/generate_man_pages.py --check
+uv run python tools/generate_man_pages.py --watch
 mandoc -T lint man/*.1
 man ./man/fwd.1
 man ./man/fwd-up.1
 ```
 
-The source date is explicit and reproducible. Update `MANUAL_DATE` when intentionally revising the manual, regenerate all pages, and inspect both the source diff and rendered output. The generator removes obsolete `.1` files when a visible command is removed or renamed.
+The one-shot command regenerates immediately. `--watch` also generates immediately, then watches `tools/generate_man_pages.py` and every Python file under `src/fwd/`, rerunning generation in a fresh interpreter after a change so imported command declarations cannot remain stale. Stop it with Ctrl-C.
+
+The source date is explicit and reproducible. Update `MANUAL_DATE` when intentionally revising the manual, regenerate all pages, and inspect the rendered output. The generator removes obsolete `.1` files when a visible command is removed or renamed. Generated `.1` files are ignored by Git; only `man/README.md` is maintained directly in that directory.
 
 ## Conventional structure
 
@@ -24,6 +26,8 @@ Keep option and command behavior in `src/fwd/cli.py`; do not copy those inventor
 
 ## Distribution
 
-The source distribution includes `man/*.1` for Unix package maintainers. The wheel carries the same pages under `fwd/man`; editable installs read the repository-level `man/` directory. The console entry point synchronizes them silently on first use to `$XDG_DATA_HOME/man/man1`, or `~/.local/share/man/man1` by default. A versioned `.fwdit-man-pages.json` ownership manifest makes unchanged starts cheap, updates changed pages after an upgrade, and removes pages for deleted commands. It never uses `sudo`, writes a global man directory, or blocks the requested CLI command when the user data directory is unavailable. `fwd uninstall` removes the owned pages and manifest.
+The Hatch custom build hook generates pages immediately before both wheel and source-distribution builds. It declares the project runtime dependencies and `click-man` as isolated build requirements, so direct wheels, PyPI releases, and `uv tool install git+...` all package manuals from the exact command tree being built. The source distribution includes `man/*.1`, the generator, and the hook for reproducible downstream builds. The wheel carries the pages under `fwd/man`; editable installs can read locally generated pages from the repository-level `man/` directory.
 
-CI runs the generator in `--check` mode and lints every page with mandoc. The publish workflow repeats both validations before its release build, triggers for changes to the manuals or generator, and verifies that the resulting source distribution contains the root manual, a command manual, and the generator. Release and operating-system packaging consume only checked-in pages, so package builds do not need to import application code or execute a documentation generator.
+The console entry point synchronizes bundled pages silently on first use to `$XDG_DATA_HOME/man/man1`, or `~/.local/share/man/man1` by default. A versioned `.fwdit-man-pages.json` ownership manifest makes unchanged starts cheap, updates changed pages after an upgrade, and removes pages for deleted commands. It never uses `sudo`, writes a global man directory, or blocks the requested CLI command when the user data directory is unavailable. `fwd uninstall` removes the owned pages and manifest.
+
+CI and the pre-publish validation job generate fresh pages and lint every result with mandoc. The actual shared release build invokes the Hatch hook again in its isolated checkout, and the local publish workflow verifies that the resulting wheel and source distribution contain representative manuals and the generator.

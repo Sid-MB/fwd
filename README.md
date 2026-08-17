@@ -135,7 +135,7 @@ fwd config --example
 fwd config --schema
 ```
 
-Unix package builds can install the generated [`fwd(1)` manual](man/fwd.1); visible subcommands have separate pages such as `fwd-up(1)`. See [manual-page generation and packaging](dev-docs/man-pages.md).
+Unix package builds can install the generated `fwd(1)` manual; visible subcommands have separate pages such as `fwd-up(1)`. See [manual-page generation and packaging](dev-docs/man-pages.md).
 
 The first invocation after `uv tool install fwdit` or an upgrade silently installs or updates these pages in the user-local man directory, so `man fwd` and `man fwd-up` work without `sudo`.
 

@@ -35,7 +35,7 @@ This folder contains architecture, extension, validation, and implementation not
 uv sync
 uv run pytest
 uv run fwd --help
-uv run python tools/generate_man_pages.py --check
+uv run python tools/generate_man_pages.py --watch
 ```
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution and publishing policy. User-facing behavior belongs in [docs](../docs/README.md), and concise project orientation belongs in the [top-level README](../README.md).

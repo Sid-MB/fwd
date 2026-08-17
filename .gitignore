@@ -12,3 +12,6 @@ venv/
 .coverage
 htmlcov/
 .DS_Store
+
+# Built from the Typer command tree by tools/generate_man_pages.py and the Hatch build hook.
+man/*.1
