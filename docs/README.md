@@ -12,6 +12,7 @@ The installed CLI is the authoritative option reference:
 
 ```sh
 fwd --help
+man fwd
 fwd COMMAND --help
 fwd config --example
 fwd config --schema
