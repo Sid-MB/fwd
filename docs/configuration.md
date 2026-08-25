@@ -33,18 +33,35 @@ Precedence is target, project, user, then built-in Claude. An explicit agent or 
 Humans can use the interactive wizard:
 
 ```sh
-fwd setup
-fwd setup runpod
+fwd targets add
+fwd targets add runpod
 ```
+
+`fwd setup` is a permanent alias for `fwd targets add` and accepts exactly the same arguments.
 
 Scripts and coding agents should pass all required values. Missing values produce the exact flags needed instead of opening a prompt:
 
 ```sh
-fwd setup ssh --host my-box --target-name work
-fwd setup runpod --data-center-id US-GA-1 --target-name pod
-fwd setup lambda --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
-fwd setup slurm --login-host login.example.edu --user me --remote-base /scratch/me/fwd
+fwd targets add ssh --host my-box --target-name work
+fwd targets add runpod --data-center-id US-GA-1 --target-name pod
+fwd targets add lambda --instance-type gpu_1x_a10 --ssh-key-name my-public-key --target-name lambda-gpu
+fwd targets add slurm --login-host login.example.edu --user me --remote-base /scratch/me/fwd
 ```
+
+### Manage saved targets
+
+`fwd targets` operates on the `[targets.NAME]` tables in configuration; `fwd ls` and `fwd rm` operate on the sessions running against them.
+
+```sh
+fwd targets ls                   # name, backend, key connection detail, default marker
+fwd targets ls pod               # only targets whose name contains "pod"
+fwd targets info work            # resolved values, which are defaults, and tracked sessions
+fwd targets update work          # re-run setup prefilled with the current values
+fwd targets update work --host new-box   # non-interactive single-field edit
+fwd targets rm work              # remove the config entry only
+```
+
+`update` and `rm` open a picker when no target is named, and fail with the available names when one is misspelled or when nothing can answer a prompt. `rm` requires `--force` non-interactively, mirroring `fwd config rm`. Removing the default target repoints `default_target` at the sole remaining target, or clears it when the choice would be a guess. Removal never touches remote compute or session state: destroy those with `fwd rm`.
 
 Inspect currently valid provider machine strings with `fwd up --machines` or `fwd up TARGET --machines`. A one-launch `--machine/-m` value must exactly match an available provider value.
 
@@ -54,7 +71,7 @@ SSH targets connect to machines you already control. Prefer an OpenSSH host alia
 
 ```sh
 fwd up --target my-box
-fwd setup ssh --host my-box --target-name work
+fwd targets add ssh --host my-box --target-name work
 ```
 
 ## RunPod
@@ -64,7 +81,7 @@ RunPod requires `runpodctl` 2.6.0 or newer and an authenticated account. CPU is 
 Persistent targets require a datacenter. GPU targets also require an exact GPU choice and an appropriate image:
 
 ```sh
-fwd setup runpod --target-name pod --data-center-id US-GA-1
+fwd targets add runpod --target-name pod --data-center-id US-GA-1
 fwd up pod --machines
 ```
 
@@ -76,7 +93,7 @@ Persistent filesystems are enabled by default and survive instance termination. 
 
 ```sh
 export LAMBDA_API_KEY='...'
-fwd setup lambda --target-name lambda-gpu --instance-type gpu_1x_a10 --ssh-key-name my-public-key
+fwd targets add lambda --target-name lambda-gpu --instance-type gpu_1x_a10 --ssh-key-name my-public-key
 fwd doctor --target lambda-gpu
 ```
 
@@ -85,7 +102,7 @@ fwd doctor --target lambda-gpu
 Slurm targets connect through a login node and run the allocation inside persistent tmux. Use shared scratch storage for the project, tools, and caches; do not use a quota-constrained home directory.
 
 ```sh
-fwd setup slurm --target-name hpc --login-host login.hpc.example.edu --user me --remote-base /scratch/me/fwd
+fwd targets add slurm --target-name hpc --login-host login.hpc.example.edu --user me --remote-base /scratch/me/fwd
 ```
 
 Allocation, partition, account, proxy jump, and environment-module settings are cluster-specific. On Slurm, ordinary `fwd send` commands run on the login node; invoke `srun` when work belongs inside an allocation.

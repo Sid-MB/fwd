@@ -61,10 +61,10 @@ fwd up runpod
 For reusable or provider-specific settings, run:
 
 ```sh
-fwd setup
+fwd targets add
 ```
 
-`fwd setup` only writes configuration; it does not provision compute. See [Configuration and backends](configuration.md) for non-interactive setup and provider requirements.
+`fwd targets add` (also spelled `fwd setup`) only writes configuration; it does not provision compute. Review saved targets with `fwd targets ls`, and edit one in place with `fwd targets update NAME`. See [Configuration and backends](configuration.md) for non-interactive setup and provider requirements.
 
 ## Everyday workflow
 

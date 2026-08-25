@@ -23,7 +23,6 @@ work before the backends are finished.
 
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import shlex
@@ -46,26 +45,10 @@ from fwd.backends import ConfigChoice, ConfigChoices, ConfigParameter, Provision
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, GLOBAL_CONFIG_PATH, TARGET_TYPES, Config, ConfigError, TargetConfig, load_config
 from fwd.ssh_keys import LocalSSHKey, local_key_pairs, matching_private_key
 
-_TERMINAL_KEY_SEQUENCE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)")
-_LINE_EDITING_INITIALIZED = False
-_READLINE: Any | None = None
-
 
 def _parameters(backend: str) -> tuple[ConfigParameter, ...]:
     """Return setup metadata from the backend class, the single source of truth for wizard fields."""
     return get_backend(backend).config_parameters()
-
-
-def _enable_line_editing() -> Any | None:
-    """Load readline/libedit once and return its module, or ``None`` when the platform does not provide it."""
-    global _LINE_EDITING_INITIALIZED, _READLINE
-    if not _LINE_EDITING_INITIALIZED:
-        try:
-            _READLINE = importlib.import_module("readline")
-        except ImportError:
-            _READLINE = None
-        _LINE_EDITING_INITIALIZED = True
-    return _READLINE
 
 
 class _ProviderChoiceCompleter(Completer):
@@ -145,21 +128,13 @@ class _ExactProviderChoice(Validator):
 
 
 def _ask(label: str, default: str = "") -> str:
-    """Prompt for a free-text value with terminal line editing and clean Click abort behavior.
+    """Prompt for one free-text setup value.
 
-    Kept local to the wizard rather than added to :mod:`fwd.ui` because this is the only interactive-input site in
-    fwd; everything else is confirmations. Do not catch :class:`typer.Abort` or ``EOFError`` here: Click translates
-    both interrupt keys into its normal ``Aborted!`` exit. Treating either as an empty answer traps users in required
-    field loops, and silently accepting defaults on closed stdin can write an unintended partial configuration.
-
-    Importing the standard-library-compatible ``readline`` module activates libedit/GNU Readline handling for the
-    built-in ``input`` used by Click, so left/right edit the line and up/down use input history instead of inserting
-    terminal escape bytes. The final filter protects configuration values when readline is unavailable or the input
-    is redirected through a terminal implementation that still returns raw key sequences.
+    The line-editing and abort semantics live in :func:`fwd.ui.ask` because ``fwd targets`` now shares the same
+    primitive for its interactive pickers. This wrapper stays so wizard prompting remains a single monkeypatchable
+    seam for the tests that drive the whole form without a terminal.
     """
-    _enable_line_editing()
-    answer = typer.prompt(label, default=default, show_default=bool(default))
-    return _TERMINAL_KEY_SEQUENCE.sub("", answer)
+    return ui.ask(label, default=default)
 
 
 def _prompt_value(field_name: str, current: Any, *, required: bool, help_text: str | None = None, choices: ConfigChoices | None = None) -> Any:
@@ -341,19 +316,25 @@ def _launch_command(target_name: str) -> str:
     return shlex.join((ui.COMMAND_NAME, "up", "--target", target_name))
 
 
-def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) -> dict[str, Any]:
+def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None, existing: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prompt for unsupplied target fields before asking for its fwd label.
 
     Returns:
-        Values that differ from the backend defaults, which is all that gets written to disk.
+        Values that differ from the effective defaults, which is all that gets written to disk.
 
     A placeholder name is used only to construct the dataclass defaults; target names do not affect field defaults.
     Asking for the label after these concrete connection details gives the user enough context to choose a useful name.
     Values supplied as CLI flags skip their corresponding prompts, making the same interface useful for partial
     interactive setup and fully non-interactive agent calls.
+
+    ``existing`` replaces the backend defaults with a configured target's current values, which is what makes
+    ``fwd targets update`` an edit in place: every prompt offers what the target uses today, and pressing Enter keeps
+    it. Its caller re-merges these values, so a kept answer being absent from the return value is not a loss.
     """
     cls = TARGET_TYPES[backend]
     defaults = {f.name: getattr(cls(name=backend), f.name) for f in dataclass_fields(cls)}
+    prefilled = {key: value for key, value in (existing or {}).items() if key in defaults}
+    defaults.update(prefilled)
     parameters = _parameters(backend)
     backend_class = get_backend(backend)
     provided = supplied or {}
@@ -387,7 +368,7 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
         # hidden. This keeps one metadata contract usable by the wizard, non-interactive flags, help, and schema.
         if parameter.prompt_when and not conditions_match and provided.get(field_name) is None:
             continue
-        if backend == "runpod" and field_name == "image":
+        if backend == "runpod" and field_name == "image" and "image" not in prefilled:
             defaults["image"] = DEFAULT_RUNPOD_CPU_IMAGE if effective_compute_type == "cpu" else DEFAULT_RUNPOD_GPU_IMAGE
         known_values = {**defaults, **provided, **answers}
         choice_set = backend_class.config_choices(parameter, known_values)
@@ -411,8 +392,12 @@ def _prompt_target_values(backend: str, supplied: dict[str, Any] | None = None) 
     return answers
 
 
-def _non_interactive_reason() -> str | None:
-    """Return why setup should avoid prompts, or ``None`` for a normal interactive terminal."""
+def non_interactive_reason() -> str | None:
+    """Return why prompting must be avoided, or ``None`` for a normal interactive terminal.
+
+    Shared with :mod:`fwd.ops.targets` so setup and every target picker refuse to prompt under exactly the same
+    conditions and explain the refusal in the same words.
+    """
     markers = [name for name in ("CLAUDECODE", "CODEX_AGENT") if name in os.environ]
     if markers:
         return f"{', '.join(markers)} is set"
@@ -496,6 +481,7 @@ def run_wizard(
     backend: str | None = None,
     target_name: str | None = None,
     values: dict[str, Any] | None = None,
+    existing_values: dict[str, Any] | None = None,
     make_default: bool = False,
     test_connection: bool = False,
     force: bool = False,
@@ -512,6 +498,8 @@ def run_wizard(
         backend: Provider identifier supplied positionally or by ``--backend``; explicit values skip backend prompting.
         target_name: Optional local fwd label; defaults to the backend name, with a numeric suffix on collision.
         values: Target field values supplied through CLI flags; ``None`` entries mean unspecified.
+        existing_values: A configured target's current field values, used by ``fwd targets update`` as both the
+            interactive prompt defaults and the base of the written table, so editing one field keeps the rest.
         make_default: Make this target the saved default even when another default already exists.
         test_connection: Run the backend's read-only diagnostics after writing in non-interactive mode.
         force: Overwrite an existing target with the same name without confirmation.
@@ -522,7 +510,8 @@ def run_wizard(
         ui.info(f"existing targets: {', '.join(existing.target_names())}")
 
     provided = values or {}
-    reason = None if force_interactive else _non_interactive_reason()
+    seeded = {key: value for key, value in (existing_values or {}).items() if value is not None}
+    reason = None if force_interactive else non_interactive_reason()
     interactive = reason is None
     backends_list = sorted(TARGET_TYPES)
     if interactive:
@@ -538,12 +527,17 @@ def run_wizard(
         if resolved_backend not in TARGET_TYPES:
             ui.die(f"unknown backend {resolved_backend!r}; expected one of: {', '.join(backends_list)}")
     else:
-        resolved_backend = _validate_non_interactive(backend, provided, reason)
+        # Existing values count as answers for required-field validation, so a non-interactive update needs flags only
+        # for what it actually changes.
+        resolved_backend = _validate_non_interactive(backend, {**seeded, **{key: value for key, value in provided.items() if value is not None}}, reason)
 
     if interactive and resolved_backend == "lambda":
         _prepare_lambda_setup()
     parameter_names = {parameter.name for parameter in _parameters(resolved_backend)}
-    target_values = _prompt_target_values(resolved_backend, provided) if interactive else {key: value for key, value in provided.items() if key in parameter_names and value is not None}
+    # A backend switch keeps only the fields the new target type actually declares; the rest cannot be carried over.
+    carried = {key: value for key, value in seeded.items() if key in {field.name for field in dataclass_fields(TARGET_TYPES[resolved_backend])} - {"name", "backend"}}
+    answers = _prompt_target_values(resolved_backend, provided, carried) if interactive else {key: value for key, value in provided.items() if key in parameter_names and value is not None}
+    target_values = {**carried, **answers}
 
     default_name = resolved_backend if resolved_backend not in existing.targets else f"{resolved_backend}-2"
     resolved_name = (target_name or "").strip()

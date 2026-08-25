@@ -24,14 +24,16 @@ no call site needs to remember to do it.
 
 from __future__ import annotations
 
+import importlib
 import os
+import re
 import sys
 import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
@@ -48,6 +50,24 @@ err_console = Console(stderr=True)
 # The executable's displayed name belongs here rather than in individual prompts, errors, and help examples. Alternate
 # builds can configure it before process startup without touching internal compatibility paths such as ``~/.fwd``.
 COMMAND_NAME = os.environ.get("FWD_COMMAND_NAME", "fwd")
+
+# Raw arrow/function-key sequences reach an answer whenever readline is unavailable, and a config value must never
+# carry terminal control bytes. Kept beside :func:`ask` because that is the only place user-typed text is accepted.
+_TERMINAL_KEY_SEQUENCE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)")
+_LINE_EDITING_INITIALIZED = False
+_READLINE: Any | None = None
+
+
+def _enable_line_editing() -> Any | None:
+    """Load readline/libedit once and return its module, or ``None`` when the platform does not provide it."""
+    global _LINE_EDITING_INITIALIZED, _READLINE
+    if not _LINE_EDITING_INITIALIZED:
+        try:
+            _READLINE = importlib.import_module("readline")
+        except ImportError:
+            _READLINE = None
+        _LINE_EDITING_INITIALIZED = True
+    return _READLINE
 
 
 def _tty() -> bool:
@@ -363,6 +383,23 @@ def show_code_examples(examples: Sequence[str], *, heading: str = "Useful comman
     """
     rendered = code_examples(examples, heading=heading)
     err_console.print(Text.from_ansi(rendered) if _tty() else rendered, markup=False)
+
+
+def ask(label: str, default: str = "") -> str:
+    """Prompt for one free-text line with terminal line editing and clean Click abort behavior.
+
+    Do not catch :class:`typer.Abort` or ``EOFError`` here: Click translates both interrupt keys into its normal
+    ``Aborted!`` exit. Treating either as an empty answer traps users in required-field loops, and silently accepting
+    defaults on closed stdin can write an unintended partial configuration.
+
+    Importing the standard-library-compatible ``readline`` module activates libedit/GNU Readline handling for the
+    built-in ``input`` used by Click, so left/right edit the line and up/down use input history instead of inserting
+    terminal escape bytes. The final filter protects the answer when readline is unavailable or the input is redirected
+    through a terminal implementation that still returns raw key sequences.
+    """
+    _enable_line_editing()
+    answer = typer.prompt(label, default=default, show_default=bool(default))
+    return _TERMINAL_KEY_SEQUENCE.sub("", answer)
 
 
 def confirm(prompt: str, *, default: bool = False) -> bool:

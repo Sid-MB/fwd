@@ -185,7 +185,7 @@ def _flatten(data: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], A
     return flat
 
 
-def _provenance(project_dir: Path) -> tuple[dict[tuple[str, ...], str], Path, Path]:
+def provenance(project_dir: Path) -> tuple[dict[tuple[str, ...], str], Path, Path]:
     """Return ``{leaf_path: source_label}`` plus the global and project config paths.
 
     Reads the same two files :func:`~fwd.config.load_config` reads, via the module attribute rather than the imported
@@ -218,7 +218,7 @@ def render_effective(cfg: Config, project_dir: Path) -> str:
     origin label :func:`~fwd.config.implicit_target` returned, so a target that exists only because it was named on the
     command line is visibly not from any file.
     """
-    origins, global_path, project_path = _provenance(project_dir)
+    origins, global_path, project_path = provenance(project_dir)
     lines = [
         f"# Effective {ui.command()} configuration (global + project, deep-merged). Values are annotated with their source.",
         f"#   global  = {global_path}{'' if global_path.is_file() else '  (absent)'}",

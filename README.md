@@ -45,10 +45,13 @@ Bare `fwd` is the interactive reuse workflow. Agent launches auto-attach in a hu
 Need a saved target first?
 
 ```sh
-fwd setup                        # interactive target setup
-fwd setup ssh --host my-box --target-name work
+fwd targets add                  # interactive target setup (also spelled fwd setup)
+fwd targets add ssh --host my-box --target-name work
+fwd targets ls                   # saved targets, their backend, and the default
 fwd config --example runpod      # current generated config reference
 ```
+
+`fwd targets` manages saved targets — `ls`, `add`, `info`, `update`, `rm` — while `fwd ls` and `fwd rm` manage the sessions running on them. Removing a target only edits configuration; use `fwd rm` to destroy compute.
 
 Read [Getting started](docs/getting-started.md) for the full first-session walkthrough.
 

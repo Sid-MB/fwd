@@ -59,16 +59,29 @@ In a human terminal, `fwd TARGET` means `fwd up --reuse TARGET`: attach to a mat
 Human:
 
 ```sh
-fwd setup
+fwd targets add
 ```
 
 Agent/non-interactive example:
 
 ```sh
-fwd setup --backend ssh --host my-box --target-name work
+fwd targets add --backend ssh --host my-box --target-name work
 ```
 
-Missing required fields fail with the exact flags needed. `--interactive` forces the wizard and should be left to the human. Interactive setup gates uncommon fields behind an advanced-options prompt.
+Missing required fields fail with the exact flags needed. `--interactive` forces the wizard and should be left to the human. Interactive setup gates uncommon fields behind an advanced-options prompt. `fwd setup` is a permanent alias for `fwd targets add`.
+
+## Managing saved targets
+
+`fwd targets` edits configuration; `fwd ls`/`fwd rm` manage the sessions running on those targets.
+
+```sh
+fwd targets ls [SUBSTRING]              # saved targets, backend, connection detail, default marker
+fwd targets info NAME                   # resolved values, which are defaults, and tracked sessions
+fwd targets update NAME --host new-box  # non-interactive single-field edit, other values preserved
+fwd targets rm NAME --force             # remove the config entry only; --force is required for agents
+```
+
+These commands make no provider calls. `update` and `rm` need an explicit target from an agent tool call because no picker can be shown. Removing a target does not stop or destroy compute; use `fwd rm` for that.
 
 ## Backend notes
 

@@ -80,6 +80,21 @@ fwd up --ports 3000 --ports 8080:3000
 
 Forwards bind local and remote loopback only. fwd refuses occupied local ports before changing tunnel state and tracks persistent OpenSSH control masters across CLI processes.
 
+## Manage configured targets
+
+`fwd targets` manages saved targets — the `[targets.NAME]` configuration entries that describe *how to reach* compute. The session commands above manage the compute itself.
+
+```sh
+fwd targets ls                  # name, backend, key connection detail, default marker
+fwd targets ls pod              # only targets whose name contains "pod"
+fwd targets add ssh --host my-box --target-name work
+fwd targets info work           # resolved values, which are defaults, and tracked sessions
+fwd targets update work         # setup again, prefilled with the current values
+fwd targets rm work             # remove the configuration entry only
+```
+
+`fwd setup` remains a permanent alias for `fwd targets add`. All of these read local configuration and session state only; no provider is contacted. `update` and `rm` open a picker when no target is named and fail with an actionable message when nothing can answer a prompt; `rm` requires `--force` non-interactively. Removing a target never stops or destroys compute — use `fwd rm` for that — and removing the default repoints `default_target` at the sole survivor or clears it.
+
 ## Stop, remove, and uninstall
 
 ```sh

@@ -15,7 +15,7 @@ from typer import _click
 from fwd import ui
 from fwd.agents import AGENTS
 from fwd.backends import backend_names
-from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, LambdaTargetConfig, RunpodTargetConfig, SlurmTargetConfig, SshTargetConfig, TargetConfig, load_config, ssh_config_host_aliases
+from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, RunpodTargetConfig, TargetConfig, load_config, ssh_config_host_aliases
 from fwd.output import OutputFormat
 from fwd.send_tasks import SendTaskStore
 from fwd.state import SessionState, StateStore
@@ -132,16 +132,15 @@ def complete_send_subject(ctx: _click.Context, args: list[str], incomplete: str)
 
 
 def _target_help(target: TargetConfig) -> str:
-    """Describe a configured target with the fields that most clearly distinguish it."""
-    if isinstance(target, SshTargetConfig):
-        return f"ssh · {target.user + '@' if target.user else ''}{target.host or '<host unset>'}"
-    if isinstance(target, RunpodTargetConfig):
-        detail = target.gpu if target.compute_type == "gpu" and target.gpu else target.compute_type
-        return f"runpod · {detail} · {target.cloud_type}"
-    if isinstance(target, LambdaTargetConfig):
-        return f"lambda · {target.instance_type or '<instance type unset>'} · {target.region or '<region unset>'}"
-    partition = f" · partition={target.partition}" if target.partition else ""
-    return f"slurm · {target.login_host or '<login host unset>'}{partition}"
+    """Describe a configured target with the fields that most clearly distinguish it.
+
+    The per-backend detail comes from :func:`fwd.ops.targets.connection_detail` so a completion tooltip and a
+    ``fwd targets ls`` row can never describe the same target differently. The import is deferred because completion
+    must stay fast and this module is imported by ``fwd --help``.
+    """
+    from fwd.ops.targets import connection_detail
+
+    return f"{target.backend} · {connection_detail(target)}"
 
 
 def complete_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
@@ -158,6 +157,28 @@ def complete_target(ctx: _click.Context, args: list[str], incomplete: str) -> li
             candidates.setdefault(alias, "OpenSSH Host alias · zero-config SSH target")
     except Exception:
         pass
+    return _matches(candidates.items(), incomplete)
+
+
+def complete_configured_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete only names that exist in ``[targets]``.
+
+    ``fwd targets`` manages written configuration, so implicit RunPod and ~/.ssh/config aliases are deliberately absent:
+    suggesting a name that ``update`` and ``rm`` must then reject would be worse than suggesting nothing.
+    """
+    del ctx, args
+    try:
+        config = load_config()
+    except Exception:
+        return []
+    default = config.default_target
+    return _matches(((name, f"{_target_help(target)}{' · default' if name == default else ''}") for name, target in config.targets.items()), incomplete)
+
+
+def complete_backend_or_target(ctx: _click.Context, args: list[str], incomplete: str) -> list[Completion]:
+    """Complete the setup-family positional, which names a backend when creating and a target when updating."""
+    candidates = dict(complete_backend(ctx, args, incomplete))
+    candidates.update(dict(complete_configured_target(ctx, args, incomplete)))
     return _matches(candidates.items(), incomplete)
 
 

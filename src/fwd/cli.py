@@ -11,7 +11,9 @@ Two things make this module unusual and both are deliberate:
    loading every operation and, while the backends are being built in parallel, would let one teammate's broken module
    break unrelated commands.
 
-``up`` and ``launch`` are the same function registered twice, so the alias cannot drift from the primary command.
+``up`` and ``launch`` are the same function registered twice, so the alias cannot drift from the primary command. The
+setup family does the same across three registrations — ``targets add``, its ``setup`` alias, and ``targets update`` —
+and distinguishes them by the invoked command name, because a second copy of forty provider options would drift.
 
 Help text is treated as primary documentation: ``--help`` is the surface an agent or a new user reads first, so every
 option carries an explicit ``help=`` that states the *behavioural* consequence (what gets billed, what leaves the
@@ -32,7 +34,7 @@ from typing import Annotated
 import typer
 
 from fwd import __version__, command_docs, ui
-from fwd.cli_completion import complete_agent, complete_backend, complete_cloud_type, complete_compute_type, complete_config_key, complete_diff_target, complete_existing_session, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_session_selector, complete_ssh_host, complete_target
+from fwd.cli_completion import complete_agent, complete_backend, complete_backend_or_target, complete_cloud_type, complete_compute_type, complete_config_key, complete_configured_target, complete_diff_target, complete_existing_session, complete_gpu, complete_output_format, complete_runpod_image, complete_send_subject, complete_session, complete_session_selector, complete_ssh_host, complete_target
 from fwd.cli_help import AliasHelpGroup
 from fwd.output import OutputFormat
 
@@ -46,6 +48,7 @@ COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "s": ("send",),
     "launch": ("up",),
     "default": ("config", "set", "default_command"),
+    "setup": ("targets", "add"),
     "version": ("-V",),
 }
 
@@ -67,6 +70,13 @@ config_app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 app.add_typer(config_app, name="config")
+targets_app = typer.Typer(
+    name="targets",
+    help=f"List, add, inspect, edit, and remove the targets declared in {ui.command()}'s configuration, as opposed to the sessions running on them.",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+app.add_typer(targets_app, name="targets")
 
 
 def _interactive_terminal() -> bool:
@@ -439,7 +449,7 @@ def _up(
     --attach to enter the primary tmux session instead. Use
     --no-attach for an agent background launch and '--' before remote command flags.
 
-    To add a new target, run 'fwd setup'.
+    To add a new target, run 'fwd targets add'.
     """
     _reject_retired_connect_option(ctx)
     code = _run_up(
@@ -477,7 +487,7 @@ only in a human terminal. Explicit commands use the same managed task runner as 
 stream back with Ctrl-C to cancel and Ctrl-B to background; pass --attach to enter their session directly, or
 --stop-after to stop remote compute after the tracked command. Use '--' before remote command flags.
 
-To add a new target, run {ui.command('setup')!r}.
+To add a new target, run {ui.command('targets add')!r}.
 """
 
 # Registered twice so `up` and its `launch` alias can never diverge.
@@ -897,11 +907,11 @@ def default_cmd(
     _set_config_value("default_command", tuple(command or ()), user=user, project=project, target=target)
 
 
-@app.command("setup")
-def setup_cmd(
-    backend_name: Annotated[str | None, typer.Argument(help="Backend to configure; positional alias for --backend.", metavar="BACKEND", autocompletion=complete_backend)] = None,
+def _setup(
+    ctx: typer.Context,
+    selector: Annotated[str | None, typer.Argument(help="Backend to configure; with 'targets update' this selects the existing target to edit instead.", metavar="BACKEND|TARGET", autocompletion=complete_backend_or_target)] = None,
     backend: Annotated[str | None, typer.Option("--backend", help="Backend to configure: lambda, ssh, runpod, or slurm. Equivalent to positional BACKEND.", autocompletion=complete_backend)] = None,
-    target_name: Annotated[str | None, typer.Option("--target-name", help=f"Local {ui.command()} label for this connection; defaults to the backend name.", autocompletion=complete_target)] = None,
+    target_name: Annotated[str | None, typer.Option("--target-name", help=f"Local {ui.command()} label for this connection; defaults to the backend name. With 'targets update', the target to edit.", autocompletion=complete_target)] = None,
     host: Annotated[str | None, typer.Option("--host", help="SSH hostname, IP, or Host alias from ~/.ssh/config.", autocompletion=complete_ssh_host)] = None,
     login_host: Annotated[str | None, typer.Option("--login-host", help="Slurm cluster login hostname or SSH alias.", autocompletion=complete_ssh_host)] = None,
     user: Annotated[str | None, typer.Option("--user", help="Remote username; optional for SSH aliases.")] = None,
@@ -935,21 +945,40 @@ def setup_cmd(
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing target with the same name without prompting.")] = False,
     interactive: Annotated[bool, typer.Option("--interactive", help="Force prompts even when stdout is redirected or an agent environment is detected.")] = False,
 ) -> None:
-    """Create or update ~/.fwd/config.toml interactively or entirely from flags.
+    """Create or edit a target in ~/.fwd/config.toml interactively or entirely from flags.
+
+    One callback serves ``fwd targets add``, its ``fwd setup`` alias, and ``fwd targets update`` so the three can never
+    accept different flags. The mode is read from the invoked command name rather than duplicating this parameter list:
+    Typer models each registration separately, and a second copy of forty provider options is exactly the kind of thing
+    that drifts. In update mode the positional and ``--target-name`` select an existing target, its current values are
+    seeded as prompt defaults and as the base of the rewritten table, and explicit flags override them.
 
     Setup automatically becomes non-interactive when stdout is not a TTY or CLAUDECODE/CODEX_AGENT is set. Missing
     required flags produce an exact invocation; pass --interactive to force prompts. A positional backend such as
-    ``fwd setup lambda`` is equivalent to ``fwd setup --backend lambda``.
+    ``fwd targets add lambda`` is equivalent to ``fwd targets add --backend lambda``.
     """
     from fwd import wizard
 
-    if backend_name is not None and backend is not None and backend_name != backend:
-        ui.die(f"backend specified twice with different values: {backend_name!r} and {backend!r}")
-    selected_backend = backend or backend_name
+    updating = ctx.info_name == "update"
+    existing_values: dict[str, object] | None = None
+    if updating:
+        from fwd.ops import targets as targets_ops
+
+        if selector is not None and target_name is not None and selector != target_name:
+            ui.die(f"target specified twice with different values: {selector!r} and {target_name!r}")
+        target_name, existing_backend, existing_values = targets_ops.prepare_update(target_name or selector)
+        if backend is not None and backend != existing_backend:
+            ui.info(f"changing target {target_name!r} from the {existing_backend} backend to {backend}; only fields both backends share are kept")
+        backend = backend or existing_backend
+        selector = None
+    if selector is not None and backend is not None and selector != backend:
+        ui.die(f"backend specified twice with different values: {selector!r} and {backend!r}")
+    selected_backend = backend or selector
     wizard.run_wizard(
         force_interactive=interactive,
         backend=selected_backend,
         target_name=target_name,
+        existing_values=existing_values,
         values={
             "host": host,
             "login_host": login_host,
@@ -982,8 +1011,72 @@ def setup_cmd(
         },
         make_default=make_default,
         test_connection=test_connection,
-        force=force,
+        force=force or updating,
     )
+
+
+SETUP_HELP = f"""Create a target in ~/.fwd/config.toml interactively or entirely from flags.
+
+Setup becomes non-interactive automatically when stdout is not a TTY or CLAUDECODE/CODEX_AGENT is set; missing required
+flags then produce an exact invocation to run. Pass --interactive to force prompts. A positional backend such as
+{ui.command('targets add lambda')!r} is equivalent to {ui.command('targets add --backend lambda')!r}. Edit an existing
+target in place with {ui.command('targets update NAME')!r}.
+"""
+
+UPDATE_HELP = f"""Re-run setup for an existing target, prefilled with its current configuration.
+
+Every prompt offers the value the target uses today, so pressing Enter keeps it and only what you change is rewritten.
+The same flags {ui.command('targets add')!r} accepts work here for non-interactive edits and override existing values.
+Omit the target to choose one interactively; a non-interactive run must name it.
+"""
+
+# One callback, three registrations, so `setup` cannot drift from the canonical `targets add`, and `targets update`
+# cannot drift from either.
+app.command("setup", help=SETUP_HELP)(_setup)
+targets_app.command("add", help=SETUP_HELP)(_setup)
+targets_app.command("update", help=UPDATE_HELP)(_setup)
+
+
+@targets_app.command("ls", help=f"List configured targets, their backend, key connection detail, and which one is the default.\n\nReads configuration only — no provider calls. Inspect available machines with {ui.command('up --machines')!r}.")
+def targets_ls_cmd(
+    substring: Annotated[str | None, typer.Argument(help="Show only targets whose name contains this text, case-insensitively.", autocompletion=complete_configured_target)] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
+) -> None:
+    """List the target entries in the merged configuration, optionally filtered by name."""
+    from fwd.ops import targets as targets_ops
+
+    targets_ops.ls(substring, output_format=_selected_output_format(output_format, json_output=json_output))
+
+
+@targets_app.command("info")
+def targets_info_cmd(
+    target: Annotated[str | None, typer.Argument(help="Configured target to describe; omit to choose one interactively.", autocompletion=complete_configured_target)] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
+) -> None:
+    """Print one target's resolved configuration, marking which values are defaults and listing its tracked sessions.
+
+    Reads local configuration and session state only; no provider is contacted.
+    """
+    from fwd.ops import targets as targets_ops
+
+    targets_ops.info(target, output_format=_selected_output_format(output_format, json_output=json_output))
+
+
+@targets_app.command("rm")
+def targets_rm_cmd(
+    targets: Annotated[list[str] | None, typer.Argument(help="Configured targets to remove; omit to choose interactively (several may be selected).", autocompletion=complete_configured_target)] = None,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation; required non-interactively, matching 'fwd config rm'.")] = False,
+) -> None:
+    """Remove target entries from configuration without touching remote compute or session state.
+
+    Removing the default target retargets default_target at the sole remaining target, or clears it when the choice
+    would be a guess. Tracked sessions keep running; destroy that compute with 'fwd rm'.
+    """
+    from fwd.ops import targets as targets_ops
+
+    targets_ops.remove(tuple(targets or ()), force=force)
 
 
 @app.command("doctor")
