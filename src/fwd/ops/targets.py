@@ -238,7 +238,7 @@ def _confirm_removal(names: tuple[str, ...], scopes: dict[str, tuple[str, ...]],
     if reason is not None:
         ui.die(f"refusing to remove {subject} because {reason}; re-run with --force to confirm removal non-interactively")
     written = ", ".join(sorted({scope for found in scopes.values() for scope in found}))
-    if not ui.confirm(f"remove {subject} from {written} configuration? Remote compute and session state are untouched.", default=False):
+    if not ui.confirm(f"remove {subject} from {written} configuration? Remote compute and session state are untouched.", default=True):
         ui.info("config was not changed")
         return False
     return True
