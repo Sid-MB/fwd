@@ -22,6 +22,40 @@ from fwd.state import SessionState
 DIRTY_EXIT = 42
 CHECK_FAILED_EXIT = 43
 
+#: Lockfiles that never count as uncommitted work. Each is fully regenerable from its manifest (``pyproject.toml``,
+#: ``package.json``, ``Cargo.toml``, ...) by the tool that wrote it, so discarding a VM whose only change is a lockfile
+#: loses no authored work -- while blocking on them would make the guard fire constantly, since routine installs and
+#: syncs rewrite them.
+IGNORED_LOCKFILES = (
+    "uv.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "flake.lock",
+)
+
+
+def ignored_lockfile_pattern() -> str:
+    """Return the ERE matching porcelain-v1 lines whose path is only an ignored lockfile.
+
+    Porcelain v1 lines are ``XY path``, so the filename is preceded either by the status separator space (top-level
+    paths) or by a slash (paths in subdirectories); anchoring it at end-of-line therefore matches nested lockfiles
+    while never matching a path that merely ends in a lockfile-like suffix (``my-uv.lock``). Shared by both shell
+    fragments below so the interactive check and the server-side stop-after guard can never disagree.
+
+    Known edge case: porcelain quotes paths containing special characters (``"weird path/uv.lock"``); the trailing
+    quote defeats the ``$`` anchor, so such a lockfile still counts as dirty. That is the safe direction to fail.
+    """
+    names = "|".join(name.replace(".", r"\.") for name in IGNORED_LOCKFILES)
+    return f"(^|[/ ])({names})$"
+
 
 @dataclass(frozen=True, slots=True)
 class WorktreeCheck:
@@ -31,12 +65,26 @@ class WorktreeCheck:
     summary: str = ""
 
 
+def _lockfile_filter_fragment() -> str:
+    """Return the shell snippet that drops ignored-lockfile lines from ``$git_status``.
+
+    Only run when ``$git_status`` is non-empty, because ``printf '%s\\n' ""`` would otherwise feed ``grep`` a blank
+    line and make a clean worktree look dirty. ``grep -v`` exits 1 when it filters everything out, so ``|| true``
+    keeps that expected case from reading as a command failure.
+    """
+    return (
+        f"if [ -n \"$git_status\" ]; then git_status=$(printf '%s\\n' \"$git_status\" "
+        f"| grep -vE '{ignored_lockfile_pattern()}' || true); fi"
+    )
+
+
 def _remote_check_command(remote_dir: str) -> str:
     """Return a POSIX-shell check whose special exit codes distinguish dirty state from inspection failure."""
     directory = shlex.quote(remote_dir)
     return (
         f"if ! command -v git >/dev/null 2>&1 || ! git -C {directory} rev-parse --is-inside-work-tree >/dev/null 2>&1; then exit 0; fi; "
         f"git_status=$(git -C {directory} status --porcelain=v1 --untracked-files=all 2>&1) || {{ printf '%s\\n' \"$git_status\"; exit {CHECK_FAILED_EXIT}; }}; "
+        f"{_lockfile_filter_fragment()}; "
         f"if [ -n \"$git_status\" ]; then printf '%s\\n' \"$git_status\"; exit {DIRTY_EXIT}; fi"
     )
 
@@ -85,6 +133,7 @@ if [ "$force_stop" -ne 1 ] && command -v git >/dev/null 2>&1 && git -C {director
         printf "stop-after blocked: could not inspect the Git worktree at %s; run stopafter --force only if losing VM-local work is acceptable\\n%s\\n" "$worktree_label" "$git_status" >&2
         exit {CHECK_FAILED_EXIT}
     fi
+    {_lockfile_filter_fragment()}
     if [ -n "$git_status" ]; then
         printf "stop-after blocked: the Git worktree at %s has uncommitted changes\\n%s\\nCommit, stash, or pull the work back first; run stopafter --force only to accept losing it.\\n" "$worktree_label" "$git_status" >&2
         exit {DIRTY_EXIT}
