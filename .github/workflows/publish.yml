@@ -115,6 +115,8 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job never checks out the repository, so gh cannot infer the target from a local git remote: name it explicitly.
+          GH_REPO: ${{ github.repository }}
         run: |
           wheel=$(find dist -maxdepth 1 -name 'fwdit-*.whl' -print -quit)
           test -n "$wheel" || { echo "::error::No fwdit wheel found in the shared workflow artifact"; exit 1; }

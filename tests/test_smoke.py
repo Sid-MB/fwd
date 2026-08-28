@@ -133,7 +133,7 @@ def test_short_alias_dispatches_with_arguments_and_flags(monkeypatch: pytest.Mon
     result = CliRunner().invoke(app, ["a", "demo", "--restart"])
 
     assert result.exit_code == 0, result.output
-    assert attached == [(("demo",), {"restart": True})]
+    assert attached == [(("demo",), {"restart": True, "control_mode": False})]
 
 
 def test_bare_command_dispatches_to_reuse(monkeypatch: pytest.MonkeyPatch) -> None:

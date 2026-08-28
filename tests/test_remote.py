@@ -7,8 +7,12 @@ because a subtly wrong quoting there breaks attach in ways that only reproduce o
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from fwd.remote import (
     BOOTSTRAP_PATH,
@@ -222,11 +226,18 @@ def test_tmux_helpers_issue_the_expected_remote_commands(monkeypatch) -> None:
     assert issued[2][1]["check"] is False
 
 
-def test_tmux_exact_target_survives_zsh_equals_expansion() -> None:
+def test_tmux_exact_target_is_shell_quoted() -> None:
     """A bare `=name` is special syntax in zsh; every remote tmux target must keep literal shell quotes."""
     from fwd.remote import _tmux_exact_target
 
     assert _tmux_exact_target("fwd-demo") == "'=fwd-demo'"
+
+
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="requires a real zsh; GitHub's ubuntu-latest runners ship without one")
+def test_tmux_exact_target_survives_zsh_equals_expansion() -> None:
+    """The quoting above only matters because zsh expands a bare `=word`; prove it against the real shell when present."""
+    from fwd.remote import _tmux_exact_target
+
     result = subprocess.run(["zsh", "-c", f"printf %s {_tmux_exact_target('fwd-demo')}"], capture_output=True, text=True)
     assert result.returncode == 0
     assert result.stdout == "=fwd-demo"
@@ -238,8 +249,6 @@ def test_tmux_new_raises_when_the_session_dies_immediately(monkeypatch) -> None:
     A wiped claude binary makes the pane exit within milliseconds, and fwd used to report a ready session over a dead
     tmux server. The post-create liveness re-check is what turns that silent success into a real error.
     """
-    import pytest
-
     from fwd import remote as remote_mod
     from fwd.sshexec import SSHError
 
@@ -383,6 +392,27 @@ def _fake_tool(bindir: Path, name: str) -> Path:
     return path
 
 
+def _system_bin_farm(root: Path, *exclude: str) -> Path:
+    """Mirror /usr/bin and /bin into a directory of symlinks, minus the named tools, to build a PATH that provably lacks them.
+
+    Stubbing the excluded tool out is not enough for bootstrap: its marker check is `have tmux && tmux -V` and its
+    installer treats any `command -v tmux` hit as "already present", so the binary has to be genuinely unreachable. The
+    developer machines running this suite (macOS) have no system tmux, but GitHub's ubuntu-latest runners do, which is
+    exactly the difference that made the missing-tmux test pass locally and fail on CI.
+    """
+    farm = root / "binfarm"
+    farm.mkdir(parents=True, exist_ok=True)
+    excluded = set(exclude)
+    for source_dir in (Path("/usr/bin"), Path("/bin")):
+        if not source_dir.is_dir():
+            continue
+        for entry in source_dir.iterdir():
+            if entry.name in excluded or (farm / entry.name).exists() or not os.access(entry, os.X_OK):
+                continue
+            (farm / entry.name).symlink_to(entry)
+    return farm
+
+
 def test_bootstrap_marker_is_not_trusted_when_tmux_is_missing(tmp_path: Path) -> None:
     """The core marker is valid only while its sole runtime responsibility, tmux, still works."""
     prefix = tmp_path / "tools"
@@ -390,9 +420,10 @@ def test_bootstrap_marker_is_not_trusted_when_tmux_is_missing(tmp_path: Path) ->
     home.mkdir()
     fake_bin = tmp_path / "fakebin"
     _fake_tool(fake_bin, "tmux")
+    farm = _system_bin_farm(tmp_path, "tmux")
 
     env = {
-        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "PATH": f"{fake_bin}:{farm}",
         "HOME": str(home),
         "FWD_TOOL_PREFIX": str(prefix),
         "FWD_REMOTE_DIR": str(tmp_path / "proj"),
