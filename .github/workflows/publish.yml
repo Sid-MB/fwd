@@ -57,6 +57,11 @@ jobs:
       # GitHub Release remain local so a failed PyPI upload cannot leave behind a release for unpublished artifacts.
       publish: false
       release: false
+      # After releasing on main, dispatch sidmb's sync-quarto-sources.yml so the published docs/ tree is re-rendered
+      # on the website. The reusable workflow derives `source=fwd` from this repository's name.
+      docsync: true
+    secrets:
+      DOCSYNC_GITHUB_TOKEN: ${{ secrets.DOCSYNC_GITHUB_TOKEN }}
 
   publish:
     needs: build-and-release
