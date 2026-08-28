@@ -35,9 +35,17 @@ class CustomBuildHook(BuildHookInterface):
     """Generate fresh section-1 manuals immediately before Hatch collects either build target."""
 
     def initialize(self, version: str, build_data: dict[str, object]) -> None:
-        """Regenerate the manuals from the command tree for the current source checkout."""
+        """Regenerate the manuals from the command tree for the current source checkout.
+
+        ``self.metadata.version`` is the version hatch-vcs just computed from git for this very build, so passing it into the
+        generator stamps the manual source field with the exact version being packaged. The generator's own
+        ``importlib.metadata`` derivation is only for standalone runs and would report the *installed* distribution here,
+        which during an isolated build is either absent or unrelated to the tree being built. The ``version`` parameter of
+        this hook is the build target's version type ("standard"/"editable"), not the project version, so it is not used.
+        """
         root = Path(self.root)
         generator = _load_generator(root)
-        status = generator.generate(root / "man", date=generator.resolve_manual_date(), check=False)
+        source_version = generator.normalize_manual_version(self.metadata.version)
+        status = generator.generate(root / "man", date=generator.resolve_manual_date(), source_version=source_version, check=False)
         if status:
             raise RuntimeError("manual-page generation failed")
