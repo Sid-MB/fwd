@@ -242,6 +242,22 @@ def ls(
         ui.info_with_code(prefix, ui.command("ls --all-projects"), " to show.")
 
 
+def _stop_continuous_sync(session: SessionState) -> None:
+    """Tear down a session's continuous sync before its compute goes away, never blocking teardown.
+
+    A Mutagen session outliving its target would keep retrying a connection to a machine that no longer exists and,
+    worse, keep a stale two-way session around that could propagate against a *recreated* target later. Stopping it is
+    still strictly best-effort: releasing billable compute is the operation that must always complete.
+    """
+    try:
+        from fwd.ops import synccmd
+
+        if synccmd.stop_session(session):
+            ui.info(f"stopped continuous sync for {session.name!r}")
+    except Exception as exc:
+        ui.warn(f"could not stop continuous sync ({exc}); continuing")
+
+
 def stop(name: str | None = None, *, force: bool = False) -> None:
     """Stop a session: kill the remote tmux session, then suspend the target.
 
@@ -264,6 +280,7 @@ def stop(name: str | None = None, *, force: bool = False) -> None:
         endpoint = session.ssh_endpoint()
     if status not in {TargetStatus.GONE, TargetStatus.STOPPED}:
         worktree_safety.require_clean(endpoint, session, force=force, action=f"stop session {session.name!r}")
+    _stop_continuous_sync(session)
     try:
         from fwd.ops import ports as ports_ops
 
@@ -434,6 +451,7 @@ def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = F
         endpoint = session.ssh_endpoint()
     if status not in {TargetStatus.GONE, TargetStatus.STOPPED}:
         worktree_safety.require_clean(endpoint, session, force=force, action=f"remove session {session.name!r}")
+    _stop_continuous_sync(session)
     try:
         from fwd.ops import ports as ports_ops
 

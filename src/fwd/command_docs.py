@@ -40,6 +40,10 @@ SEND = CommandDoc("send", "Start, follow, background, list, or cancel durable re
 LIST = CommandDoc("ls", "List managed sessions with live backend status.")
 PORTS = CommandDoc("ports", "Open, list, or close loopback-only local ports forwarded to a running session.")
 STOP = CommandDoc("stop", "Check the remote Git worktree, kill tmux, and suspend billable compute while retaining configured persistent storage.")
+SYNC = CommandDoc("sync", "Turn Mutagen-backed continuous file synchronization on or off for a target, or inspect it.")
+SYNC_ON = CommandDoc("sync on", "Enable continuous synchronization and start it immediately for a running session.")
+SYNC_OFF = CommandDoc("sync off", "Disable continuous synchronization and stop any session already running it.")
+SYNC_STATUS = CommandDoc("sync status", "Show the configured intent, live Mutagen state, and any unresolved conflicts.")
 REMOVE = CommandDoc("rm", "Destroy one or more session targets, or every tracked target with --all, and forget their state; confirmation identifies running work and remote data at risk.")
 
 

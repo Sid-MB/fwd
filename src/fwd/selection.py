@@ -41,14 +41,18 @@ def _git_worktree_root(source: Path) -> bool:
         return False
 
 
-def _custom_ignore_text(
+def custom_ignore_patterns(
     source: Path,
     sync_cfg: SyncConfig,
     extra_excludes: tuple[str, ...] = (),
     *,
     include_fwdignore: bool = True,
-) -> str:
-    """Combine project rules with configured and caller-owned exclusions in increasing precedence order."""
+) -> list[str]:
+    """Combine project rules with configured and caller-owned exclusions in increasing precedence order.
+
+    Returned as a list rather than a blob so continuous sync can hand the same layered patterns to Mutagen, which
+    takes one ``--ignore`` argument per rule. One-shot transfers keep rendering it back into gitignore-file text.
+    """
     patterns: list[str] = []
     fwdignore = source / FWDIGNORE_NAME
     if include_fwdignore and fwdignore.is_file():
@@ -57,7 +61,18 @@ def _custom_ignore_text(
     # exclusions last preserves their prior precedence over any negated pattern in .fwdignore.
     patterns.extend(sync_cfg.exclude)
     patterns.extend(extra_excludes)
-    return "".join(f"{pattern}\n" for pattern in patterns if pattern)
+    return [pattern for pattern in patterns if pattern]
+
+
+def _custom_ignore_text(
+    source: Path,
+    sync_cfg: SyncConfig,
+    extra_excludes: tuple[str, ...] = (),
+    *,
+    include_fwdignore: bool = True,
+) -> str:
+    """Render :func:`custom_ignore_patterns` as the gitignore-format file body Git's matcher consumes."""
+    return "".join(f"{pattern}\n" for pattern in custom_ignore_patterns(source, sync_cfg, extra_excludes, include_fwdignore=include_fwdignore))
 
 
 def _git_candidates(source: Path, *, include_ignored_rule_files: bool = True) -> list[bytes]:
@@ -76,12 +91,17 @@ def _git_candidates(source: Path, *, include_ignored_rule_files: bool = True) ->
         detail = proc.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"git could not enumerate the upload selection (exit {proc.returncode})" + (f": {detail}" if detail else ""))
     candidates = [path for path in proc.stdout.split(b"\0") if path]
-    nested_ignore_files = (
-        [path for path in _git_ignored_paths(source) if path == b".gitignore" or path.endswith(b"/.gitignore")]
-        if include_ignored_rule_files
-        else []
-    )
-    return list(dict.fromkeys([*candidates, *nested_ignore_files]))
+    return list(dict.fromkeys([*candidates, *(ignored_rule_files(source) if include_ignored_rule_files else [])]))
+
+
+def ignored_rule_files(source: Path) -> list[bytes]:
+    """Return the ``.gitignore`` files a repository's own rules hide from ``--exclude-standard``.
+
+    Factored out of :func:`_git_candidates` because continuous sync needs exactly the same set: Mutagen's ignore list
+    is built from the rule files fwd can enumerate, so a self-ignored nested ``.gitignore`` that the upload path
+    honours must not be invisible to the continuous path.
+    """
+    return [path for path in _git_ignored_paths(source) if path == b".gitignore" or path.endswith(b"/.gitignore")]
 
 
 def _git_ignored_paths(source: Path) -> list[bytes]:

@@ -45,7 +45,7 @@ import shutil
 from typing import Any, ClassVar
 
 from fwd import remote as remote_mod, ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import CONTINUOUS_SYNC_PARAMETER, Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.backends.slurm_job import job_name, job_script_path, render_job_script, render_tmux_command
 from fwd.config import Config, SlurmTargetConfig, ssh_config_host_aliases
 from fwd.sshexec import SSHEndpoint, SSHError
@@ -161,6 +161,7 @@ class SlurmBackend(Backend):
             ConfigParameter("partition", "--partition", "Slurm partition"),
             ConfigParameter("account", "--account", "Slurm account"),
             ConfigParameter("env_setup", "--env-setup", "shell lines run before allocation"),
+            CONTINUOUS_SYNC_PARAMETER,
         )
 
     @classmethod

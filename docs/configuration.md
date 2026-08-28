@@ -119,9 +119,23 @@ exclude = [".venv", "node_modules", "dist"]
 use_gitignore = true
 delete = true
 max_size_gb = 1.0
+continuous = false          # Mutagen-backed continuous sync; per target: [targets.NAME] continuous_sync
 
 [forwarding]
 ports = ["3000", "8080:3000"]
 ```
 
 Setting `sync.exclude` replaces the default list rather than extending it. See `fwd config --example` for every field and current default.
+
+`sync.continuous` is the default for [continuous synchronization](commands.md#continuous-synchronization). Any target may override it with `continuous_sync`, which is deliberately three-state: omit it to inherit `sync.continuous`, or set `true`/`false` to decide for that target regardless of the global default.
+
+```toml
+[sync]
+continuous = true            # most targets sync continuously
+
+[targets.hpc]
+backend = "slurm"
+continuous_sync = false      # ...except this one
+```
+
+`fwd sync on` and `fwd sync off` write exactly this key for you, so it rarely needs editing by hand. Continuous sync never includes `.git`; use `fwd push` and `fwd pull` for repository state.

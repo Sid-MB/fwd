@@ -273,6 +273,12 @@ def attach(
             except (github_auth.GitHubAuthError, SSHError) as exc:
                 ui.die(str(exc))
 
+    # Continuous sync may have been enabled since launch, or its daemon may have been restarted, so attach reconciles
+    # it rather than assuming launch already did.
+    from fwd.ops import synccmd
+
+    synccmd.ensure_for_session(session, cfg, endpoint=endpoint)
+
     if forward_ports is not None:
         ports_ops.ensure_session_ports(session, forward_ports, endpoint=endpoint)
 

@@ -242,5 +242,6 @@ complete_config_key = static_completer(
         ("sync.exclude", "replacement list of sync exclusion patterns"),
         ("sync.use_gitignore", "honor per-directory .gitignore rules"),
         ("sync.delete", "delete remote-only files while pushing"),
+        ("sync.continuous", "keep projects continuously synced with Mutagen while a session runs"),
     )
 )

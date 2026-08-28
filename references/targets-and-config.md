@@ -27,6 +27,25 @@ Uploads are capped at 1 GB by default so accidentally running fwd from a broad d
 Raise the boundary for one known-large project with `fwd config set --project sync.max_size_gb N`; the refusal also
 prints the exact project and user config paths for direct TOML editing.
 
+## Continuous synchronization settings
+
+`sync.continuous` (default `false`) is the global default for Mutagen-backed continuous synchronization. Every target
+accepts a three-state `continuous_sync` override: absent inherits the global value, while `true` or `false` decides for
+that target regardless of it.
+
+```toml
+[sync]
+continuous = true
+
+[targets.hpc]
+backend = "slurm"
+continuous_sync = false
+```
+
+`fwd sync on` and `fwd sync off` write this key and reconcile the running session in one step; `fwd targets add
+--continuous-sync/--no-continuous-sync` sets it non-interactively. `.git` is never continuously synced. See
+[commands and lifecycle](commands-and-lifecycle.md#continuous-synchronization).
+
 ## Launch-time port forwarding
 
 Local loopback forwards can be declared per project in `.fwd/config.toml`:

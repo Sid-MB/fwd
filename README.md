@@ -88,6 +88,18 @@ fwd pull outputs/                # additive download; never deletes local files
 
 Sync honors `.gitignore`, `.fwdignore`, and configured exclusions. Upload includes `.git/` for remote agent continuity; pull and diff exclude Git metadata.
 
+### Sync continuously
+
+Opt in to keep both sides converged automatically while a session runs, using [Mutagen](https://mutagen.io):
+
+```sh
+fwd sync on                      # enable for this target and start it now
+fwd sync status                  # live state and any conflicts
+fwd sync off                     # stop syncing
+```
+
+Off by default and configurable per target. Toggling takes effect immediately, even mid-session. Conflicts are reported rather than resolved destructively, and `.git` is never continuously synced — keep using `fwd push` and `fwd pull` for repository state. See [continuous synchronization](docs/commands.md#continuous-synchronization).
+
 ### Forward a service
 
 ```sh

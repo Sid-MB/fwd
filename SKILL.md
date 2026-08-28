@@ -33,6 +33,7 @@ If `fwd` is unavailable, install the published distribution with `uv tool instal
 - Never run `fwd rm --all --force` unless the user explicitly requests destruction of every tracked remote resource.
 - Run `fwd uninstall --force` only for an explicit local-uninstall request after explaining that it does not destroy remote resources; prefer `fwd rm --all` first.
 - Prefer `fwd diff -q` before push or pull. Exit 0 means synchronized, 1 different, and 2 error.
+- Continuous sync (`fwd sync on`) is opt-in and off by default. Enable it only when the user asks for automatic two-way syncing, and tell them `.git` is excluded from it, so `fwd push`/`fwd pull` remain necessary for repository state.
 - If upload exceeds `sync.max_size_gb`, confirm the directory is intentional before using the exact project-scoped limit command printed by fwd.
 - Missing `npx` or a failed optional skill refresh must not block normal fwd commands.
 - If preparation fails after provisioning and sync, give the human `fwd attach SESSION --raw` for a recovery shell. This does not authorize restarting stopped compute.
@@ -63,6 +64,7 @@ fwd send --name SESSION -- COMMAND...
 fwd send --name SESSION --ls --json
 fwd diff -q SESSION
 fwd pull --name SESSION outputs/
+fwd sync status --json
 fwd ls --all-projects --json
 fwd doctor --json
 ```

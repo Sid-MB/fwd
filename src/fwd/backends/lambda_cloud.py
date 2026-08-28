@@ -29,7 +29,7 @@ import urllib.request
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import CONTINUOUS_SYNC_PARAMETER, Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import Config, LambdaTargetConfig
 from fwd.credentials import CredentialInputError, resolve_secret, secret_source
 from fwd.sshexec import SSHEndpoint
@@ -464,6 +464,7 @@ class LambdaCloudBackend(Backend):
             ConfigParameter("user", "--user", "remote SSH username", advanced=True),
             ConfigParameter("port", "--port", "SSH port", prompt=False),
             ConfigParameter("key_path", "--key-path", "local private key matching ssh_key_name", advanced=True),
+            CONTINUOUS_SYNC_PARAMETER,
         )
 
     @classmethod

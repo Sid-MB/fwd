@@ -110,6 +110,7 @@ class SshTargetConfig:
     proxy_jump: str | None = None
     remote_base: str = "~/fwd"
     extra_opts: list[str] = field(default_factory=list)
+    continuous_sync: bool | None = None
 
 
 @dataclass(slots=True)
@@ -146,6 +147,7 @@ class RunpodTargetConfig:
     port: int = 22
     key_path: str | None = None
     allow_proxy: bool = True
+    continuous_sync: bool | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate the two enum-ish fields at config-load time.
@@ -193,6 +195,7 @@ class LambdaTargetConfig:
     user: str = "ubuntu"
     port: int = 22
     key_path: str | None = None
+    continuous_sync: bool | None = None
 
     def __post_init__(self) -> None:
         """Normalize required provider identifiers and reject paths that cannot satisfy the persistence contract."""
@@ -247,6 +250,7 @@ class SlurmTargetConfig:
     tool_prefix: str = ""
     partition: str | None = None
     account: str | None = None
+    continuous_sync: bool | None = None
 
 
 TargetConfig = SshTargetConfig | RunpodTargetConfig | LambdaTargetConfig | SlurmTargetConfig
@@ -386,12 +390,16 @@ class SyncConfig:
         delete: Pass ``--delete`` on push, making the remote a mirror. Off means remote-only files survive a push.
         max_size_gb: Approximate maximum filtered upload size. The transfer stops and discards its remote staging
             directory when it crosses this circuit breaker; users can raise it explicitly for larger projects.
+        continuous: Default for Mutagen-backed continuous synchronization. Off because it runs a long-lived background
+            daemon holding an SSH connection, which no file-transfer tool should start without being asked. A target
+            may override it through ``continuous_sync``; ``Config.continuous_sync_for`` resolves the two.
     """
 
     exclude: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))
     use_gitignore: bool = True
     delete: bool = True
     max_size_gb: float = field(default=DEFAULT_MAX_SYNC_SIZE_GB, metadata={"json_schema": {"exclusiveMinimum": 0}})
+    continuous: bool = False
 
     def __post_init__(self) -> None:
         """Reject disabled or nonsensical limits so every upload retains an explicit finite safety boundary."""
@@ -450,6 +458,19 @@ class Config:
     def command_for(self, target_name: str) -> tuple[str, ...]:
         """Resolve the startup command with target-specific settings taking precedence over merged file settings."""
         return tuple(self.target_default_commands.get(target_name, self.default_command))
+
+    def continuous_sync_for(self, target_name: str | None) -> bool:
+        """Resolve whether continuous sync is enabled for one target.
+
+        The single place this precedence is computed, so launch, attach, stop, the pull hint, ``fwd sync``, and
+        ``fwd doctor`` can never disagree about whether a session is supposed to be continuously synced. A target's
+        ``continuous_sync`` is a genuine three-state value: ``None`` means "inherit", which is why it is not merely a
+        boolean defaulting to false — that would make an explicit per-target ``false`` indistinguishable from silence
+        and stop it from overriding a global ``sync.continuous = true``.
+        """
+        target = self.targets.get(target_name) if target_name else None
+        override = target.continuous_sync if target is not None else None
+        return self.sync.continuous if override is None else bool(override)
 
     def agent(self, name: str) -> AgentConfig:
         """Return one agent's merged runtime settings, falling back to the VM-oriented built-in defaults."""
@@ -644,6 +665,7 @@ def load_config(project_dir: str | Path | None = None) -> Config:
         use_gitignore=bool(sync_raw.get("use_gitignore", True)),
         delete=bool(sync_raw.get("delete", True)),
         max_size_gb=sync_raw.get("max_size_gb", DEFAULT_MAX_SYNC_SIZE_GB),
+        continuous=bool(sync_raw.get("continuous", False)),
     )
     if not isinstance(forwarding_raw, dict):
         raise ConfigError("forwarding must be a table")

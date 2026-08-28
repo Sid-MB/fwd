@@ -177,6 +177,21 @@ class ConfigParameter:
     prompt_when: tuple[tuple[str, str], ...] = ()
 
 
+# Declared once and shared by every backend because continuous sync is a transport-independent policy: it means the
+# same thing on an SSH box, a cloud instance, and a cluster login node, so four separate copies could only drift.
+# ``prompt=False`` keeps it out of the interactive form — it is an opt-in feature discovered through ``fwd sync``, not
+# a connection detail someone setting up a machine should have to answer — while remaining a documented setup flag.
+CONTINUOUS_SYNC_PARAMETER = ConfigParameter(
+    "continuous_sync",
+    "--continuous-sync",
+    "keep the project continuously synchronized with Mutagen while a session runs; unset inherits sync.continuous",
+    prompt=False,
+    advanced=True,
+    choices=(ConfigChoice("true"), ConfigChoice("false")),
+    allow_free_text=False,
+)
+
+
 class Backend(ABC):
     """Abstract base class every backend must implement.
 

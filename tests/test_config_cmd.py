@@ -60,7 +60,7 @@ def test_example_all_covers_every_backend_and_section() -> None:
     assert set(parsed["claude"]) == {"user_config", "creds", "session", "handoff"}
     assert set(parsed["agents"]) == {"claude", "codex"}
     assert all(set(agent) == {"full_access", "args", "environment"} for agent in parsed["agents"].values())
-    assert set(parsed["sync"]) == {"exclude", "use_gitignore", "delete", "max_size_gb"}
+    assert set(parsed["sync"]) == {"exclude", "use_gitignore", "delete", "max_size_gb", "continuous"}
 
 
 def test_example_is_generated_from_the_dataclass_fields() -> None:
@@ -118,7 +118,7 @@ def test_no_config_still_emits_valid_effective_toml(tmp_path: Path, monkeypatch:
             "codex": {"full_access": True, "args": [], "environment": {}},
         },
         "github": {"auth": True},
-        "sync": {"exclude": list(config_mod.DEFAULT_EXCLUDES), "use_gitignore": True, "delete": True, "max_size_gb": 1.0},
+        "sync": {"exclude": list(config_mod.DEFAULT_EXCLUDES), "use_gitignore": True, "delete": True, "max_size_gb": 1.0, "continuous": False},
     }
 
 

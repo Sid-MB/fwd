@@ -67,6 +67,30 @@ Synchronization honors `.gitignore`, `.fwdignore`, and configured exclusions. Up
 
 Push mirrors the local synchronized tree and normally deletes remote-only synchronized files. Pull is always additive and never deletes local files. Uploads are capped by `sync.max_size_gb` (1 GB by default) and use a staging directory so an interrupted or over-limit upload does not replace the live remote project.
 
+## Continuous synchronization
+
+`fwd sync` keeps the local project and the remote directory converged in both directions while a session runs, instead of waiting for an explicit `push` or `pull`. It is built on [Mutagen](https://mutagen.io), is **off by default**, and is stored per target:
+
+```sh
+fwd sync on                      # enable for this target and start it now
+fwd sync status                  # configured intent, live state, and conflicts
+fwd sync status --json
+fwd sync off                     # stop syncing; the remote directory is left as-is
+fwd sync on SESSION              # act on a named session instead of this directory's
+```
+
+Toggling takes effect immediately, including on a session that is already running. Enabling it also enables it for future launches on that target; `fwd up` and `fwd attach` start the sync automatically whenever it is on.
+
+Key properties:
+
+- **`.git` is never continuously synced.** Both sides run Git concurrently, and a half-propagated index or packfile corrupts the repository. `fwd push` and `fwd pull` still carry `.git`, and remain the way to move repository state.
+- **Conflicts are never resolved destructively.** The mode is Mutagen's `two-way-safe`, so a file edited on both sides is reported by `fwd sync status` rather than overwritten. Settle one by deleting the copy you do not want on one side; the surviving version then propagates. Editing the losing side again does not help — that is simply another competing change.
+- **The initial transfer still goes through rsync.** `fwd up` performs its usual size-bounded push, and Mutagen only moves steady-state deltas afterwards, so `sync.max_size_gb` still governs the large transfer.
+- **Ignore rules are captured when the sync starts**, translated from `.gitignore` (including nested files), `.fwdignore`, and `sync.exclude`. After editing those, run `fwd sync off && fwd sync on` to pick up the change.
+- **Not every transport supports it.** Mutagen installs a remote agent over `scp`, which the RunPod SSH proxy cannot run; fwd warns and skips continuous sync there.
+
+fwd installs and drives Mutagen itself: the remote agent installs automatically on first connection, and the first local use offers to run `brew install mutagen-io/mutagen/mutagen` when Homebrew is available. fwd runs its own isolated Mutagen daemon under `~/.fwd/mutagen`, so it never disturbs a Mutagen daemon you run yourself.
+
 ## Forward local ports
 
 ```sh

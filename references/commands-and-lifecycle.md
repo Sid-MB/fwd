@@ -127,6 +127,39 @@ paths. Normal measurement honors configured exclusions, `.fwdignore`, and `.giti
 must use tar-over-SSH, it runs a second conservative check that also counts files hidden only by `.gitignore`. This
 guard applies to uploads, not pulls.
 
+## Continuous synchronization
+
+```sh
+fwd sync on [SESSION]     # enable for the session's target and start it immediately
+fwd sync off [SESSION]    # disable and terminate the running sync
+fwd sync status [SESSION] # configured intent, live state, conflicts; supports --json
+```
+
+Continuous synchronization is opt-in, defaults off, and is stored per target as `[targets.NAME] continuous_sync`,
+overriding the global `sync.continuous`. Omitting the target key inherits the global value; setting it `true` or
+`false` decides for that target. `fwd sync on`/`off` write that key and reconcile the running session in one step, so a
+toggle applies immediately rather than at the next launch. When the target is not declared in `[targets]` — an
+inferred `runpod`, `user@host`, or `~/.ssh/config` alias — there is no table to extend and fwd writes the
+project-scoped `sync.continuous` instead, saying so.
+
+It is implemented with Mutagen in `two-way-safe` mode: changes propagate both ways and genuine conflicts are reported
+by `fwd sync status` rather than resolved by discarding a side. A conflict is settled by deleting the unwanted copy
+on one endpoint, after which the survivor propagates; re-editing the losing side only adds another competing change. `.git` is never continuously synced, because both sides
+run Git concurrently and a partially propagated index or packfile corrupts the repository; `fwd push` and `fwd pull`
+remain the way to move repository state. Launch keeps performing its ordinary size-bounded rsync upload first, so
+`sync.max_size_gb` still governs the bulk transfer and Mutagen only carries steady-state deltas.
+
+Ignore rules are translated once, when the sync starts, from `.gitignore` (root and nested), `.fwdignore`, and
+`sync.exclude`, so the continuous domain matches the push/pull domain. Editing those files does not update a running
+session; `fwd sync off` then `fwd sync on` refreshes it. `fwd up` and `fwd attach` start the sync whenever it is
+enabled, and `fwd stop` and `fwd rm` terminate it best-effort without ever blocking teardown.
+
+Mutagen is required only when this feature is enabled: the first local use offers to install it (`brew install
+mutagen-io/mutagen/mutagen` when Homebrew exists, otherwise printed instructions), the remote agent installs itself
+over `scp` on first connection, and `fwd doctor` reports Mutagen only when some target enables continuous sync. fwd
+runs an isolated daemon under `~/.fwd/mutagen` so it never disturbs a user-managed Mutagen daemon. Transports that
+cannot run `scp` — notably the RunPod SSH proxy, which also disables rsync — warn and skip continuous sync.
+
 Every existing-session operation accepts an exact session name, target label, or backend name. Use selectors
 positionally with `attach`, `stop`, `rm`, and `diff`, and through `--name` with `send`, `push`, and `pull`. Exact
 session names win. A sole alias match wins even when stopped so it remains restartable or removable; when several

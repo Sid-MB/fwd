@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import CONTINUOUS_SYNC_PARAMETER, Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, MachineInventory, MachineSelectionError, MachineType, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import DEFAULT_RUNPOD_CPU_IMAGE, DEFAULT_RUNPOD_GPU_IMAGE, Config, RunpodTargetConfig
 from fwd.sshexec import SSHEndpoint, SSHError
 from fwd.state import SessionState
@@ -485,6 +485,7 @@ class RunpodBackend(Backend):
             ConfigParameter("port", "--port", "SSH port", prompt=False),
             ConfigParameter("key_path", "--key-path", "explicit SSH identity file", prompt=False),
             ConfigParameter("allow_proxy", "--allow-proxy", "allow ssh.runpod.io fallback when direct SSH is unavailable", prompt=False, choices=(ConfigChoice("true"), ConfigChoice("false")), allow_free_text=False),
+            CONTINUOUS_SYNC_PARAMETER,
         )
 
     @classmethod

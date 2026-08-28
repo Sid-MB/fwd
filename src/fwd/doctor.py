@@ -24,7 +24,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from fwd import ui
+from fwd import mutagen_sync, ui
 from fwd.agents import claude_state
 from fwd.backends import make_backend
 from fwd.backends.base import CheckResult
@@ -123,6 +123,18 @@ def _local_checks(cfg: Config | None) -> list[CheckResult]:
         _safe("tmux", lambda: _which_check("tmux", "tmux", required=False)),
         _safe("claude", lambda: _which_check("claude", "claude", required=False)),
     ]
+    # Mutagen is only a dependency for users who opted into continuous sync, so its absence is reported as a genuine
+    # failure exactly when some target would try to use it and as nothing at all otherwise. The question is asked
+    # through ``Config.continuous_sync_for`` — the one place that precedence is computed — rather than re-derived here,
+    # because re-deriving it is how doctor comes to disagree with launch (a global true with every target opting out
+    # would be reported as needing Mutagen while no launch path would ever start it).
+    if cfg and (cfg.continuous_sync_for(None) or any(cfg.continuous_sync_for(name) for name in cfg.targets)):
+        results.append(
+            _safe(
+                "mutagen",
+                lambda: _which_check("mutagen", "mutagen", hint=f"continuous sync is enabled; {mutagen_sync.install_instructions()}"),
+            )
+        )
     # runpodctl only matters when the user actually has a RunPod target configured.
     if cfg and any(t.backend == "runpod" for t in cfg.targets.values()):
         results.append(

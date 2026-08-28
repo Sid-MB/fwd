@@ -77,6 +77,25 @@ targets_app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 app.add_typer(targets_app, name="targets")
+SYNC_HELP = f"""{command_docs.SYNC.summary}
+
+Continuous mode uses Mutagen (https://mutagen.io) to keep this project and its remote directory converged in both
+directions while a session runs, instead of waiting for {ui.command('push')!r} or {ui.command('pull')!r}. It is off by
+default, is stored per target so different machines can differ, and takes effect immediately — including on a session
+that is already running.
+
+'.git' is deliberately never continuously synced: both sides run Git concurrently and a half-propagated index or
+packfile corrupts the repository. Move repository state with {ui.command('push')!r} and {ui.command('pull')!r}, which
+still carry it. Ignore rules are captured from .gitignore, .fwdignore, and sync.exclude when the sync starts, so rerun
+{ui.command('sync off')!r} then {ui.command('sync on')!r} after editing them.
+"""
+sync_app = typer.Typer(
+    name="sync",
+    help=SYNC_HELP,
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+app.add_typer(sync_app, name="sync")
 
 
 def _interactive_terminal() -> bool:
@@ -709,6 +728,38 @@ def pull_cmd(
     transfer.pull(name, tuple(paths or ()))
 
 
+@sync_app.command("on", help=f"{command_docs.SYNC_ON.summary}\n\nWrites continuous_sync = true for the session's target, then creates or resumes its Mutagen session. Offers to install Mutagen if it is missing.")
+def sync_on_cmd(
+    session: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
+) -> None:
+    """Enable continuous synchronization for a target and start it now if a matching session is running."""
+    from fwd.ops import synccmd
+
+    synccmd.on(session)
+
+
+@sync_app.command("off", help=f"{command_docs.SYNC_OFF.summary}\n\nThe remote directory is left exactly as it is; only the live synchronization stops.")
+def sync_off_cmd(
+    session: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
+) -> None:
+    """Disable continuous synchronization for a target and terminate any Mutagen session running for it."""
+    from fwd.ops import synccmd
+
+    synccmd.off(session)
+
+
+@sync_app.command("status", help=f"{command_docs.SYNC_STATUS.summary}\n\nTwo-way-safe mode never resolves a conflict by discarding a side, so conflicts are reported here and settled by editing one side.")
+def sync_status_cmd(
+    session: Annotated[str | None, typer.Argument(help="Session name, target, or backend; defaults to this directory's session.", autocompletion=complete_existing_session)] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format", help="Output format: auto uses Rich in a terminal and Markdown otherwise.", autocompletion=complete_output_format)] = OutputFormat.auto,
+    json_output: JsonOutputOption = False,
+) -> None:
+    """Show whether continuous sync is configured and running, plus any conflicts awaiting resolution."""
+    from fwd.ops import synccmd
+
+    synccmd.status(session, output_format=_selected_output_format(output_format, json_output=json_output))
+
+
 @app.command("diff")
 def diff_cmd(
     target: Annotated[str | None, typer.Argument(help="Session name, configured target, or backend; defaults to this directory's session.", autocompletion=complete_diff_target)] = None,
@@ -940,6 +991,7 @@ def _setup(
     partition: Annotated[str | None, typer.Option("--partition", help="Slurm partition.")] = None,
     account: Annotated[str | None, typer.Option("--account", help="Slurm account.")] = None,
     env_setup: Annotated[list[str] | None, typer.Option("--env-setup", help="Slurm shell line to run before allocation; repeat for multiple lines.")] = None,
+    continuous_sync: Annotated[bool | None, typer.Option("--continuous-sync/--no-continuous-sync", help="Override sync.continuous for this target: keep the project continuously synchronized with Mutagen while a session runs.")] = None,
     make_default: Annotated[bool, typer.Option("--make-default", help="Make this target the saved default. The first target is always made default.")] = False,
     test_connection: Annotated[bool, typer.Option("--test-connection", help="Run read-only provider diagnostics after non-interactive setup.")] = False,
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing target with the same name without prompting.")] = False,
@@ -1008,6 +1060,7 @@ def _setup(
             "partition": partition,
             "account": account,
             "env_setup": env_setup,
+            "continuous_sync": continuous_sync,
         },
         make_default=make_default,
         test_connection=test_connection,

@@ -114,3 +114,25 @@ def pull(name: str | None = None, paths: Sequence[str] = ()) -> None:
             ui.warn("transport does not support rsync; using tar-over-ssh (whole-tree transfer)")
             sync.tar_down(endpoint, session.remote_dir, local_cwd, paths, cfg.sync, on_path=transfer.path)
     ui.ok(f"pulled from {session.name!r} into {local_cwd}")
+    _suggest_continuous(session, cfg, endpoint)
+
+
+def _suggest_continuous(session: SessionState, cfg, endpoint: SSHEndpoint) -> None:
+    """Mention continuous sync once a day after a manual pull, when it would actually work here.
+
+    A manual pull is the moment the feature is most obviously relevant — the user just did by hand what continuous
+    mode would have done for them. Every condition below exists to make sure the hint is never noise: it is silent
+    when continuous sync is already on, when the transport cannot support it, and, through :mod:`fwd.tips`, when it was
+    shown recently. It is deliberately not silent merely because Mutagen is missing: not having installed it yet is the
+    normal state for someone who has never heard of the feature, and :func:`fwd.mutagen_sync.ensure_installed` offers
+    to install it at the point they opt in.
+    """
+    from fwd import mutagen_sync, tips
+
+    target = session.flags.get("target")
+    if cfg.continuous_sync_for(target if isinstance(target, str) else None):
+        return
+    if not mutagen_sync.supports_continuous(endpoint) or not tips.should_show(tips.CONTINUOUS_SYNC):
+        return
+    ui.info_with_code("tip: keep this project continuously in sync with ", ui.command("sync on"), f" (uses Mutagen; see {ui.command('sync --help')})")
+    tips.mark_shown(tips.CONTINUOUS_SYNC)

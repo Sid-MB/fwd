@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from fwd import ui
-from fwd.backends.base import Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
+from fwd.backends.base import CONTINUOUS_SYNC_PARAMETER, Backend, CheckResult, ConfigChoice, ConfigChoices, ConfigParameter, ProvisionError, TargetInfo, TargetStatus
 from fwd.config import Config, SshTargetConfig, ssh_config_host_aliases
 from fwd.remote import tmux_kill
 from fwd.sshexec import SSHEndpoint, SSHError, wait_for_ssh
@@ -47,6 +47,7 @@ class SshHostBackend(Backend):
             ConfigParameter("proxy_jump", "--proxy-jump", "external SSH host to jump through, if the target is not publicly accessible", advanced=True),
             ConfigParameter("remote_base", "--remote-base", "parent directory for project checkouts"),
             ConfigParameter("extra_opts", "--extra-ssh-option", "additional raw SSH argv entries", prompt=False, advanced=True),
+            CONTINUOUS_SYNC_PARAMETER,
         )
 
     @classmethod

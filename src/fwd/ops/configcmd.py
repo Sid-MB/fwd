@@ -91,6 +91,7 @@ FIELD_DOCS: dict[str, str] = {
     "env_setup": "shell lines run before the allocation, e.g. module loads",
     "partition": "slurm partition (-p)",
     "account": "slurm account (-A)",
+    "continuous_sync": f"override sync.continuous for this target; toggle it with {ui.command('sync on')!r} / {ui.command('sync off')!r}",
 }
 
 # Field docs that differ by backend, because the same field name carries a different warning per provider.
@@ -120,11 +121,14 @@ SECTION_DOCS: dict[str, str] = {
     "use_gitignore": "use Git's own file enumeration so every nested .gitignore is honoured exactly",
     "delete": "push mirrors local, removing remote-only files",
     "max_size_gb": "streaming upload circuit breaker in GB; defaults to 1 GB to catch accidentally broad directories",
+    "continuous": "keep projects continuously synchronized with Mutagen while a session runs; .git is never included",
     "ports": "loopback-only PORT or LOCAL:REMOTE mappings opened after launch; project values replace user defaults",
 }
 
 DEFAULT_COMMAND_DOC = f"argv launched by bare {ui.command()!r}; target_defaults.<name>.default_command takes precedence"
-_KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+# A name that can be written as a bare TOML key. Also the test for whether a target can receive a
+# ``[targets.NAME]`` override at all, which is why it is public: :mod:`fwd.ops.synccmd` asks the same question.
+KEY_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 # Fields with no usable default that the user must fill in for the target to work at all. Emitted uncommented with a
 # placeholder so the example is a working skeleton; everything else optional is emitted commented out.
@@ -145,6 +149,9 @@ OPTIONAL_PLACEHOLDERS: dict[str, Any] = {
     "tool_prefix": "/scratch/you/.fwd-tools",
     "user": "you",
     "image_id": "ddaedf1b7a0e41ac981711504493b242",
+    # Rendered commented-out and true, because the only reason to write this key at all is to differ from the
+    # sync.continuous default that an absent key already inherits.
+    "continuous_sync": True,
 }
 
 EXAMPLE_TARGET_NAMES: dict[str, str] = {"ssh": "box", "runpod": "pod", "lambda": "lambda-gpu", "slurm": "hpc"}
@@ -152,7 +159,7 @@ EXAMPLE_TARGET_NAMES: dict[str, str] = {"ssh": "box", "runpod": "pod", "lambda":
 
 def _toml_key(value: str) -> str:
     """Render a bare TOML key when possible and a quoted key for arbitrary environment variable names."""
-    if _KEY_SEGMENT.fullmatch(value):
+    if KEY_SEGMENT.fullmatch(value):
         return value
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -516,7 +523,7 @@ def _scope_location(
     if selected > 1:
         raise ConfigError("--user, --project, and --target are mutually exclusive")
     segments = tuple(key.split("."))
-    if not segments or any(not _KEY_SEGMENT.fullmatch(segment) for segment in segments):
+    if not segments or any(not KEY_SEGMENT.fullmatch(segment) for segment in segments):
         raise ConfigError(f"invalid config key {key!r}; use dotted names containing letters, numbers, '_' or '-'")
     if target is not None:
         if key != "default_command":

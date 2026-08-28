@@ -739,6 +739,11 @@ def _launch(
     info.backend_ids = backend_ids
 
     state = _persist(st, session_name, target_cfg, local_cwd, remote_dir, endpoint, info, flags, preserve_started_at=tmux_was_running)
+    # After the bounded rsync push above, so Mutagen only ever has steady-state deltas to move and the upload circuit
+    # breaker still governs the one transfer that could be enormous.
+    from fwd.ops import synccmd
+
+    synccmd.ensure_for_session(state, cfg, endpoint=endpoint)
     ports_ops.ensure_session_ports(state, desired_ports, endpoint=endpoint)
     state = st.get(session_name) or state
     if not attach:
