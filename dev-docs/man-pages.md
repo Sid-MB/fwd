@@ -16,7 +16,7 @@ man ./man/fwd-up.1
 
 The one-shot command regenerates immediately. `--watch` also generates immediately, then watches `tools/generate_man_pages.py` and every Python file under `src/fwd/`, rerunning generation in a fresh interpreter after a change so imported command declarations cannot remain stale. Stop it with Ctrl-C.
 
-The source date is explicit and reproducible. Update `MANUAL_DATE` when intentionally revising the manual, regenerate all pages, and inspect the rendered output. The generator removes obsolete `.1` files when a visible command is removed or renamed. Generated `.1` files are ignored by Git; only `man/README.md` is maintained directly in that directory.
+The source date is derived and reproducible. By default it is the committer date (UTC, `YYYY-MM-DD`) of the last commit touching `src/fwd` or `tools/generate_man_pages.py`, the only sources the rendered pages depend on: `git log -1 --format=%cs -- src/fwd tools/generate_man_pages.py`. An explicit `--date` overrides it, and `FALLBACK_DATE` in the generator applies only when the git date cannot be derived, such as a source-distribution build with no `.git`. Because the date comes from commits rather than the clock, it is fixed at any given commit, so `--check` and reproducible builds hold; uncommitted edits do not move it, and the date catches up on the next commit touching those paths. The generator removes obsolete `.1` files when a visible command is removed or renamed. Generated `.1` files are ignored by Git; only `man/README.md` is maintained directly in that directory.
 
 ## Conventional structure
 

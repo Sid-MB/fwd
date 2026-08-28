@@ -38,6 +38,6 @@ class CustomBuildHook(BuildHookInterface):
         """Regenerate the manuals from the command tree for the current source checkout."""
         root = Path(self.root)
         generator = _load_generator(root)
-        status = generator.generate(root / "man", date=generator.MANUAL_DATE, check=False)
+        status = generator.generate(root / "man", date=generator.resolve_manual_date(), check=False)
         if status:
             raise RuntimeError("manual-page generation failed")
