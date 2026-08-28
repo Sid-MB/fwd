@@ -403,7 +403,7 @@ def _confirm_removals(plans: list[_RemovalPlan]) -> bool:
     if stale_count:
         stale_noun = "entry" if stale_count == 1 else "entries"
         lines.append(f"  - clear {stale_count} already-gone local state {stale_noun}; no remote resources will be touched for these")
-    return ui.confirm("\n".join(lines), default=False)
+    return ui.confirm("\n".join(lines), default=True)
 
 
 def remove(name: str | None = None, *, force: bool = False, _confirmed: bool = False, _plan: _RemovalPlan | None = None) -> None:
