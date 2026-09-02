@@ -53,6 +53,8 @@ fwd config --example runpod      # current generated config reference
 
 `fwd targets` manages saved targets — `ls`, `add`, `info`, `update`, `rm` — while `fwd ls` and `fwd rm` manage the sessions running on them. Removing a target only edits configuration; use `fwd rm` to destroy compute.
 
+**[Docs / User Guide](https://sidmb.com/docs/fwd)**
+
 Read [Getting started](docs/getting-started.md) for the full first-session walkthrough.
 
 ## Choose a target
